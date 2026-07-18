@@ -54,7 +54,6 @@ ignore = [
     "B028",     # no explicit stacklevel
     "SIM114",   # combine if statements (sometimes clearer separate)
     "C408",     # dict() vs {} (sometimes necessary for type hints)
-    "PT004",    # fixture no return
     "PT006",    # fixture name
     "PT007",    # fixture param
     "PT011",    # pytest.raises too broad

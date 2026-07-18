@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -59,7 +59,7 @@ class MarketSnapshot(BaseModel):
     quotes: dict[str, Quote] = Field(default_factory=dict)
     news: list[NewsHeadline] = Field(default_factory=list)
     rss_items: list[RSSCacheItem] = Field(default_factory=list)
-    captured_at: datetime = Field(default_factory=datetime.utcnow)
+    captured_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def avg_sentiment_polarity(self) -> float:
         """Compute the average sentiment polarity across all news headlines.

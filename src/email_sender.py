@@ -135,7 +135,9 @@ def send_email(
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
-    raw_recipients = os.environ.get("RECIPIENT_EMAIL", "") if recipients is None else ",".join(recipients)
+    raw_recipients = (
+        os.environ.get("RECIPIENT_EMAIL", "") if recipients is None else ",".join(recipients)
+    )
     to = [r.strip() for r in raw_recipients.split(",") if r.strip()] or ([user] if user else [])
 
     if not user or not password:

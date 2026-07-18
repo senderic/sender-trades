@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -119,7 +119,7 @@ class DirectionalForecast(BaseModel):
     """Aggregated directional outlook across all assets."""
 
     forecasts: list[AssetForecast] = Field(default_factory=list)
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def table(self) -> str:
         """Return a formatted table string for terminal output."""

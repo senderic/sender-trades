@@ -183,9 +183,7 @@ class Pipeline:
                                 "phase": "ingest_market",
                                 "source": "snapshot",
                                 "status": "success",
-                                "quotes": {
-                                    s: q.current_price for s, q in market.quotes.items()
-                                },
+                                "quotes": {s: q.current_price for s, q in market.quotes.items()},
                                 "news_count": len(market.news),
                                 "rss_count": len(market.rss_items),
                                 "avg_news_polarity": market.avg_sentiment_polarity(),

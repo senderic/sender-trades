@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>sender-trades — 0DTE Intraday Options Trading System</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --orange: #d29922;
+      --red: #f85149;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Noto Sans, Helvetica, Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+    /* Nav */
+    nav {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 24px; border-bottom: 1px solid var(--border);
+    }
+    nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none; }
+    nav .logo span { color: var(--accent); }
+    nav a:not(.logo) { color: var(--muted); text-decoration: none; font-size: 0.9rem; margin-left: 24px; }
+    nav a:hover { color: var(--text); }
+
+    /* Hero */
+    .hero {
+      text-align: center; padding: 100px 24px 80px;
+      background: radial-gradient(ellipse at 50% 0%, rgba(88,166,255,0.08) 0%, transparent 60%);
+    }
+    .hero h1 { font-size: 3rem; font-weight: 800; letter-spacing: -0.025em; margin-bottom: 16px; }
+    .hero h1 span { color: var(--accent); }
+    .hero p { font-size: 1.2rem; color: var(--muted); max-width: 640px; margin: 0 auto 32px; }
+    .hero-badges { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 40px; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 500;
+      border: 1px solid var(--border);
+    }
+    .badge.green { color: var(--green); border-color: rgba(63,185,80,0.3); background: rgba(63,185,80,0.08); }
+    .badge.blue { color: var(--accent); border-color: rgba(88,166,255,0.3); background: rgba(88,166,255,0.08); }
+    .badge.orange { color: var(--orange); border-color: rgba(210,153,34,0.3); background: rgba(210,153,34,0.08); }
+    .hero-buttons { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+    .btn {
+      display: inline-block; padding: 12px 28px; border-radius: 8px;
+      font-weight: 600; font-size: 1rem; text-decoration: none; transition: all 0.15s;
+    }
+    .btn.primary { background: var(--accent); color: #0d1117; }
+    .btn.primary:hover { background: #79c0ff; }
+    .btn.secondary { border: 1px solid var(--border); color: var(--text); }
+    .btn.secondary:hover { border-color: var(--muted); background: var(--surface); }
+
+    /* Sections */
+    section { padding: 72px 0; }
+    section + section { border-top: 1px solid var(--border); }
+    h2 { font-size: 1.75rem; font-weight: 700; margin-bottom: 40px; text-align: center; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+
+    /* Features grid */
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+    .feature {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 28px; transition: border-color 0.15s;
+    }
+    .feature:hover { border-color: var(--muted); }
+    .feature .icon { font-size: 1.5rem; margin-bottom: 12px; }
+    .feature p { color: var(--muted); font-size: 0.95rem; }
+
+    /* Flow */
+    .flow { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+    .flow-step {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 20px; font-size: 0.9rem; text-align: center;
+      min-width: 100px;
+    }
+    .flow-step .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .flow-step .value { font-weight: 600; margin-top: 4px; }
+    .flow-arrow { color: var(--muted); font-size: 1.2rem; }
+
+    /* Commands */
+    .cmd-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .cmd-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; }
+    .cmd-item code {
+      display: block; font-family: var(--mono); font-size: 0.9rem; margin-bottom: 4px;
+    }
+    .cmd-item .desc { color: var(--muted); font-size: 0.85rem; }
+
+    /* Repo info */
+    .repo-links { display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; }
+    .repo-links a { color: var(--accent); text-decoration: none; font-size: 1rem; }
+    .repo-links a:hover { text-decoration: underline; }
+
+    /* Footer */
+    footer { text-align: center; padding: 40px 24px; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 2rem; }
+      .flow { flex-direction: column; }
+      .flow-arrow { transform: rotate(90deg); }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="#" class="logo">sender-<span>trades</span></a>
+    <div>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#quickstart">Quick start</a>
+      <a href="https://github.com/senderic/sender-trades">GitHub</a>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <h1>sender-<span>trades</span></h1>
+    <p>0DTE intraday options trading recommendation system for SPY and QQQ. Ingest, analyse, decide, execute — on your own infrastructure.</p>
+    <div class="hero-badges">
+      <span class="badge green">● 63 tests</span>
+      <span class="badge blue">● 3 strategies</span>
+      <span class="badge orange">● 8 risk guardrails</span>
+    </div>
+    <div class="hero-buttons">
+      <a href="#quickstart" class="btn primary">Get started</a>
+      <a href="https://github.com/senderic/sender-trades" class="btn secondary">View on GitHub</a>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="container">
+      <h2>Features</h2>
+      <div class="features">
+        <div class="feature">
+          <div class="icon">📈</div>
+          <h3>Momentum strategy</h3>
+          <p>Detects gap openings and intraday momentum breaks on SPY and QQQ.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">↔️</div>
+          <h3>Mean-reversion strategy</h3>
+          <p>RSI-based contrarian signals when the market over-extends.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">⚡</div>
+          <h3>Event-driven strategy</h3>
+          <p>Catalyst-aware recommendations from news sentiment and macro data.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🧩</div>
+          <h3>Decision aggregator</h3>
+          <p>Picks the highest-confidence recommendation or merges near-ties with 2-of-3 consensus.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🛡️</div>
+          <h3>8 risk guardrails</h3>
+          <p>Max loss cap, bid/ask spread check, time windows, OCC chain validation, statistical sanity, and more.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🔌</div>
+          <h3>MCP broker abstraction</h3>
+          <p>Subprocess stdio transport for Alpaca and Robinhood. Dry-run by default — nothing leaves your machine.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📰</div>
+          <h3>Multi-source ingestion</h3>
+          <p>Finnhub quotes, Brave news, Reddit WSB/options sentiment, Unusual Whales options flow, RSS feeds, and Atlas morning briefings.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📋</div>
+          <h3>Structured logging</h3>
+          <p>JSON logs with per-run correlation IDs. Every decision is traceable.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="container">
+      <h2>How it works</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="label">1</div><div class="value">Ingest</div><div class="label">quotes, news, Reddit, RSS</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">2</div><div class="value">Analyse</div><div class="label">3 strategies in parallel</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">3</div><div class="value">Decide</div><div class="label">aggregate + risk checks</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">4</div><div class="value">Execute</div><div class="label">MCP broker (or dry-run)</div></div>
+      </div>
+      <p style="text-align:center; color:var(--muted); margin-top: 24px; font-size:0.95rem;">
+        Dry-run is the default. Set <code style="color:var(--accent)">execute: true</code> or pass <code style="color:var(--accent)">--execute</code> to enable live trading.
+      </p>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="container">
+      <h2>Quick start</h2>
+      <div class="cmd-list">
+        <div class="cmd-item">
+          <code>git clone &lt;repo&gt; &amp;&amp; cd sender-trades</code>
+          <div class="desc">Clone the repository</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv sync --all-extras</code>
+          <div class="desc">Install dependencies</div>
+        </div>
+        <div class="cmd-item">
+          <code>cp .env.example .env</code>
+          <div class="desc">Configure API keys (Finnhub, Brave, Alpaca)</div>
+        </div>
+        <div class="cmd-item">
+          <code>python -m src.main --dry-run</code>
+          <div class="desc">Run a dry run — no trades executed</div>
+        </div>
+        <div class="cmd-item">
+          <code>docker compose run --rm app python -m src.main --dry-run</code>
+          <div class="desc">Or run via Docker</div>
+        </div>
+        <div class="cmd-item">
+          <code>make check</code>
+          <div class="desc">Run lint + format check + tests</div>
+        </div>
+        <div class="cmd-item">
+          <code>docker compose up docs</code>
+          <div class="desc">View Sphinx API docs at localhost:8080</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="container">
+      <h2>Project</h2>
+      <div class="repo-links">
+        <a href="https://github.com/senderic/sender-trades">GitHub repository →</a>
+        <a href="https://github.com/senderic/sender-trades/actions">CI status →</a>
+        <a href="https://github.com/senderic/sender-trades/blob/main/README.md">README →</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    sender-trades &mdash; 0DTE intraday options trading recommendation system
+  </footer>
+</body>
+</html>

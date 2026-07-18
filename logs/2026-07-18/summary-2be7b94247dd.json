@@ -1,0 +1,57 @@
+{
+  "correlation_id": "2be7b94247dd",
+  "duration_seconds": 0.24,
+  "start_time": "2026-07-18T05:53:04.057522+00:00",
+  "end_time": "2026-07-18T05:53:04.293087+00:00",
+  "error_count": 0,
+  "errors": [],
+  "briefing_found": true,
+  "market_data_symbols": [],
+  "strategies_evaluated": [
+    "momentum",
+    "mean_reversion",
+    "event_driven"
+  ],
+  "decision": {
+    "selected_label": null,
+    "recommendation": null,
+    "all_results": [
+      {
+        "label": "momentum",
+        "recommendation": null,
+        "confidence": 0.0,
+        "debug_trace": {},
+        "duration_ms": 0.38
+      },
+      {
+        "label": "mean_reversion",
+        "recommendation": null,
+        "confidence": 0.0,
+        "debug_trace": {},
+        "duration_ms": 0.44
+      },
+      {
+        "label": "event_driven",
+        "recommendation": null,
+        "confidence": 0.0,
+        "debug_trace": {
+          "catalyst_count": 2,
+          "catalysts": [
+            {
+              "keyword": "conflict",
+              "source": "cross_source"
+            },
+            {
+              "keyword": "manufacturing",
+              "source": "cross_source"
+            }
+          ],
+          "catalyst_polarity": -1.0
+        },
+        "duration_ms": 0.25
+      }
+    ],
+    "rationale": "No strategy produced a valid recommendation above confidence threshold."
+  },
+  "execution": null
+}

@@ -50,6 +50,14 @@ mcp:
     command: uvx
     args: ["alpaca-mcp-server"]
     timeout_sec: 30
+  robinhood:
+    command: uvx
+    args: ["robinhood-mcp-server"]
+    timeout_sec: 30
+    auth:
+      username: ${ROBINHOOD_USERNAME}
+      password: ${ROBINHOOD_PASSWORD}
+      mfa_code: ${ROBINHOOD_MFA_CODE}
 
 logging:
   level: INFO

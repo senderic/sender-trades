@@ -11,6 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from src.config import Settings
+from src.email_sender import send_email
 from src.logging_setup import setup_logging
 from src.pipeline import Pipeline
 
@@ -50,6 +51,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         default="",
         help="Correlation ID for this run (auto-generated if empty)",
+    )
+    parser.add_argument(
+        "--email",
+        action="store_true",
+        default=None,
+        help="Send forecast report via email",
+    )
+    parser.add_argument(
+        "--no-email",
+        action="store_true",
+        default=None,
+        help="Skip sending forecast report via email",
     )
     return parser.parse_args(argv)
 
@@ -100,6 +113,17 @@ async def main(argv: list[str] | None = None) -> int:
     else:
         print("\n  Trade: NONE — no recommendation passed all gates")
     print("=" * 60)
+
+    should_email = (
+        args.email
+        if args.email is not None
+        else (not args.no_email if args.no_email is not None else False)
+    )
+    if should_email and result.decision and result.decision.forecast:
+        send_email(
+            forecast=result.decision.forecast,
+            dry_run=not settings.general.execute,
+        )
 
     return 0 if len(result.errors) == 0 else 1
 

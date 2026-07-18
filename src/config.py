@@ -12,19 +12,46 @@ from pydantic_settings import BaseSettings
 
 
 class AtlasBriefingConfig(BaseModel):
-    """Configuration for the Atlas morning briefing directory."""
+    """Configuration for the Atlas morning briefing directory.
+
+    ``directory`` points at the upstream project root (typically
+    ``~/atlas-morning-briefing``). The root holds ``status.json`` and
+    the ``snapshots/`` tree; the briefing markdown files themselves
+    live in a sub-directory (``briefings/`` in the current upstream
+    layout) identified by ``briefings_subdir``.
+
+    For legacy layouts where briefings sit directly in the root
+    (mixed with stale files), set ``briefings_subdir`` to an empty
+    string to search the root, or leave it defaulting to
+    ``"briefings"`` -- :func:`src.ingestion.parser.find_todays_briefing`
+    falls back to the root when the subdir contains no
+    ``Atlas-Briefing-*.md`` files.
+    """
 
     directory: str = "~/atlas-morning-briefing"
+    briefings_subdir: str = "briefings"
     snapshot_enabled: bool = True
 
     @property
     def resolved_directory(self) -> Path:
-        """Resolve and expand the briefing directory path.
+        """Resolve and expand the project-root directory path.
 
         Returns:
             Absolute path with tilde and environment variables expanded.
         """
         return Path(self.directory).expanduser().resolve()
+
+    @property
+    def briefings_dir(self) -> Path:
+        """Path to the directory containing ``Atlas-Briefing-*.md`` files.
+
+        Returns ``resolved_directory`` when ``briefings_subdir`` is
+        empty; otherwise ``<root>/<briefings_subdir>``.
+        """
+        root = self.resolved_directory
+        if not self.briefings_subdir:
+            return root
+        return root / self.briefings_subdir
 
 
 class FinnhubConfig(BaseModel):

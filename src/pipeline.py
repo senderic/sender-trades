@@ -140,9 +140,16 @@ class Pipeline:
             Parsed BriefingData, or None if no briefing is found.
         """
         try:
-            briefing_path = find_todays_briefing(self.config.atlas_briefing.directory)
+            briefing_path = find_todays_briefing(
+                self.config.atlas_briefing.directory,
+                briefings_subdir=self.config.atlas_briefing.briefings_subdir,
+            )
             if briefing_path is None:
-                logger.warning("briefing_not_found", directory=self.config.atlas_briefing.directory)
+                logger.warning(
+                    "briefing_not_found",
+                    directory=self.config.atlas_briefing.directory,
+                    briefings_subdir=self.config.atlas_briefing.briefings_subdir,
+                )
                 return None
             logger.info("briefing_found", path=str(briefing_path))
             briefing = read_briefing(briefing_path)

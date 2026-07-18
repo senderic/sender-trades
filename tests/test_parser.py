@@ -26,10 +26,37 @@ class TestParseBriefingDate:
 
 
 class TestFindTodaysBriefing:
-    def test_finds_exact_match(self, tmp_path: Path) -> None:
+    def test_finds_in_root_when_no_subdir(self, tmp_path: Path) -> None:
         today_file = tmp_path / "Atlas-Briefing-2026.07.17.md"
         today_file.write_text("# Test")
+        # Default briefings_subdir="briefings" but no briefings/ dir exists
+        # -> should fall back to searching root.
         result = find_todays_briefing(tmp_path)
+        assert result is not None
+        assert result.name == "Atlas-Briefing-2026.07.17.md"
+
+    def test_finds_in_subdir_first(self, tmp_path: Path) -> None:
+        briefings = tmp_path / "briefings"
+        briefings.mkdir()
+        (briefings / "Atlas-Briefing-2026.07.18.md").write_text("# New")
+        (tmp_path / "Atlas-Briefing-2026.07.17.md").write_text("# Legacy")
+        result = find_todays_briefing(tmp_path, briefings_subdir="briefings")
+        assert result is not None
+        assert result.name == "Atlas-Briefing-2026.07.18.md"
+        assert result.parent == briefings
+
+    def test_falls_back_to_root_when_subdir_empty(self, tmp_path: Path) -> None:
+        briefings = tmp_path / "briefings"
+        briefings.mkdir()  # empty
+        (tmp_path / "Atlas-Briefing-2026.07.17.md").write_text("# Legacy")
+        result = find_todays_briefing(tmp_path, briefings_subdir="briefings")
+        assert result is not None
+        assert result.name == "Atlas-Briefing-2026.07.17.md"
+
+    def test_empty_subdir_string_searches_root(self, tmp_path: Path) -> None:
+        today_file = tmp_path / "Atlas-Briefing-2026.07.17.md"
+        today_file.write_text("# Test")
+        result = find_todays_briefing(tmp_path, briefings_subdir="")
         assert result is not None
 
     def test_returns_none_for_empty_dir(self, tmp_path: Path) -> None:

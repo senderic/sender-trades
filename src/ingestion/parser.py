@@ -37,25 +37,52 @@ def parse_briefing_date(filename: str) -> date | None:
     return None
 
 
-def find_todays_briefing(directory: str | Path) -> Path | None:
+def find_todays_briefing(
+    directory: str | Path,
+    briefings_subdir: str = "briefings",
+) -> Path | None:
     """Find today's Atlas briefing markdown file, falling back to the most recent.
 
+    Looks in ``<directory>/<briefings_subdir>`` first (current upstream
+    layout) and falls back to ``<directory>`` itself if the subdir is
+    missing or contains no ``Atlas-Briefing-*.md`` files. This handles
+    both the modern layout (new briefings under ``briefings/``, stale
+    ones left in root) and the legacy layout (all briefings in root).
+
+    Within the resolved search directory, today's exact filename is
+    preferred; otherwise the most recent file is returned.
+
     Args:
-        directory: Path to the directory containing briefing files.
+        directory: Path to the atlas-morning-briefing project root.
+        briefings_subdir: Sub-directory containing briefing markdown
+            files. Pass an empty string to search the root directly.
 
     Returns:
         Path to the briefing file, or None if none are found.
     """
-    directory = Path(directory).expanduser().resolve()
-    if not directory.is_dir():
+    root = Path(directory).expanduser().resolve()
+    if not root.is_dir():
         return None
+
+    candidates: list[Path] = []
+    if briefings_subdir:
+        subdir = root / briefings_subdir
+        if subdir.is_dir():
+            candidates.append(subdir)
+    candidates.append(root)
+
     today = date.today()
     expected_name = f"Atlas-Briefing-{today.year}.{today.month:02d}.{today.day:02d}.md"
-    candidate = directory / expected_name
-    if candidate.is_file():
-        return candidate
-    md_files = sorted(directory.glob("Atlas-Briefing-*.md"), reverse=True)
-    return md_files[0] if md_files else None
+
+    for search_dir in candidates:
+        today_candidate = search_dir / expected_name
+        if today_candidate.is_file():
+            return today_candidate
+        md_files = sorted(search_dir.glob("Atlas-Briefing-*.md"), reverse=True)
+        if md_files:
+            # Skip .epub (glob above is .md-only already); return newest.
+            return md_files[0]
+    return None
 
 
 def _extract_ticker_section(text: str) -> str:

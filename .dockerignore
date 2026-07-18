@@ -8,3 +8,5 @@ config.yaml
 tests/
 .DS_Store
 *.md
+.venv/
+.ruff_cache/

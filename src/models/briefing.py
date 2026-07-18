@@ -1,8 +1,26 @@
 from __future__ import annotations
 
 from datetime import date
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
+
+
+class BriefingQuality(StrEnum):
+    """Observed quality of an Atlas morning briefing.
+
+    Attributes:
+        FULL: LLM layer ran upstream; executive summary is real LLM output.
+        DEGRADED: Upstream LLM layer was skipped or failed; the markdown
+            is the deterministic fallback (e.g. starts with
+            ``"Synthesis unavailable for today's briefing"``).
+        FAILED: Briefing is missing or unparsable — no executive summary
+            and no news items.
+    """
+
+    FULL = "full"
+    DEGRADED = "degraded"
+    FAILED = "failed"
 
 
 class TickerRow(BaseModel):
@@ -54,14 +72,23 @@ class BriefingData(BaseModel):
     blog_items: list[BlogItem] = Field(default_factory=list)
     papers: list[PaperItem] = Field(default_factory=list)
     raw_markdown: str = ""
+    briefing_quality: BriefingQuality = BriefingQuality.FULL
 
     @property
-    def macro_sentiment(self) -> float:
+    def macro_sentiment(self) -> float | None:
         """Estimate macro sentiment from the executive summary text.
 
+        Returns ``None`` when the briefing is degraded or failed — the
+        absence of sentiment words on a degraded summary means "we don't
+        know," not "market is neutral," and downstream strategies must
+        not treat it as a neutral signal.
+
         Returns:
-            A polarity score between -1.0 (bearish) and 1.0 (bullish).
+            A polarity score between -1.0 (bearish) and 1.0 (bullish),
+            or ``None`` when briefing quality is not ``FULL``.
         """
+        if self.briefing_quality != BriefingQuality.FULL:
+            return None
         bullish_words = {
             "surge",
             "gain",

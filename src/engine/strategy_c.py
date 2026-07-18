@@ -10,7 +10,7 @@ import structlog
 from src.config import Settings
 from src.engine.base import TradingStrategy
 from src.engine.options_strategy import compute_otm_strike, estimate_delta
-from src.models.briefing import BriefingData
+from src.models.briefing import BriefingData, BriefingQuality
 from src.models.market import MarketSnapshot
 from src.models.recommendation import Direction, PositionIntent, StrategyResult, TradeRecommendation
 
@@ -79,6 +79,28 @@ class EventDrivenStrategy(TradingStrategy):
         trace: dict = {}
         recommendation = None
 
+        if briefing.briefing_quality != BriefingQuality.FULL:
+            # The event-driven strategy leans heavily on LLM-distilled
+            # briefing content (catalysts, polarity). When the upstream
+            # LLM layer failed and local re-synthesis did not succeed,
+            # abstain rather than emit a FLAT recommendation -- "we
+            # don't know" is not the same as "market is neutral".
+            # See LESSONS_LEARNED.md (2026-07-18 incident).
+            logger.info(
+                "event_driven_abstain_degraded_briefing",
+                quality=briefing.briefing_quality.value,
+            )
+            return StrategyResult(
+                label=self.label,
+                recommendation=None,
+                confidence=0.0,
+                debug_trace={
+                    "skip_reason": "degraded_briefing",
+                    "briefing_quality": briefing.briefing_quality.value,
+                },
+                duration_ms=round((time.perf_counter() - start) * 1000, 2),
+            )
+
         catalysts = self._detect_catalysts(briefing, market)
         trace["catalyst_count"] = len(catalysts)
         trace["catalysts"] = catalysts[:5]
@@ -109,7 +131,7 @@ class EventDrivenStrategy(TradingStrategy):
             trace[f"{asset}_premarket_move_pct"] = premarket_move_pct
 
             sentiment = market.avg_sentiment_polarity()
-            briefing_sent = briefing.macro_sentiment
+            briefing_sent = briefing.macro_sentiment or 0.0
             combined = (sentiment + briefing_sent + catalyst_polarity) / 3
             trace[f"{asset}_combined_sentiment"] = combined
 

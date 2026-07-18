@@ -143,6 +143,29 @@ class GeneralConfig(BaseModel):
     execute: bool = False
 
 
+class LLMConfig(BaseModel):
+    """Configuration for the local LLM fallback used to re-synthesize a
+    degraded Atlas briefing.
+
+    The Atlas morning briefing is normally LLM-synthesised upstream.
+    When the upstream LLM layer fails (e.g. the 2026-07-18 DeepSeek
+    free-tier hang documented in ``LESSONS_LEARNED.md``), this project
+    invokes the ``opencode`` CLI locally to re-synthesise the executive
+    summary from the raw feed items. A primary model is tried first
+    under a strict timeout; on timeout or failure the fallback chain is
+    walked in order.
+    """
+
+    enabled: bool = True
+    opencode_path: str = "opencode"
+    primary_model: str = "opencode/deepseek-v4-flash-free"
+    fallback_models: list[str] = Field(
+        default_factory=lambda: ["opencode-go/glm-5.2", "opencode/deepseek-v4-flash-free"]
+    )
+    timeout_sec: int = 60
+    max_calls_per_run: int = 5
+
+
 class Settings(BaseSettings):
     """Root application settings loaded from YAML or environment variables."""
 
@@ -157,6 +180,7 @@ class Settings(BaseSettings):
     risk: RiskConfig = RiskConfig()
     mcp: MCPConfig = MCPConfig()
     logging: LoggingConfig = LoggingConfig()
+    llm: LLMConfig = LLMConfig()
 
     model_config = ConfigDict(env_nested_delimiter="__")
 

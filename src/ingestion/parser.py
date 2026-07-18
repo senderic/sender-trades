@@ -6,7 +6,19 @@ import re
 from datetime import date
 from pathlib import Path
 
-from src.models.briefing import BlogItem, BriefingData, NewsItem, PaperItem, TickerRow
+from src.models.briefing import (
+    BlogItem,
+    BriefingData,
+    BriefingQuality,
+    NewsItem,
+    PaperItem,
+    TickerRow,
+)
+
+# Literal deterministic fallback string emitted by
+# atlas-morning-briefing's generate_markdown_briefing() when the LLM
+# layer is skipped upstream. See LESSONS_LEARNED.md (2026-07-18 incident).
+DEGRADED_SUMMARY_PREFIX = "Synthesis unavailable for today's briefing"
 
 
 def parse_briefing_date(filename: str) -> date | None:
@@ -323,6 +335,36 @@ def _extract_key_connections(text: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _classify_quality(briefing: BriefingData) -> BriefingQuality:
+    """Classify briefing quality from parsed content.
+
+    Mirrors the degradation signatures documented in
+    ``LESSONS_LEARNED.md`` (2026-07-18 incident):
+
+    - ``FAILED``: no executive summary AND no news items — the briefing
+      is missing or unparsable.
+    - ``DEGRADED``: either the executive summary is the literal upstream
+      fallback string ("Synthesis unavailable for today's briefing"),
+      or blog summaries are absent while news is present (blogs require
+      an LLM pass; their absence with news present is a strong signal
+      the LLM layer was skipped).
+    - ``FULL``: otherwise.
+
+    Args:
+        briefing: Parsed BriefingData (quality field is ignored).
+
+    Returns:
+        The detected BriefingQuality tier.
+    """
+    if not briefing.executive_summary and not briefing.news_items:
+        return BriefingQuality.FAILED
+    if briefing.executive_summary.startswith(DEGRADED_SUMMARY_PREFIX):
+        return BriefingQuality.DEGRADED
+    if len(briefing.blog_items) == 0 and len(briefing.news_items) > 0:
+        return BriefingQuality.DEGRADED
+    return BriefingQuality.FULL
+
+
 def read_briefing(path: str | Path) -> BriefingData:
     """Read a markdown briefing file and parse it into structured data.
 
@@ -330,7 +372,8 @@ def read_briefing(path: str | Path) -> BriefingData:
         path: Path to the briefing markdown file.
 
     Returns:
-        Fully populated BriefingData instance.
+        Fully populated BriefingData instance with ``briefing_quality``
+        populated by :func:`_classify_quality`.
     """
     path_obj = Path(path).expanduser().resolve()
     markdown = path_obj.read_text(encoding="utf-8")
@@ -342,7 +385,7 @@ def read_briefing(path: str | Path) -> BriefingData:
     news = _extract_news(markdown)
     blogs = _extract_blogs(markdown)
     papers = _extract_papers(markdown)
-    return BriefingData(
+    briefing = BriefingData(
         briefing_date=briefing_date,
         executive_summary=exec_summary,
         key_connections=key_connections,
@@ -352,6 +395,8 @@ def read_briefing(path: str | Path) -> BriefingData:
         papers=papers,
         raw_markdown=markdown,
     )
+    briefing.briefing_quality = _classify_quality(briefing)
+    return briefing
 
 
 def _extract_section(text: str, section_title: str) -> str:

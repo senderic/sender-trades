@@ -16,9 +16,12 @@ from src.engine.strategy_c import EventDrivenStrategy
 from src.ingestion.fetcher import fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
 from src.ingestion.snapshot_loader import SnapshotLoader
+from src.ingestion.status import read_briefing_status
+from src.llm.client import OpencodeLLMClient
+from src.llm.resynthesizer import resynthesize_briefing
 from src.logging_setup import JSONFileLogger
 from src.mcp.client import MCPBrokerClient
-from src.models.briefing import BriefingData
+from src.models.briefing import BriefingData, BriefingQuality
 from src.models.market import MarketSnapshot
 from src.models.recommendation import (
     AssetForecast,
@@ -127,6 +130,12 @@ class Pipeline:
     async def _phase_ingest_briefing(self) -> BriefingData | None:
         """Phase 1: Find and parse today's morning briefing.
 
+        Also reads the upstream ``status.json`` to fold
+        ``intelligence_enabled`` into :attr:`BriefingData.briefing_quality`,
+        and locally re-synthesises the executive summary via an LLM
+        when the briefing comes back degraded (upstream LLM layer
+        failed). See ``LESSONS_LEARNED.md`` (2026-07-18 incident).
+
         Returns:
             Parsed BriefingData, or None if no briefing is found.
         """
@@ -137,6 +146,29 @@ class Pipeline:
                 return None
             logger.info("briefing_found", path=str(briefing_path))
             briefing = read_briefing(briefing_path)
+
+            status = read_briefing_status(self.config.atlas_briefing.directory)
+            if status is not None and not status.intelligence_enabled:
+                logger.warning(
+                    "upstream_intelligence_disabled",
+                    timestamp=status.timestamp,
+                )
+                briefing.briefing_quality = BriefingQuality.DEGRADED
+
+            pre_resynth_quality = briefing.briefing_quality
+            resynth_attempted = False
+            resynth_served_by: str | None = None
+            resynth_fallback_hit = False
+            resynth_error = ""
+
+            if briefing.briefing_quality != BriefingQuality.FULL and self.config.llm.enabled:
+                resynth_attempted = True
+                client = OpencodeLLMClient(self.config.llm)
+                briefing = resynthesize_briefing(briefing, client)
+                resynth_served_by = client.last_served_by
+                resynth_fallback_hit = client.last_fallback_hit
+                resynth_error = client.last_error
+
             self.result.briefing = briefing
             self.file_logger.write_entry(
                 {
@@ -145,7 +177,17 @@ class Pipeline:
                     "path": str(briefing_path),
                     "ticker_count": len(briefing.tickers),
                     "news_count": len(briefing.news_items),
+                    "blog_count": len(briefing.blog_items),
+                    "briefing_quality": briefing.briefing_quality.value,
+                    "upstream_intelligence_enabled": (
+                        status.intelligence_enabled if status else None
+                    ),
                     "macro_sentiment": briefing.macro_sentiment,
+                    "resynth_attempted": resynth_attempted,
+                    "resynth_served_by": resynth_served_by,
+                    "resynth_fallback_hit": resynth_fallback_hit,
+                    "resynth_error": resynth_error,
+                    "pre_resynth_quality": pre_resynth_quality.value,
                 }
             )
             return briefing

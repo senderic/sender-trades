@@ -182,15 +182,21 @@ class RiskEngine:
 
     @staticmethod
     def check_consensus(
-        briefing_direction: float,
-        market_news_polarity: float,
+        briefing_direction: float | None,
+        market_news_polarity: float | None,
         min_sources: int = 2,
     ) -> tuple[bool, float]:
         """Check whether multiple data sources agree on market direction.
 
+        ``None`` values are treated as "this source is unavailable" —
+        e.g. a degraded Atlas briefing yields ``None`` for
+        ``macro_sentiment`` and must not count toward consensus.
+
         Args:
-            briefing_direction: Sentiment polarity from the briefing.
-            market_news_polarity: Average polarity from market news.
+            briefing_direction: Sentiment polarity from the briefing,
+                or ``None`` when briefing quality is not FULL.
+            market_news_polarity: Average polarity from market news, or
+                ``None`` when no news was fetched.
             min_sources: Minimum number of sources with non-trivial signal.
 
         Returns:
@@ -198,10 +204,10 @@ class RiskEngine:
         """
         signals = 0
         total = 0.0
-        if abs(briefing_direction) > 0.05:
+        if briefing_direction is not None and abs(briefing_direction) > 0.05:
             signals += 1
             total += briefing_direction
-        if abs(market_news_polarity) > 0.05:
+        if market_news_polarity is not None and abs(market_news_polarity) > 0.05:
             signals += 1
             total += market_news_polarity
         if signals < min_sources:

@@ -3,11 +3,14 @@ from pathlib import Path
 import pytest
 
 from src.ingestion.parser import (
+    DEGRADED_SUMMARY_PREFIX,
+    _classify_quality,
     _extract_tickers,
     find_todays_briefing,
     parse_briefing_date,
     read_briefing,
 )
+from src.models.briefing import BlogItem, BriefingData, BriefingQuality, NewsItem
 
 
 class TestParseBriefingDate:
@@ -68,11 +71,68 @@ class TestReadBriefing:
         assert len(briefing.tickers) > 0
         assert len(briefing.news_items) > 0
         assert briefing.executive_summary != ""
+        # The fixture has blogs present (a "### Understanding 0DTE..." item),
+        # so classification should land on FULL.
+        assert briefing.briefing_quality == BriefingQuality.FULL
+        assert briefing.macro_sentiment is not None
 
     def test_macro_sentiment_positive(self, tmp_briefing_file: Path) -> None:
         briefing = read_briefing(tmp_briefing_file)
+        assert briefing.macro_sentiment is not None
         assert briefing.macro_sentiment != 0.0
 
     def test_missing_file_raises(self) -> None:
         with pytest.raises(FileNotFoundError):
             read_briefing("/nonexistent/file.md")
+
+
+class TestClassifyQuality:
+    def test_full_briefing_is_full(self) -> None:
+        briefing = BriefingData(
+            briefing_date=__import__("datetime").date.today(),
+            executive_summary="Market sentiment is bullish following earnings.",
+            news_items=[],
+            blog_items=[BlogItem(title="x", author="a")],
+        )
+        # news_items is empty and blog_items non-empty, so neither degradation
+        # rule fires; should return FULL.
+        assert _classify_quality(briefing) == BriefingQuality.FULL
+
+    def test_degraded_summary_string_is_degraded(self) -> None:
+        briefing = BriefingData(
+            briefing_date=__import__("datetime").date.today(),
+            executive_summary=DEGRADED_SUMMARY_PREFIX + ". Please see the sections.",
+            news_items=[NewsItem(title="x", source="a", url="https://example.com")],
+            blog_items=[],
+        )
+        assert _classify_quality(briefing) == BriefingQuality.DEGRADED
+
+    def test_news_present_but_no_blogs_is_degraded(self) -> None:
+        briefing = BriefingData(
+            briefing_date=__import__("datetime").date.today(),
+            executive_summary="Bullish market sentiment today.",
+            news_items=[NewsItem(title="x", source="a", url="https://example.com")],
+            blog_items=[],
+        )
+        assert _classify_quality(briefing) == BriefingQuality.DEGRADED
+
+    def test_no_news_no_summary_is_failed(self) -> None:
+        briefing = BriefingData(briefing_date=__import__("datetime").date.today())
+        assert _classify_quality(briefing) == BriefingQuality.FAILED
+
+    def test_read_briefing_classifies_degraded_fixture(self, tmp_path: Path) -> None:
+        degraded_md = (
+            "# Atlas Morning Briefing\n\n"
+            "## Executive Summary\n"
+            + DEGRADED_SUMMARY_PREFIX
+            + ". See the individual sections below.\n\n"
+            "## AI & Tech News\n\n"
+            "### Some raw headline\n"
+            "*Source: reuters.com*\n\n"
+            "[Read more](https://example.com/x)\n"
+        )
+        path = tmp_path / "Atlas-Briefing-2026.07.18.md"
+        path.write_text(degraded_md)
+        briefing = read_briefing(path)
+        assert briefing.briefing_quality == BriefingQuality.DEGRADED
+        assert briefing.macro_sentiment is None

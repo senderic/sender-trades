@@ -69,3 +69,18 @@ class TestEventDrivenStrategy:
         strategy = EventDrivenStrategy(Settings())
         result = await strategy.evaluate(empty_briefing, empty_market)
         assert result.recommendation is None
+
+    @pytest.mark.asyncio
+    async def test_abstains_on_degraded_briefing(self, sample_market_snapshot) -> None:
+        from src.models.briefing import BriefingQuality
+
+        degraded = BriefingData(
+            briefing_date=date.today(),
+            executive_summary="Synthesis unavailable for today's briefing.",
+            briefing_quality=BriefingQuality.DEGRADED,
+        )
+        strategy = EventDrivenStrategy(Settings())
+        result = await strategy.evaluate(degraded, sample_market_snapshot)
+        assert result.recommendation is None
+        assert result.debug_trace.get("skip_reason") == "degraded_briefing"
+        assert result.debug_trace.get("briefing_quality") == "degraded"

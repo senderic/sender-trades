@@ -61,7 +61,12 @@ class MomentumStrategy(TradingStrategy):
 
             news_sentiment = market.avg_sentiment_polarity()
             briefing_sentiment = briefing.macro_sentiment
-            combined_sentiment = (news_sentiment + briefing_sentiment) / 2
+            if briefing_sentiment is None:
+                # Degraded briefing; use news sentiment alone and flag.
+                combined_sentiment = news_sentiment
+                trace[f"{asset}_briefing_sentiment_unavailable"] = True
+            else:
+                combined_sentiment = (news_sentiment + briefing_sentiment) / 2
             trace[f"{asset}_combined_sentiment"] = combined_sentiment
 
             direction = None

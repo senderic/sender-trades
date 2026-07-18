@@ -8,6 +8,8 @@ import sys
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from src.config import Settings
 from src.logging_setup import setup_logging
 from src.pipeline import Pipeline
@@ -61,6 +63,7 @@ async def main(argv: list[str] | None = None) -> int:
     Returns:
         Exit code (0 on success, 1 if errors occurred).
     """
+    load_dotenv()
     args = parse_args(argv)
     correlation_id = args.correlation_id or uuid.uuid4().hex[:12]
 

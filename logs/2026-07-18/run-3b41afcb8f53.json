@@ -1,0 +1,23 @@
+{"correlation_id": "3b41afcb8f53", "event": "pipeline_start", "level": "info", "timestamp": "2026-07-18T06:22:43.529795Z"}
+{"path": "/Users/eric/atlas-morning-briefing/Atlas-Briefing-2026.03.22.md", "event": "briefing_found", "level": "info", "timestamp": "2026-07-18T06:22:43.530379Z", "correlation_id": "3b41afcb8f53"}
+{"phase": "ingest_briefing", "status": "success", "path": "/Users/eric/atlas-morning-briefing/Atlas-Briefing-2026.03.22.md", "ticker_count": 15, "news_count": 0, "macro_sentiment": -1.0}
+{"symbol": "SPY", "event": "finnhub_no_api_key", "level": "warning", "timestamp": "2026-07-18T06:22:43.531932Z", "correlation_id": "3b41afcb8f53"}
+{"symbol": "QQQ", "event": "finnhub_no_api_key", "level": "warning", "timestamp": "2026-07-18T06:22:43.532059Z", "correlation_id": "3b41afcb8f53"}
+{"event": "brave_no_api_key", "level": "warning", "timestamp": "2026-07-18T06:22:43.532260Z", "correlation_id": "3b41afcb8f53"}
+{"event": "unusual_whales_no_api_key", "level": "warning", "timestamp": "2026-07-18T06:22:43.646157Z", "correlation_id": "3b41afcb8f53"}
+{"subreddit": "wallstreetbets", "status": 403, "event": "reddit_http_error", "level": "error", "timestamp": "2026-07-18T06:22:43.897672Z", "correlation_id": "3b41afcb8f53"}
+{"url": "https://reutersagency.com/feed/?taxonomy=best-topics&post_type=best&best=best", "error": "Client error '404 Not Found' for url 'https://reutersagency.com/feed/?taxonomy=best-topics&post_type=best&best=best'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404", "event": "rss_feed_error", "level": "warning", "timestamp": "2026-07-18T06:22:43.942524Z", "correlation_id": "3b41afcb8f53"}
+{"subreddit": "options", "status": 403, "event": "reddit_http_error", "level": "error", "timestamp": "2026-07-18T06:22:44.116363Z", "correlation_id": "3b41afcb8f53"}
+{"phase": "ingest_market", "status": "success", "quotes": {}, "news_count": 0, "rss_count": 30, "avg_news_polarity": 0.0}
+{"asset": "SPY", "event": "momentum_no_quote", "level": "warning", "timestamp": "2026-07-18T06:22:44.158561Z", "correlation_id": "3b41afcb8f53"}
+{"asset": "QQQ", "event": "momentum_no_quote", "level": "warning", "timestamp": "2026-07-18T06:22:44.159135Z", "correlation_id": "3b41afcb8f53"}
+{"asset": "SPY", "event": "mean_reversion_no_quote", "level": "warning", "timestamp": "2026-07-18T06:22:44.159530Z", "correlation_id": "3b41afcb8f53"}
+{"asset": "QQQ", "event": "mean_reversion_no_quote", "level": "warning", "timestamp": "2026-07-18T06:22:44.159807Z", "correlation_id": "3b41afcb8f53"}
+{"asset": "SPY", "event": "event_driven_no_quote", "level": "warning", "timestamp": "2026-07-18T06:22:44.160368Z", "correlation_id": "3b41afcb8f53"}
+{"asset": "QQQ", "event": "event_driven_no_quote", "level": "warning", "timestamp": "2026-07-18T06:22:44.160709Z", "correlation_id": "3b41afcb8f53"}
+{"phase": "analyze", "strategy": "momentum", "confidence": 0.0, "has_recommendation": false, "duration_ms": 1.04, "debug_trace": {}}
+{"phase": "analyze", "strategy": "mean_reversion", "confidence": 0.0, "has_recommendation": false, "duration_ms": 0.53, "debug_trace": {}}
+{"phase": "analyze", "strategy": "event_driven", "confidence": 0.0, "has_recommendation": false, "duration_ms": 0.9, "debug_trace": {"catalyst_count": 6, "catalysts": [{"keyword": "fed", "source": "cross_source"}, {"keyword": "earnings", "source": "cross_source"}, {"keyword": "tariff", "source": "cross_source"}, {"keyword": "conflict", "source": "cross_source"}, {"keyword": "inflation", "source": "cross_source"}], "catalyst_polarity": -0.5}}
+{"phase": "decide", "selected_strategy": null, "confidence": 0.0, "direction": "none", "rationale": "No strategy produced a valid recommendation above confidence threshold."}
+{"rationale": "No strategy produced a valid recommendation above confidence threshold.", "event": "pipeline_no_trade", "level": "info", "timestamp": "2026-07-18T06:22:44.161912Z", "correlation_id": "3b41afcb8f53"}
+{"duration_seconds": 0.632879, "trade_selected": false, "event": "pipeline_complete", "level": "info", "timestamp": "2026-07-18T06:22:44.162996Z", "correlation_id": "3b41afcb8f53"}

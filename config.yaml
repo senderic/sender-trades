@@ -31,7 +31,7 @@ rss_feeds:
   - url: https://feeds.content.dowjones.io/public/rss/mw_topstories
   - url: https://www.investing.com/rss/news.rss
   - url: https://seekingalpha.com/feed.xml
-  - url: https://reutersagency.com/feed/?taxonomy=best-topics&post_type=best&best=best
+  - url: https://www.reutersagency.com/feed/
 
 strategies:
   momentum:

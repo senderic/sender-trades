@@ -1,0 +1,179 @@
+{
+  "correlation_id": "c8738c2f5b9a",
+  "duration_seconds": 0.69,
+  "start_time": "2026-07-18T06:26:33.077475+00:00",
+  "end_time": "2026-07-18T06:26:33.765121+00:00",
+  "error_count": 0,
+  "errors": [],
+  "briefing_found": true,
+  "market_data_symbols": [
+    "SPY",
+    "QQQ"
+  ],
+  "strategies_evaluated": [
+    "momentum",
+    "mean_reversion",
+    "event_driven"
+  ],
+  "decision": {
+    "selected_label": null,
+    "recommendation": null,
+    "all_results": [
+      {
+        "label": "momentum",
+        "recommendation": {
+          "correlation_id": "",
+          "strategy_label": "momentum+event_driven",
+          "asset": "SPY",
+          "direction": "PUT",
+          "confidence": 0.875,
+          "target_strike": 632.0,
+          "contracts": 1,
+          "order_type": "market",
+          "limit_price": null,
+          "position_intent": "buy_to_open",
+          "rationale": {
+            "merged_from": [
+              "momentum",
+              "event_driven"
+            ],
+            "direction_source": "PUT",
+            "confidence_a": 0.9,
+            "confidence_b": 0.85,
+            "merged_confidence": 0.875,
+            "detail_a": {
+              "gap_pct": -1.15,
+              "combined_sentiment": -0.71875,
+              "news_sentiment": -0.4375,
+              "briefing_sentiment": -1.0,
+              "delta": 0.0,
+              "entry_price": 743.29,
+              "strategy": "Momentum: gap continuation + sentiment confirmation"
+            },
+            "detail_b": {
+              "catalyst_count": 9,
+              "catalyst_polarity": -0.5,
+              "premarket_move_pct": -0.99,
+              "combined_sentiment": -0.6458333333333334,
+              "delta": 0.0,
+              "top_catalysts": [
+                {
+                  "keyword": "fed",
+                  "source": "cross_source"
+                },
+                {
+                  "keyword": "earnings",
+                  "source": "cross_source"
+                },
+                {
+                  "keyword": "tariff",
+                  "source": "cross_source"
+                }
+              ],
+              "strategy": "Event-driven: overnight catalyst + pre-market reaction"
+            }
+          },
+          "expires_at": "2026-07-17",
+          "must_close_before": "15:30",
+          "legs": null
+        },
+        "confidence": 0.9,
+        "debug_trace": {
+          "SPY_gap_pct": -1.1508951406649597,
+          "SPY_combined_sentiment": -0.71875
+        },
+        "duration_ms": 0.1
+      },
+      {
+        "label": "mean_reversion",
+        "recommendation": null,
+        "confidence": 0.0,
+        "debug_trace": {
+          "SPY_combined_sentiment": -0.71875,
+          "SPY_move_from_close_pct": -0.9897165387894372,
+          "SPY_estimated_rsi": 40.1,
+          "SPY_skip_reason": "low_confidence_or_no_direction",
+          "SPY_confidence": 0.25,
+          "QQQ_combined_sentiment": -0.71875,
+          "QQQ_move_from_close_pct": -1.5029605915516917,
+          "QQQ_estimated_rsi": 35.0,
+          "QQQ_skip_reason": "low_confidence_or_no_direction",
+          "QQQ_confidence": 0.25
+        },
+        "duration_ms": 0.05
+      },
+      {
+        "label": "event_driven",
+        "recommendation": {
+          "correlation_id": "",
+          "strategy_label": "event_driven",
+          "asset": "SPY",
+          "direction": "PUT",
+          "confidence": 0.85,
+          "target_strike": 632.0,
+          "contracts": 1,
+          "order_type": "market",
+          "limit_price": null,
+          "position_intent": "buy_to_open",
+          "rationale": {
+            "catalyst_count": 9,
+            "catalyst_polarity": -0.5,
+            "premarket_move_pct": -0.99,
+            "combined_sentiment": -0.6458333333333334,
+            "delta": 0.0,
+            "top_catalysts": [
+              {
+                "keyword": "fed",
+                "source": "cross_source"
+              },
+              {
+                "keyword": "earnings",
+                "source": "cross_source"
+              },
+              {
+                "keyword": "tariff",
+                "source": "cross_source"
+              }
+            ],
+            "strategy": "Event-driven: overnight catalyst + pre-market reaction"
+          },
+          "expires_at": "2026-07-17",
+          "must_close_before": "15:30",
+          "legs": null
+        },
+        "confidence": 0.85,
+        "debug_trace": {
+          "catalyst_count": 9,
+          "catalysts": [
+            {
+              "keyword": "fed",
+              "source": "cross_source"
+            },
+            {
+              "keyword": "earnings",
+              "source": "cross_source"
+            },
+            {
+              "keyword": "tariff",
+              "source": "cross_source"
+            },
+            {
+              "keyword": "conflict",
+              "source": "cross_source"
+            },
+            {
+              "keyword": "inflation",
+              "source": "cross_source"
+            }
+          ],
+          "catalyst_polarity": -0.5,
+          "SPY_premarket_move_pct": -0.9897165387894372,
+          "SPY_combined_sentiment": -0.6458333333333334
+        },
+        "duration_ms": 0.26
+      }
+    ],
+    "rationale": "Risk check failed: Estimated max loss $632 exceeds limit $500."
+  },
+  "execution": null
+}

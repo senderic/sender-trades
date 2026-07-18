@@ -1,10 +1,14 @@
-import os
+from pathlib import Path
 import sys
 import tomllib
 
-sys.path.insert(0, os.path.abspath("../../src"))
+_HERE = Path(__file__).resolve().parent
+_REPO_ROOT = _HERE.parents[1]
 
-with open("../../pyproject.toml", "rb") as f:
+sys.path.insert(0, str(_REPO_ROOT))
+sys.path.insert(0, str(_REPO_ROOT / "src"))
+
+with open(_REPO_ROOT / "pyproject.toml", "rb") as f:
     data = tomllib.load(f)
 version = data["project"].get("version", "0.1.0")
 

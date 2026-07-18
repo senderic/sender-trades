@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+logs/*.json
+logs/*.log
+config.yaml
+.atlas-state.json
+uv.lock
+.DS_Store
+*.egg-info/
+dist/
+build/

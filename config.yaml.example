@@ -1,0 +1,56 @@
+general:
+  env_mode: PAPER_ALPACA
+  target_assets:
+    - SPY
+    - QQQ
+  execute: false
+
+atlas_briefing:
+  directory: ~/atlas-morning-briefing
+
+finnhub:
+  api_key: ${FINNHUB_API_KEY}
+  request_timeout_sec: 10
+
+brave:
+  api_key: ${BRAVE_API_KEY}
+  news_query: "SPY QQQ stock market intraday trading"
+
+rss_feeds:
+  - url: https://feeds.content.dowjones.io/public/rss/mw_topstories
+  - url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+
+strategies:
+  momentum:
+    enabled: true
+    min_confidence: 0.40
+    gap_threshold_pct: 0.5
+  mean_reversion:
+    enabled: true
+    min_confidence: 0.40
+    rsi_oversold: 35
+    rsi_overbought: 65
+  event_driven:
+    enabled: true
+    min_confidence: 0.45
+    catalyst_window_hours: 17
+
+risk:
+  max_loss_per_trade_usd: 500
+  max_position_size_contracts: 10
+  close_deadline_est: "15:30"
+  min_dte: 0
+  max_dte: 0
+  max_bid_ask_spread_pct: 20
+  min_data_sources_for_direction: 2
+  std_dev_threshold: 3.0
+
+mcp:
+  alpaca:
+    command: uvx
+    args: ["alpaca-mcp-server"]
+    timeout_sec: 30
+
+logging:
+  level: INFO
+  json_dir: logs

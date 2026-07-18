@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 
 from src.config import Settings
@@ -24,7 +26,7 @@ def valid_rec() -> TradeRecommendation:
         order_type="market",
         position_intent=PositionIntent.BUY_TO_OPEN,
         rationale={},
-        expires_at="2026-07-17",
+        expires_at=date.today().isoformat(),
         must_close_before="15:30",
     )
 

@@ -88,14 +88,17 @@ async def main(argv: list[str] | None = None) -> int:
     if result.errors:
         for err in result.errors[:3]:
             print(f"    • {err}")
+
+    if result.decision and result.decision.forecast:
+        print(f"\n{result.decision.forecast.table()}")
+
     if result.decision and result.decision.recommendation:
         rec = result.decision.recommendation
-        print(f"  Trade:    {rec.asset} {rec.direction.value} @ {rec.target_strike}")
-        print(f"  Conf:     {rec.confidence:.2f}")
-        print(f"  Contracts:{rec.contracts}")
+        print(f"\n  Selected trade: {rec.asset} {rec.direction.value} @ {rec.target_strike}")
+        print(f"  Confidence: {rec.confidence:.2f}  Contracts: {rec.contracts}")
         print(f"  Strategy: {rec.strategy_label}")
     else:
-        print("  Trade:    NONE — no recommendation passed all gates")
+        print("\n  Trade: NONE — no recommendation passed all gates")
     print("=" * 60)
 
     return 0 if len(result.errors) == 0 else 1

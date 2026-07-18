@@ -73,5 +73,5 @@ mcp:
       mfa_code: ${ROBINHOOD_MFA_CODE}
 
 logging:
-  level: INFO
+  level: DEBUG
   json_dir: logs

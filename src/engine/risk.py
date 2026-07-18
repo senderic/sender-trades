@@ -8,7 +8,7 @@ import structlog
 
 from src.config import Settings
 from src.models.market import MarketSnapshot
-from src.models.recommendation import Direction, TradeRecommendation
+from src.models.recommendation import TradeRecommendation
 
 logger = structlog.get_logger()
 
@@ -106,6 +106,9 @@ class RiskEngine:
     def _check_max_loss(self, rec: TradeRecommendation) -> None:
         """Verify estimated max loss does not exceed the configured limit.
 
+        Uses 0.3 % of the underlying as a rough 0DTE ATM premium estimate.
+        Actual premium depends on IV, time decay, and distance from strike.
+
         Args:
             rec: The trade recommendation to check.
 
@@ -115,10 +118,8 @@ class RiskEngine:
         if rec.legs and len(rec.legs) > 0:
             return
         underlying_price = rec.target_strike
-        if rec.direction == Direction.CALL:
-            max_loss = rec.contracts * 100 * (underlying_price * 0.01)
-        else:
-            max_loss = rec.contracts * 100 * (underlying_price * 0.01)
+        est_premium_pct = 0.003
+        max_loss = rec.contracts * 100 * (underlying_price * est_premium_pct)
         if max_loss > self.risk_config.max_loss_per_trade_usd:
             raise RiskError(
                 f"Estimated max loss ${max_loss:.0f} exceeds limit ${self.risk_config.max_loss_per_trade_usd:.0f}.",

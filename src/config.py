@@ -100,7 +100,7 @@ class StrategiesConfig(BaseModel):
 class RiskConfig(BaseModel):
     """Configuration for trade risk guardrails."""
 
-    max_loss_per_trade_usd: float = 500.0
+    max_loss_per_trade_usd: float = 1000.0
     max_position_size_contracts: int = 10
     close_deadline_est: str = "15:30"
     min_dte: int = 0

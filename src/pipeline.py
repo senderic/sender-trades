@@ -19,7 +19,13 @@ from src.logging_setup import JSONFileLogger
 from src.mcp.client import MCPBrokerClient
 from src.models.briefing import BriefingData
 from src.models.market import MarketSnapshot
-from src.models.recommendation import DecisionOutput, StrategyResult
+from src.models.recommendation import (
+    AssetForecast,
+    DecisionOutput,
+    Direction,
+    DirectionalForecast,
+    StrategyResult,
+)
 
 logger = structlog.get_logger()
 
@@ -95,6 +101,8 @@ class Pipeline:
         market = await self._phase_ingest_market()
         strategy_results = await self._phase_analyze(briefing, market)
         decision = self._phase_decide(strategy_results)
+        decision.forecast = self._compute_forecast(strategy_results, decision)
+
         execution = None
         if decision.recommendation is not None:
             execution = await self._phase_execute(decision)
@@ -294,6 +302,79 @@ class Pipeline:
             }
         )
         return decision
+
+    def _compute_forecast(
+        self,
+        results: list[StrategyResult],
+        decision: DecisionOutput,
+    ) -> DirectionalForecast:
+        """Build a directional forecast table from strategy results.
+
+        Aggregates each strategy's direction and confidence into
+        UP / DOWN / SIDEWAYS probabilities per asset.
+
+        Args:
+            results: Raw strategy results (pre-risk).
+            decision: The final decision (for rationale / selected trade).
+
+        Returns:
+            A DirectionalForecast with per-asset confidence buckets.
+        """
+        assets = self.config.general.target_assets
+        forecasts: list[AssetForecast] = []
+
+        for asset in assets:
+            up_sum = 0.0
+            down_sum = 0.0
+            weighted_magnitude = 0.0
+            mag_count = 0
+            up_sources: list[str] = []
+            down_sources: list[str] = []
+
+            for r in results:
+                rec = r.recommendation
+                if rec is None or rec.asset != asset:
+                    continue
+                if rec.direction == Direction.CALL:
+                    up_sum += r.confidence
+                    up_sources.append(r.label)
+                else:
+                    down_sum += r.confidence
+                    down_sources.append(r.label)
+
+                current = (
+                    self.result.market.quotes.get(asset).current_price
+                    if self.result.market and asset in self.result.market.quotes
+                    else None
+                )
+                if current and current > 0:
+                    expected_move = (rec.target_strike - current) / current
+                    weighted_magnitude += expected_move * r.confidence
+                    mag_count += 1
+
+            total = up_sum + down_sum
+            if total > 0:
+                up_conf = round(up_sum / total, 4)
+                down_conf = round(down_sum / total, 4)
+            else:
+                up_conf = 0.0
+                down_conf = 0.0
+
+            sideways_conf = round(max(0.0, 1.0 - up_conf - down_conf), 4)
+            magnitude = round((weighted_magnitude / mag_count) * 100 if mag_count > 0 else 0.0, 2)
+            forecasts.append(
+                AssetForecast(
+                    asset=asset,
+                    up_confidence=up_conf,
+                    down_confidence=down_conf,
+                    sideways_confidence=sideways_conf,
+                    expected_move_pct=magnitude,
+                    up_sources=up_sources,
+                    down_sources=down_sources,
+                )
+            )
+
+        return DirectionalForecast(forecasts=forecasts)
 
     async def _phase_execute(self, decision: DecisionOutput) -> dict | None:
         """Phase 5: Execute the selected trade through the MCP broker client.

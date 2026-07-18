@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -102,10 +103,53 @@ class StrategyResult(BaseModel):
     duration_ms: float = 0.0
 
 
+class AssetForecast(BaseModel):
+    """Directional forecast for a single asset."""
+
+    asset: Literal["SPY", "QQQ"]
+    up_confidence: float = 0.0
+    down_confidence: float = 0.0
+    sideways_confidence: float = 0.0
+    expected_move_pct: float = 0.0
+    up_sources: list[str] = Field(default_factory=list)
+    down_sources: list[str] = Field(default_factory=list)
+
+
+class DirectionalForecast(BaseModel):
+    """Aggregated directional outlook across all assets."""
+
+    forecasts: list[AssetForecast] = Field(default_factory=list)
+    generated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    def table(self) -> str:
+        """Return a formatted table string for terminal output."""
+        lines: list[str] = []
+        header = f"{'Asset':<6} {'UP':>7} {'DOWN':>7} {'SIDE':>7}   {'MOVE':>8}  STRATEGIES"
+        sep = "─" * 65
+        lines.append(sep)
+        lines.append(header)
+        lines.append(sep)
+        for f in self.forecasts:
+            move = f"{f.expected_move_pct:+.1f}%"
+            parts = []
+            if f.up_sources:
+                parts.append("↑" + ",".join(f.up_sources))
+            if f.down_sources:
+                parts.append("↓" + ",".join(f.down_sources))
+            src_str = " · ".join(parts) if parts else "—"
+            lines.append(
+                f"{f.asset:<6} {f.up_confidence:>6.0%} {f.down_confidence:>6.0%} "
+                f"{f.sideways_confidence:>6.0%}   {move:>8}  {src_str}"
+            )
+        lines.append(sep)
+        return "\n".join(lines)
+
+
 class DecisionOutput(BaseModel):
     """The final decision output after aggregation and risk validation."""
 
     selected_label: str | None = None
     recommendation: TradeRecommendation | None = None
+    forecast: DirectionalForecast | None = None
     all_results: list[StrategyResult] = Field(default_factory=list)
     rationale: str = ""

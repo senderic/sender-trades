@@ -27,6 +27,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
       - run: uv sync --all-extras
+      - run: uv pip install sphinx sphinx-rtd-theme myst-parser
       - run: uv run sphinx-build -b dirhtml docs/source docs/build
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

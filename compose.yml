@@ -16,6 +16,7 @@ services:
     volumes:
       - ./docs:/app/docs
       - ./src:/app/src
+      - ./pyproject.toml:/app/pyproject.toml
 
   app:
     build:

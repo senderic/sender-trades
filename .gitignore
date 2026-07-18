@@ -4,7 +4,6 @@ __pycache__/
 .env
 logs/*.json
 logs/*.log
-config.yaml
 .atlas-state.json
 uv.lock
 .DS_Store

@@ -4,7 +4,6 @@ __pycache__/
 .gitignore
 .env
 logs/*.json
-config.yaml
 tests/
 .DS_Store
 *.md

@@ -1,3 +1,5 @@
+"""Mean-reversion trading strategy implementation."""
+
 from __future__ import annotations
 
 import time
@@ -19,6 +21,11 @@ class MeanReversionStrategy(TradingStrategy):
     """Mean-reversion trading strategy — trades against extreme RSI moves with sentiment filtering."""
 
     def __init__(self, config: Settings):
+        """Initialize MeanReversionStrategy with application settings.
+
+        Args:
+            config: Application settings.
+        """
         super().__init__(label="mean_reversion", config=config)
 
     async def evaluate(

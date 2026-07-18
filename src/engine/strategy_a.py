@@ -1,3 +1,5 @@
+"""Momentum-based trading strategy implementation."""
+
 from __future__ import annotations
 
 import time
@@ -19,6 +21,11 @@ class MomentumStrategy(TradingStrategy):
     """Momentum trading strategy — enters trades on gap moves with sentiment confirmation."""
 
     def __init__(self, config: Settings):
+        """Initialize MomentumStrategy with application settings.
+
+        Args:
+            config: Application settings.
+        """
         super().__init__(label="momentum", config=config)
 
     async def evaluate(
@@ -47,7 +54,8 @@ class MomentumStrategy(TradingStrategy):
 
             gap_pct = (
                 (quote.open_price - quote.previous_close) / quote.previous_close * 100
-                if quote.previous_close > 0 else 0.0
+                if quote.previous_close > 0
+                else 0.0
             )
             trace[f"{asset}_gap_pct"] = gap_pct
 

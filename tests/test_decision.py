@@ -37,10 +37,12 @@ class TestDecisionAggregator:
     def test_picks_highest_confidence(self) -> None:
         agg = DecisionAggregator(Settings())
         results = [
-            StrategyResult(label="a", recommendation=_make_rec("a"),
-                           confidence=0.3, duration_ms=1.0),
-            StrategyResult(label="b", recommendation=_make_rec("b"),
-                           confidence=0.8, duration_ms=1.0),
+            StrategyResult(
+                label="a", recommendation=_make_rec("a"), confidence=0.3, duration_ms=1.0
+            ),
+            StrategyResult(
+                label="b", recommendation=_make_rec("b"), confidence=0.8, duration_ms=1.0
+            ),
         ]
         result = agg.aggregate(results)
         assert result.selected_label == "b"
@@ -48,8 +50,9 @@ class TestDecisionAggregator:
     def test_below_threshold_returns_none(self) -> None:
         agg = DecisionAggregator(Settings())
         results = [
-            StrategyResult(label="a", recommendation=_make_rec("a"),
-                           confidence=0.1, duration_ms=1.0),
+            StrategyResult(
+                label="a", recommendation=_make_rec("a"), confidence=0.1, duration_ms=1.0
+            ),
         ]
         result = agg.aggregate(results)
         assert result.recommendation is None

@@ -1,23 +1,24 @@
+"""MCP client for broker communication and order execution."""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import uuid
-from datetime import date, datetime, timezone
-from typing import Any, Optional
+from datetime import date
+from typing import Any
 
 import structlog
 
 from src.config import Settings
-from src.models.recommendation import (
-    AlpacaOrderPayload,
-    ExecutionCommand,
-    TradeRecommendation,
-)
 from src.mcp.schemas import (
     build_alpaca_execution,
     format_execution_json,
     occ_option_symbol,
+)
+from src.models.recommendation import (
+    ExecutionCommand,
+    TradeRecommendation,
 )
 
 logger = structlog.get_logger()
@@ -25,6 +26,7 @@ logger = structlog.get_logger()
 
 class MCPClientError(Exception):
     """Raised when an MCP broker client encounters a non-recoverable error."""
+
     pass
 
 
@@ -32,11 +34,18 @@ class MCPBrokerClient:
     """Client for interacting with an MCP-based broker daemon (Alpaca)."""
 
     def __init__(self, config: Settings):
+        """Initialize MCPBrokerClient with application settings.
+
+        Args:
+            config: Application settings.
+        """
         self.config = config
         self.env_mode = config.general.env_mode
 
     async def query_option_chain(
-        self, asset: str, expiry: Optional[str] = None,
+        self,
+        asset: str,
+        expiry: str | None = None,
     ) -> list[dict[str, Any]]:
         """Query the option chain for a given asset and expiry.
 
@@ -50,14 +59,18 @@ class MCPBrokerClient:
         if expiry is None:
             expiry = date.today().isoformat()
         logger.info("mcp_chain_query", asset=asset, expiry=expiry)
-        return await self._mcp_call("get_option_contracts", {
-            "underlying_symbol": asset,
-            "expiration_date": expiry,
-        })
+        return await self._mcp_call(
+            "get_option_contracts",
+            {
+                "underlying_symbol": asset,
+                "expiration_date": expiry,
+            },
+        )
 
     async def query_option_quote(
-        self, occ_symbol: str,
-    ) -> Optional[dict[str, Any]]:
+        self,
+        occ_symbol: str,
+    ) -> dict[str, Any] | None:
         """Query the latest quote for a specific OCC option symbol.
 
         Args:
@@ -67,9 +80,12 @@ class MCPBrokerClient:
             Dict with quote data, or None if not found.
         """
         logger.info("mcp_quote_query", symbol=occ_symbol)
-        return await self._mcp_single("get_option_latest_quote", {
-            "symbol": occ_symbol,
-        })
+        return await self._mcp_single(
+            "get_option_latest_quote",
+            {
+                "symbol": occ_symbol,
+            },
+        )
 
     async def execute(self, rec: TradeRecommendation) -> dict[str, Any]:
         """Execute a trade recommendation through the MCP broker.
@@ -107,7 +123,13 @@ class MCPBrokerClient:
                 if spread_pct > max_spread:
                     msg = f"Bid/ask spread {spread_pct:.1f}% exceeds max {max_spread}%"
                     logger.warning("mcp_wide_spread", spread_pct=spread_pct)
-                    return {"error": msg, "occ_symbol": occ_sym, "bid": bid, "ask": ask, "spread_pct": spread_pct}
+                    return {
+                        "error": msg,
+                        "occ_symbol": occ_sym,
+                        "bid": bid,
+                        "ask": ask,
+                        "spread_pct": spread_pct,
+                    }
 
         cmd = build_alpaca_execution(rec, occ_sym, bid=bid, ask=ask)
         execute_flag = self.config.general.execute
@@ -168,7 +190,7 @@ class MCPBrokerClient:
                     logger.warning("mcp_stderr", stderr=stderr)
             results = self._parse_mcp_response(stdout_bytes.decode())
             return results
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("mcp_timeout", tool=tool)
             return []
         except FileNotFoundError:
@@ -178,7 +200,7 @@ class MCPBrokerClient:
             logger.error("mcp_error", tool=tool, error=str(e))
             return []
 
-    async def _mcp_single(self, tool: str, params: dict) -> Optional[dict[str, Any]]:
+    async def _mcp_single(self, tool: str, params: dict) -> dict[str, Any] | None:
         """Call an MCP tool and return the first result element.
 
         Args:
@@ -201,7 +223,7 @@ class MCPBrokerClient:
             Dict containing parsed response and raw output.
         """
         daemon = self.config.mcp.alpaca
-        payload = cmd.payload.model_dump(exclude_none=True) if isinstance(cmd.payload, AlpacaOrderPayload) else cmd.payload.model_dump(exclude_none=True)
+        payload = cmd.payload.model_dump(exclude_none=True)
         request = {
             "jsonrpc": "2.0",
             "method": "tools/call",
@@ -210,7 +232,8 @@ class MCPBrokerClient:
         }
         try:
             proc = await asyncio.create_subprocess_exec(
-                daemon.command, *daemon.args,
+                daemon.command,
+                *daemon.args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -226,7 +249,7 @@ class MCPBrokerClient:
                     logger.warning("mcp_exec_stderr", stderr=stderr_text)
             parsed = self._parse_mcp_response(result_text)
             return {"response": parsed, "raw": result_text}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"error": "mcp_timeout"}
         except Exception as e:
             return {"error": str(e)}
@@ -261,7 +284,7 @@ class MCPBrokerClient:
         return results
 
 
-def parse_float(value: Any) -> Optional[float]:
+def parse_float(value: Any) -> float | None:
     """Safely parse a value as a float, returning None on failure.
 
     Args:

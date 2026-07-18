@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
-from enum import Enum
-from typing import Any, Literal, Optional
+from enum import StrEnum
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 
-class Direction(str, Enum):
+class Direction(StrEnum):
     """Option direction: CALL or PUT."""
 
     CALL = "CALL"
     PUT = "PUT"
 
 
-class PositionIntent(str, Enum):
+class PositionIntent(StrEnum):
     """Position opening intent: buy-to-open or sell-to-open."""
 
     BUY_TO_OPEN = "buy_to_open"
@@ -26,8 +25,8 @@ class Leg(BaseModel):
 
     symbol: str
     ratio_qty: str
-    side: Optional[Literal["buy", "sell"]] = None
-    position_intent: Optional[PositionIntent] = None
+    side: Literal["buy", "sell"] | None = None
+    position_intent: PositionIntent | None = None
 
 
 class AlpacaOrderPayload(BaseModel):
@@ -36,13 +35,13 @@ class AlpacaOrderPayload(BaseModel):
     qty: str
     type: str = "market"
     time_in_force: str = "day"
-    symbol: Optional[str] = None
-    side: Optional[Literal["buy", "sell"]] = None
-    position_intent: Optional[str] = None
-    limit_price: Optional[str] = None
-    client_order_id: Optional[str] = None
-    order_class: Optional[str] = None
-    legs: Optional[list[dict]] = None
+    symbol: str | None = None
+    side: Literal["buy", "sell"] | None = None
+    position_intent: str | None = None
+    limit_price: str | None = None
+    client_order_id: str | None = None
+    order_class: str | None = None
+    legs: list[dict] | None = None
 
     @model_validator(mode="after")
     def _validate_legs_or_symbol(self) -> AlpacaOrderPayload:
@@ -62,7 +61,7 @@ class RobinhoodOrderPayload(BaseModel):
     direction: str
     quantity: int
     order_type: str = "market"
-    price: Optional[float] = None
+    price: float | None = None
     time_in_force: str = "day"
 
 
@@ -85,19 +84,19 @@ class TradeRecommendation(BaseModel):
     target_strike: float
     contracts: int
     order_type: Literal["market", "limit"] = "market"
-    limit_price: Optional[float] = None
+    limit_price: float | None = None
     position_intent: PositionIntent = PositionIntent.BUY_TO_OPEN
     rationale: dict[str, Any] = Field(default_factory=dict)
     expires_at: str = ""
     must_close_before: str = "15:30"
-    legs: Optional[list[Leg]] = None
+    legs: list[Leg] | None = None
 
 
 class StrategyResult(BaseModel):
     """The output of a single strategy evaluation."""
 
     label: str
-    recommendation: Optional[TradeRecommendation] = None
+    recommendation: TradeRecommendation | None = None
     confidence: float
     debug_trace: dict[str, Any] = Field(default_factory=dict)
     duration_ms: float = 0.0
@@ -106,7 +105,7 @@ class StrategyResult(BaseModel):
 class DecisionOutput(BaseModel):
     """The final decision output after aggregation and risk validation."""
 
-    selected_label: Optional[str] = None
-    recommendation: Optional[TradeRecommendation] = None
+    selected_label: str | None = None
+    recommendation: TradeRecommendation | None = None
     all_results: list[StrategyResult] = Field(default_factory=list)
     rationale: str = ""

@@ -1,3 +1,5 @@
+"""Abstract base class and shared types for trading strategies."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

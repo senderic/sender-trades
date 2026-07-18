@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from src.config import Settings
-from src.logging_setup import JSONFileLogger, setup_logging
+from src.logging_setup import setup_logging
 from src.pipeline import Pipeline
 
 

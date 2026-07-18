@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -63,10 +62,30 @@ class BriefingData(BaseModel):
         Returns:
             A polarity score between -1.0 (bearish) and 1.0 (bullish).
         """
-        bullish_words = {"surge", "gain", "rally", "bullish", "optimism",
-                         "growth", "positive", "strength", "breakout", "upside"}
-        bearish_words = {"decline", "drop", "loss", "bearish", "pessimism",
-                         "slowdown", "negative", "weakness", "selloff", "downside"}
+        bullish_words = {
+            "surge",
+            "gain",
+            "rally",
+            "bullish",
+            "optimism",
+            "growth",
+            "positive",
+            "strength",
+            "breakout",
+            "upside",
+        }
+        bearish_words = {
+            "decline",
+            "drop",
+            "loss",
+            "bearish",
+            "pessimism",
+            "slowdown",
+            "negative",
+            "weakness",
+            "selloff",
+            "downside",
+        }
         summary_lower = self.executive_summary.lower()
         words = summary_lower.split()
         bullish_count = sum(1 for w in words if w.strip(".,!?") in bullish_words)

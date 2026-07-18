@@ -1,3 +1,5 @@
+"""CLI entry point for the sender-trades application."""
+
 from __future__ import annotations
 
 import argparse
@@ -90,7 +92,7 @@ async def main(argv: list[str] | None = None) -> int:
         print(f"  Contracts:{rec.contracts}")
         print(f"  Strategy: {rec.strategy_label}")
     else:
-        print(f"  Trade:    NONE — no recommendation passed all gates")
+        print("  Trade:    NONE — no recommendation passed all gates")
     print("=" * 60)
 
     return 0 if len(result.errors) == 0 else 1

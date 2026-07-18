@@ -1,7 +1,8 @@
+"""Risk validation engine for trade recommendations."""
+
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
-from typing import Optional
+from datetime import UTC, date, datetime, time
 
 import structlog
 
@@ -24,6 +25,11 @@ class RiskEngine:
     """Validates trade recommendations against configured risk guardrails."""
 
     def __init__(self, config: Settings):
+        """Initialize RiskEngine with application settings.
+
+        Args:
+            config: Application settings.
+        """
         self.config = config
         self.risk_config = config.risk
 
@@ -60,12 +66,13 @@ class RiskEngine:
         Raises:
             RiskError: If current time is at or past the close deadline.
         """
-        now = datetime.now(timezone.utc)
-        est_offset = timezone.utc
+        now = datetime.now(UTC)
         now_est = now
         cutoff_parts = self.risk_config.close_deadline_est.split(":")
         cutoff = time(int(cutoff_parts[0]), int(cutoff_parts[1]))
-        cutoff_dt_est = now_est.replace(hour=cutoff.hour, minute=cutoff.minute, second=0, microsecond=0)
+        cutoff_dt_est = now_est.replace(
+            hour=cutoff.hour, minute=cutoff.minute, second=0, microsecond=0
+        )
         if now_est >= cutoff_dt_est:
             raise RiskError(
                 f"Current time {now_est.strftime('%H:%M')} EST is at or past close deadline "
@@ -141,7 +148,9 @@ class RiskEngine:
                 pass
 
     def _check_statistical_sanity(
-        self, rec: TradeRecommendation, market: MarketSnapshot,
+        self,
+        rec: TradeRecommendation,
+        market: MarketSnapshot,
     ) -> None:
         """Flag recommendations where the target strike is unusually far from current price.
 

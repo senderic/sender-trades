@@ -1,3 +1,5 @@
+"""Strategy result aggregation and final trade decision logic."""
+
 from __future__ import annotations
 
 import structlog
@@ -12,6 +14,11 @@ class DecisionAggregator:
     """Aggregates results from multiple strategies and selects the best trade recommendation."""
 
     def __init__(self, config: Settings):
+        """Initialize DecisionAggregator with application settings.
+
+        Args:
+            config: Application settings.
+        """
         self.config = config
 
     def aggregate(self, results: list[StrategyResult]) -> DecisionOutput:
@@ -53,11 +60,18 @@ class DecisionAggregator:
 
         selected = merged if merged else best.recommendation
         if merged:
-            logger.info("decision_merge", strategies=[best.label, second.label],
-                        confidence=selected.confidence)
+            logger.info(
+                "decision_merge",
+                strategies=[best.label, second.label],
+                confidence=selected.confidence,
+            )
         else:
-            logger.info("decision_selected", strategy=best.label,
-                        label=selected.strategy_label, confidence=selected.confidence)
+            logger.info(
+                "decision_selected",
+                strategy=best.label,
+                label=selected.strategy_label,
+                confidence=selected.confidence,
+            )
 
         return DecisionOutput(
             selected_label=selected.strategy_label,
@@ -66,7 +80,9 @@ class DecisionAggregator:
             rationale=self._build_rationale(selected, best, merged),
         )
 
-    def _merge_recommendations(self, a: StrategyResult, b: StrategyResult) -> StrategyResult.recommendation:
+    def _merge_recommendations(
+        self, a: StrategyResult, b: StrategyResult
+    ) -> StrategyResult.recommendation:
         """Merge two strategy results into a single recommendation.
 
         Args:
@@ -79,8 +95,10 @@ class DecisionAggregator:
         rec_a = a.recommendation
         rec_b = b.recommendation
         avg_confidence = (a.confidence + b.confidence) / 2
-        direction = rec_a.direction if rec_a.direction == rec_b.direction else (
-            Direction.CALL if a.confidence > b.confidence else rec_b.direction
+        direction = (
+            rec_a.direction
+            if rec_a.direction == rec_b.direction
+            else (Direction.CALL if a.confidence > b.confidence else rec_b.direction)
         )
         merged_contracts = max(rec_a.contracts, rec_b.contracts)
         merged_rationale = {
@@ -102,7 +120,7 @@ class DecisionAggregator:
     @staticmethod
     def _build_rationale(
         selected: StrategyResult.recommendation,
-        best: StrategyResult,
+        _best: StrategyResult,
         merged: StrategyResult.recommendation,
     ) -> str:
         """Build a human-readable rationale string for the final decision.

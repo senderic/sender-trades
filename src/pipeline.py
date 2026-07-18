@@ -1,9 +1,9 @@
+"""Orchestrates the end-to-end trading pipeline: ingest, analyse, decide, execute."""
+
 from __future__ import annotations
 
 import asyncio
-import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import structlog
 
@@ -15,11 +15,11 @@ from src.engine.strategy_b import MeanReversionStrategy
 from src.engine.strategy_c import EventDrivenStrategy
 from src.ingestion.fetcher import fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
-from src.logging_setup import JSONFileLogger, setup_logging
+from src.logging_setup import JSONFileLogger
+from src.mcp.client import MCPBrokerClient
 from src.models.briefing import BriefingData
 from src.models.market import MarketSnapshot
 from src.models.recommendation import DecisionOutput, StrategyResult
-from src.mcp.client import MCPBrokerClient
 
 logger = structlog.get_logger()
 
@@ -28,20 +28,21 @@ class PipelineResult:
     """Container for the full pipeline execution result."""
 
     def __init__(self) -> None:
+        """Initialize an empty pipeline result container."""
         self.correlation_id: str = ""
-        self.briefing: Optional[BriefingData] = None
-        self.market: Optional[MarketSnapshot] = None
+        self.briefing: BriefingData | None = None
+        self.market: MarketSnapshot | None = None
         self.strategy_results: list[StrategyResult] = []
-        self.decision: Optional[DecisionOutput] = None
-        self.execution_result: Optional[dict] = None
+        self.decision: DecisionOutput | None = None
+        self.execution_result: dict | None = None
         self.errors: list[str] = []
-        self.start_time: datetime = datetime.now(timezone.utc)
-        self.end_time: Optional[datetime] = None
+        self.start_time: datetime = datetime.now(UTC)
+        self.end_time: datetime | None = None
 
     @property
     def duration_seconds(self) -> float:
         """Total wall-clock duration of the pipeline run in seconds."""
-        end = self.end_time or datetime.now(timezone.utc)
+        end = self.end_time or datetime.now(UTC)
         return (end - self.start_time).total_seconds()
 
     def to_summary(self) -> dict:
@@ -69,6 +70,13 @@ class Pipeline:
     """Orchestrates the full trading pipeline: ingest, analyse, decide, execute."""
 
     def __init__(self, config: Settings, correlation_id: str, file_logger: JSONFileLogger):
+        """Initialize Pipeline with configuration and logging.
+
+        Args:
+            config: Application settings.
+            correlation_id: Unique identifier for this pipeline run.
+            file_logger: JSON file logger instance.
+        """
         self.config = config
         self.correlation_id = correlation_id
         self.file_logger = file_logger
@@ -93,18 +101,21 @@ class Pipeline:
         else:
             logger.info("pipeline_no_trade", rationale=decision.rationale)
 
-        self.result.end_time = datetime.now(timezone.utc)
+        self.result.end_time = datetime.now(UTC)
         self.result.decision = decision
         self.result.execution_result = execution
 
         summary = self.result.to_summary()
         self.file_logger.write_summary(summary)
-        logger.info("pipeline_complete", duration_seconds=self.result.duration_seconds,
-                     trade_selected=decision.selected_label is not None)
+        logger.info(
+            "pipeline_complete",
+            duration_seconds=self.result.duration_seconds,
+            trade_selected=decision.selected_label is not None,
+        )
 
         return self.result
 
-    async def _phase_ingest_briefing(self) -> Optional[BriefingData]:
+    async def _phase_ingest_briefing(self) -> BriefingData | None:
         """Phase 1: Find and parse today's morning briefing.
 
         Returns:
@@ -118,14 +129,16 @@ class Pipeline:
             logger.info("briefing_found", path=str(briefing_path))
             briefing = read_briefing(briefing_path)
             self.result.briefing = briefing
-            self.file_logger.write_entry({
-                "phase": "ingest_briefing",
-                "status": "success",
-                "path": str(briefing_path),
-                "ticker_count": len(briefing.tickers),
-                "news_count": len(briefing.news_items),
-                "macro_sentiment": briefing.macro_sentiment,
-            })
+            self.file_logger.write_entry(
+                {
+                    "phase": "ingest_briefing",
+                    "status": "success",
+                    "path": str(briefing_path),
+                    "ticker_count": len(briefing.tickers),
+                    "news_count": len(briefing.news_items),
+                    "macro_sentiment": briefing.macro_sentiment,
+                }
+            )
             return briefing
         except Exception as e:
             msg = f"Briefing ingestion failed: {e}"
@@ -149,14 +162,16 @@ class Pipeline:
                 timeout=self.config.finnhub.request_timeout_sec,
             )
             self.result.market = market
-            self.file_logger.write_entry({
-                "phase": "ingest_market",
-                "status": "success",
-                "quotes": {s: q.current_price for s, q in market.quotes.items()},
-                "news_count": len(market.news),
-                "rss_count": len(market.rss_items),
-                "avg_news_polarity": market.avg_sentiment_polarity(),
-            })
+            self.file_logger.write_entry(
+                {
+                    "phase": "ingest_market",
+                    "status": "success",
+                    "quotes": {s: q.current_price for s, q in market.quotes.items()},
+                    "news_count": len(market.news),
+                    "rss_count": len(market.rss_items),
+                    "avg_news_polarity": market.avg_sentiment_polarity(),
+                }
+            )
             return market
         except Exception as e:
             msg = f"Market data ingestion failed: {e}"
@@ -165,7 +180,9 @@ class Pipeline:
             return MarketSnapshot()
 
     async def _phase_analyze(
-        self, briefing: Optional[BriefingData], market: MarketSnapshot,
+        self,
+        briefing: BriefingData | None,
+        market: MarketSnapshot,
     ) -> list[StrategyResult]:
         """Phase 3: Run all enabled trading strategies.
 
@@ -177,7 +194,7 @@ class Pipeline:
             List of StrategyResult from each enabled strategy.
         """
         if briefing is None:
-            briefing = BriefingData(briefing_date=datetime.now(timezone.utc).date())
+            briefing = BriefingData(briefing_date=datetime.now(UTC).date())
 
         strategies = []
         if self.config.strategies.momentum.enabled:
@@ -196,14 +213,16 @@ class Pipeline:
         for r in results:
             if isinstance(r, StrategyResult):
                 strategy_results.append(r)
-                self.file_logger.write_entry({
-                    "phase": "analyze",
-                    "strategy": r.label,
-                    "confidence": r.confidence,
-                    "has_recommendation": r.recommendation is not None,
-                    "duration_ms": r.duration_ms,
-                    "debug_trace": r.debug_trace,
-                })
+                self.file_logger.write_entry(
+                    {
+                        "phase": "analyze",
+                        "strategy": r.label,
+                        "confidence": r.confidence,
+                        "has_recommendation": r.recommendation is not None,
+                        "duration_ms": r.duration_ms,
+                        "debug_trace": r.debug_trace,
+                    }
+                )
             elif isinstance(r, Exception):
                 logger.error("strategy_error", error=str(r))
                 self.result.errors.append(f"Strategy error: {r}")
@@ -237,27 +256,39 @@ class Pipeline:
                 decision.selected_label = None
                 decision.rationale = f"Risk check failed: {e}"
 
-                consensus_ok, consensus_dir = RiskEngine.check_consensus(
+                consensus_ok, _consensus_dir = RiskEngine.check_consensus(
                     self.result.briefing.macro_sentiment if self.result.briefing else 0.0,
                     self.result.market.avg_sentiment_polarity() if self.result.market else 0.0,
                     min_sources=self.config.risk.min_data_sources_for_direction,
                 )
                 if not consensus_ok:
-                    logger.info("consensus_check_failed",
-                                briefing_sent=self.result.briefing.macro_sentiment if self.result.briefing else 0.0,
-                                news_polarity=self.result.market.avg_sentiment_polarity() if self.result.market else 0.0)
+                    logger.info(
+                        "consensus_check_failed",
+                        briefing_sent=self.result.briefing.macro_sentiment
+                        if self.result.briefing
+                        else 0.0,
+                        news_polarity=self.result.market.avg_sentiment_polarity()
+                        if self.result.market
+                        else 0.0,
+                    )
                     decision.rationale += " Insufficient data source consensus."
 
-        self.file_logger.write_entry({
-            "phase": "decide",
-            "selected_strategy": decision.selected_label,
-            "confidence": decision.recommendation.confidence if decision.recommendation else 0.0,
-            "direction": decision.recommendation.direction.value if decision.recommendation else "none",
-            "rationale": decision.rationale,
-        })
+        self.file_logger.write_entry(
+            {
+                "phase": "decide",
+                "selected_strategy": decision.selected_label,
+                "confidence": decision.recommendation.confidence
+                if decision.recommendation
+                else 0.0,
+                "direction": decision.recommendation.direction.value
+                if decision.recommendation
+                else "none",
+                "rationale": decision.rationale,
+            }
+        )
         return decision
 
-    async def _phase_execute(self, decision: DecisionOutput) -> Optional[dict]:
+    async def _phase_execute(self, decision: DecisionOutput) -> dict | None:
         """Phase 5: Execute the selected trade through the MCP broker client.
 
         Args:
@@ -274,14 +305,16 @@ class Pipeline:
         mcp = MCPBrokerClient(self.config)
         try:
             result = await mcp.execute(rec)
-            self.file_logger.write_entry({
-                "phase": "execute",
-                "status": result.get("status", "unknown"),
-                "occ_symbol": result.get("occ_symbol", ""),
-                "bid": result.get("bid"),
-                "ask": result.get("ask"),
-                "execution_command": result.get("execution_command"),
-            })
+            self.file_logger.write_entry(
+                {
+                    "phase": "execute",
+                    "status": result.get("status", "unknown"),
+                    "occ_symbol": result.get("occ_symbol", ""),
+                    "bid": result.get("bid"),
+                    "ask": result.get("ask"),
+                    "execution_command": result.get("execution_command"),
+                }
+            )
             return result
         except Exception as e:
             msg = f"MCP execution failed: {e}"

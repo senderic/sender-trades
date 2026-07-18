@@ -1,14 +1,15 @@
+"""News article parsing and extraction utilities."""
+
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
-from typing import Optional
 
-from src.models.briefing import BriefingData, TickerRow, NewsItem, BlogItem, PaperItem
+from src.models.briefing import BlogItem, BriefingData, NewsItem, PaperItem, TickerRow
 
 
-def parse_briefing_date(filename: str) -> Optional[date]:
+def parse_briefing_date(filename: str) -> date | None:
     """Extract the briefing date from a filename containing YYYY.MM.DD.
 
     Args:
@@ -24,7 +25,7 @@ def parse_briefing_date(filename: str) -> Optional[date]:
     return None
 
 
-def find_todays_briefing(directory: str | Path) -> Optional[Path]:
+def find_todays_briefing(directory: str | Path) -> Path | None:
     """Find today's Atlas briefing markdown file, falling back to the most recent.
 
     Args:
@@ -56,7 +57,8 @@ def _extract_ticker_section(text: str) -> str:
     """
     match = re.search(
         r"(?:##\s*Financial Market Overview|##\s*Stock Watchlist)\s*\n(.*?)(?=\n##\s|\Z)",
-        text, re.DOTALL,
+        text,
+        re.DOTALL,
     )
     return match.group(1).strip() if match else ""
 
@@ -72,7 +74,8 @@ def _extract_executive_summary(text: str) -> str:
     """
     match = re.search(
         r"(?:##\s*Executive Summary|##\s*Today's Key Connections)\s*\n(.*?)(?=\n##\s|\Z)",
-        text, re.DOTALL,
+        text,
+        re.DOTALL,
     )
     return match.group(1).strip() if match else ""
 
@@ -111,21 +114,33 @@ def _extract_tickers(ticker_section: str) -> list[TickerRow]:
                 pct_match = re.search(r"([+-]?\d+\.?\d*)%", cell)
                 if pct_match and change_pct == 0.0:
                     change_pct = float(pct_match.group(1))
-            driver_cells = [c for c in cells if not re.search(r"\$?[0-9,]+\.\d{2}", c) and not re.search(r"[+-]?\d+\.?\d*%", c)]
+            driver_cells = [
+                c
+                for c in cells
+                if not re.search(r"\$?[0-9,]+\.\d{2}", c) and not re.search(r"[+-]?\d+\.?\d*%", c)
+            ]
             if driver_cells:
                 driver = driver_cells[-1].strip() if len(driver_cells) > 1 else ""
-            tickers.append(TickerRow(symbol=symbol, price=price, change_pct=change_pct, likely_driver=driver))
+            tickers.append(
+                TickerRow(symbol=symbol, price=price, change_pct=change_pct, likely_driver=driver)
+            )
             continue
         bold_match = re.match(r"\*\*(\w+)\*\*", line)
         if bold_match:
             symbol = bold_match.group(1)
             price_match = re.search(r"\$?([0-9,]+\.\d{2})", line)
             pct_match = re.search(r"([+-]?\d+\.?\d*)%", line)
-            driver_match = re.search(r"(?:(?:Driver|driver)[:\s]+|Likely driver:\s*)(.+?)(?:\.\s|\.$|$)", line, re.IGNORECASE)
+            driver_match = re.search(
+                r"(?:(?:Driver|driver)[:\s]+|Likely driver:\s*)(.+?)(?:\.\s|\.$|$)",
+                line,
+                re.IGNORECASE,
+            )
             price = float(price_match.group(1).replace(",", "")) if price_match else 0.0
             change_pct = float(pct_match.group(1)) if pct_match else 0.0
             driver = driver_match.group(1).strip() if driver_match else ""
-            tickers.append(TickerRow(symbol=symbol, price=price, change_pct=change_pct, likely_driver=driver))
+            tickers.append(
+                TickerRow(symbol=symbol, price=price, change_pct=change_pct, likely_driver=driver)
+            )
     return tickers
 
 
@@ -165,7 +180,7 @@ def _extract_news(text: str) -> list[NewsItem]:
         if source_match:
             current_source = source_match.group(1).strip()
             continue
-        if line.startswith("### ") or line.startswith("**") and not line.startswith("***"):
+        if line.startswith("### ") or (line.startswith("**") and not line.startswith("***")):
             current_title = line.replace("### ", "").strip().strip("*").strip()
     return items
 
@@ -192,9 +207,18 @@ def _extract_blogs(text: str) -> list[BlogItem]:
         line = line.strip()
         if not line:
             continue
-        if line.startswith("### ") or (line.startswith("**") and not line.startswith("***") and "*(" not in line):
+        if line.startswith("### ") or (
+            line.startswith("**") and not line.startswith("***") and "*(" not in line
+        ):
             if current_title and current_author:
-                items.append(BlogItem(title=current_title, author=current_author, summary=current_summary, rating=current_rating))
+                items.append(
+                    BlogItem(
+                        title=current_title,
+                        author=current_author,
+                        summary=current_summary,
+                        rating=current_rating,
+                    )
+                )
             current_title = line.replace("### ", "").strip().strip("*").strip()
             current_author = ""
             current_summary = ""
@@ -215,7 +239,14 @@ def _extract_blogs(text: str) -> list[BlogItem]:
         if len(line) > 40 and not line.startswith("*Source"):
             current_summary = (current_summary + " " + line).strip()
     if current_title and current_author:
-        items.append(BlogItem(title=current_title, author=current_author, summary=current_summary, rating=current_rating))
+        items.append(
+            BlogItem(
+                title=current_title,
+                author=current_author,
+                summary=current_summary,
+                rating=current_rating,
+            )
+        )
     return items
 
 
@@ -243,7 +274,13 @@ def _extract_papers(text: str) -> list[PaperItem]:
         title_match = re.match(r"###\s+\d+\.\s+(.+?)(?:\s+[★☆]+\s*)?$", line)
         if title_match:
             if current_title:
-                items.append(PaperItem(title=current_title, authors=current_authors, reproduction_score=current_score))
+                items.append(
+                    PaperItem(
+                        title=current_title,
+                        authors=current_authors,
+                        reproduction_score=current_score,
+                    )
+                )
             current_title = title_match.group(1).strip()
             current_authors = ""
             current_score = 0.0
@@ -261,7 +298,11 @@ def _extract_papers(text: str) -> list[PaperItem]:
             current_score = float(repro_match.group(1)) / float(repro_match.group(2)) * 10
             continue
     if current_title:
-        items.append(PaperItem(title=current_title, authors=current_authors, reproduction_score=current_score))
+        items.append(
+            PaperItem(
+                title=current_title, authors=current_authors, reproduction_score=current_score
+            )
+        )
     return items
 
 
@@ -276,7 +317,8 @@ def _extract_key_connections(text: str) -> str:
     """
     match = re.search(
         r"##\s*Today's Key Connections\s*\n(.*?)(?=\n##\s|\Z)",
-        text, re.DOTALL,
+        text,
+        re.DOTALL,
     )
     return match.group(1).strip() if match else ""
 

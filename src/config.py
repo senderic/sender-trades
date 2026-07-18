@@ -1,3 +1,5 @@
+"""Application configuration and settings management."""
+
 from __future__ import annotations
 
 import os
@@ -160,6 +162,7 @@ class Settings(BaseSettings):
         Returns:
             A new Settings instance with environment variables substituted.
         """
+
         def _resolve(value: object) -> object:
             if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
                 env_key = value[2:-1]

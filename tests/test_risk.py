@@ -32,18 +32,24 @@ def valid_rec() -> TradeRecommendation:
 
 
 class TestRiskEngineTimeCheck:
-    def test_passes_valid_time(self, risk_engine: RiskEngine, valid_rec: TradeRecommendation) -> None:
+    def test_passes_valid_time(
+        self, risk_engine: RiskEngine, valid_rec: TradeRecommendation
+    ) -> None:
         valid_rec.target_strike = 100.0
         valid_rec.contracts = 1
         result = risk_engine.validate(valid_rec, MarketSnapshot())
         assert result is valid_rec
 
-    def test_max_position_size_exceeded(self, risk_engine: RiskEngine, valid_rec: TradeRecommendation) -> None:
+    def test_max_position_size_exceeded(
+        self, risk_engine: RiskEngine, valid_rec: TradeRecommendation
+    ) -> None:
         valid_rec.contracts = 100
         with pytest.raises(Exception):
             risk_engine.validate(valid_rec, MarketSnapshot())
 
-    def test_max_loss_exceeded(self, risk_engine: RiskEngine, valid_rec: TradeRecommendation) -> None:
+    def test_max_loss_exceeded(
+        self, risk_engine: RiskEngine, valid_rec: TradeRecommendation
+    ) -> None:
         valid_rec.contracts = 1000
         with pytest.raises(Exception):
             risk_engine.validate(valid_rec, MarketSnapshot())

@@ -1,8 +1,9 @@
+"""Data fetchers for market data, news, and RSS feeds."""
+
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 import httpx
 import structlog
@@ -22,10 +23,16 @@ class FinnhubFetcher:
     """Fetches real-time stock quotes from the Finnhub API."""
 
     def __init__(self, api_key: str, timeout: int = 10):
+        """Initialize FinnhubFetcher with API credentials.
+
+        Args:
+            api_key: Finnhub API key.
+            timeout: HTTP request timeout in seconds.
+        """
         self.api_key = api_key
         self.timeout = timeout
 
-    async def fetch_quote(self, symbol: str) -> Optional[Quote]:
+    async def fetch_quote(self, symbol: str) -> Quote | None:
         """Fetch the latest quote for a given symbol from Finnhub.
 
         Args:
@@ -37,7 +44,7 @@ class FinnhubFetcher:
         if not self.api_key:
             logger.warning("finnhub_no_api_key", symbol=symbol)
             return None
-        url = f"https://finnhub.io/api/v1/quote"
+        url = "https://finnhub.io/api/v1/quote"
         params = {"symbol": symbol, "token": self.api_key}
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -56,11 +63,12 @@ class FinnhubFetcher:
                     previous_close=float(data["pc"]),
                     change_pct=(
                         (float(data["c"]) - float(data["pc"])) / float(data["pc"]) * 100
-                        if float(data["pc"]) else 0.0
+                        if float(data["pc"])
+                        else 0.0
                     ),
                     volume=int(data.get("v", 0)),
                     source=DataSource.FINNHUB,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                 )
         except httpx.TimeoutException:
             logger.error("finnhub_timeout", symbol=symbol)
@@ -77,6 +85,13 @@ class BraveFetcher:
     """Fetches financial news headlines from the Brave Search API."""
 
     def __init__(self, api_key: str, query: str = "", timeout: int = 10):
+        """Initialize BraveFetcher with API credentials and search query.
+
+        Args:
+            api_key: Brave Search API key.
+            query: Default search query string.
+            timeout: HTTP request timeout in seconds.
+        """
         self.api_key = api_key
         self.query = query
         self.timeout = timeout
@@ -111,17 +126,23 @@ class BraveFetcher:
                     published = None
                     if result.get("published_time"):
                         try:
-                            published = datetime.fromisoformat(result["published_time"].replace("Z", "+00:00"))
+                            published = datetime.fromisoformat(
+                                result["published_time"].replace("Z", "+00:00")
+                            )
                         except (ValueError, TypeError):
-                            published = datetime.now(timezone.utc)
-                    headlines.append(NewsHeadline(
-                        title=result.get("title", ""),
-                        source=result.get("source", ""),
-                        url=result.get("url", ""),
-                        published_at=published,
-                        snippet=result.get("description", ""),
-                        polarity=_estimate_polarity(result.get("description", "") or result.get("title", "")),
-                    ))
+                            published = datetime.now(UTC)
+                    headlines.append(
+                        NewsHeadline(
+                            title=result.get("title", ""),
+                            source=result.get("source", ""),
+                            url=result.get("url", ""),
+                            published_at=published,
+                            snippet=result.get("description", ""),
+                            polarity=_estimate_polarity(
+                                result.get("description", "") or result.get("title", "")
+                            ),
+                        )
+                    )
                 return headlines
         except httpx.TimeoutException:
             logger.error("brave_timeout")
@@ -138,6 +159,12 @@ class RSSFetcher:
     """Fetches entries from a list of RSS/Atom feeds."""
 
     def __init__(self, feed_urls: list[str], timeout: int = 10):
+        """Initialize RSSFetcher with feed URLs.
+
+        Args:
+            feed_urls: List of RSS feed URLs to fetch.
+            timeout: HTTP request timeout in seconds.
+        """
         self.feed_urls = feed_urls
         self.timeout = timeout
 
@@ -170,6 +197,7 @@ class RSSFetcher:
         """
         try:
             import feedparser
+
             resp = await client.get(url)
             resp.raise_for_status()
             feed = feedparser.parse(resp.text)
@@ -178,14 +206,17 @@ class RSSFetcher:
                 published = None
                 if hasattr(entry, "published_parsed") and entry.published_parsed:
                     import time
-                    published = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=timezone.utc)
-                items.append(RSSCacheItem(
-                    title=entry.get("title", ""),
-                    source=url,
-                    url=entry.get("link", ""),
-                    published_at=published,
-                    summary=entry.get("summary", "")[:500],
-                ))
+
+                    published = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=UTC)
+                items.append(
+                    RSSCacheItem(
+                        title=entry.get("title", ""),
+                        source=url,
+                        url=entry.get("link", ""),
+                        published_at=published,
+                        summary=entry.get("summary", "")[:500],
+                    )
+                )
             return items
         except ImportError:
             logger.error("rss_missing_dependency", detail="feedparser not installed")
@@ -239,16 +270,49 @@ async def fetch_market_data(
         quotes=quotes,
         news=news_results,
         rss_items=rss_results,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
     )
 
 
-POSITIVE_WORDS = {"surge", "gain", "rally", "bullish", "optimism", "growth",
-                  "positive", "strength", "breakout", "upside", "beat", "up",
-                  "higher", "soar", "climb", "jump", "rise"}
-NEGATIVE_WORDS = {"decline", "drop", "loss", "bearish", "pessimism", "slowdown",
-                  "negative", "weakness", "selloff", "downside", "miss", "down",
-                  "lower", "plunge", "slide", "fall", "slump", "crash"}
+POSITIVE_WORDS = {
+    "surge",
+    "gain",
+    "rally",
+    "bullish",
+    "optimism",
+    "growth",
+    "positive",
+    "strength",
+    "breakout",
+    "upside",
+    "beat",
+    "up",
+    "higher",
+    "soar",
+    "climb",
+    "jump",
+    "rise",
+}
+NEGATIVE_WORDS = {
+    "decline",
+    "drop",
+    "loss",
+    "bearish",
+    "pessimism",
+    "slowdown",
+    "negative",
+    "weakness",
+    "selloff",
+    "downside",
+    "miss",
+    "down",
+    "lower",
+    "plunge",
+    "slide",
+    "fall",
+    "slump",
+    "crash",
+}
 
 
 def _estimate_polarity(text: str) -> float:

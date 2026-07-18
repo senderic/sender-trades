@@ -17,7 +17,63 @@ dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.25,<1",
     "pytest-cov>=6.0,<7",
+    "ruff>=0.15,<1",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [".venv", ".git", "__pycache__", "docs"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # simplify
+    "ARG",  # unused arguments
+    "C4",   # comprehensions
+    "T20",  # print statements
+    "PT",   # pytest style
+    "RUF",  # ruff-specific (includes RUF100)
+    "YTT",  # flake8-2020 (datetime best practices)
+]
+ignore = [
+    "E501",     # line too long (handled by formatter)
+    "N801",     # class name (Pydantic models use CamelCase)
+    "N802",     # function name (allow lowercase)
+    "N803",     # argument name
+    "N806",     # variable name
+    "N807",     # dunder method name
+    "ARG001",   # unused function arg (can't always remove)
+    "ARG002",   # unused method arg
+    "B028",     # no explicit stacklevel
+    "SIM114",   # combine if statements (sometimes clearer separate)
+    "C408",     # dict() vs {} (sometimes necessary for type hints)
+    "PT004",    # fixture no return
+    "PT006",    # fixture name
+    "PT007",    # fixture param
+    "PT011",    # pytest.raises too broad
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/main.py" = ["T20"]  # allow print for CLI output
+"tests/*.py" = [
+    "T20",     # allow print in tests
+    "S101",    # allow assert in tests
+    "PLR2004", # magic value comparisons
+    "B017",    # allow pytest.raises(Exception)
+]
+"src/__init__.py" = ["F401"]  # allow unused imports in __init__
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

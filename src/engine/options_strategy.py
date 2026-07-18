@@ -1,13 +1,13 @@
+"""Options pricing and strategy evaluation utilities."""
+
 from __future__ import annotations
 
 import math
-from datetime import date, datetime
 
 from src.models.recommendation import Direction
 
 
 def _days_to_expiry() -> int:
-    today = date.today()
     return 0
 
 
@@ -26,10 +26,7 @@ def compute_otm_strike(
     Returns:
         The computed OTM strike price rounded to the nearest strike increment.
     """
-    if direction == Direction.CALL:
-        multiplier = 1 + (delta_target * 0.5)
-    else:
-        multiplier = 1 - (delta_target * 0.5)
+    multiplier = 1 + delta_target * 0.5 if direction == Direction.CALL else 1 - delta_target * 0.5
     raw = underlying_price * multiplier
     return _round_to_strike(raw)
 
@@ -100,7 +97,10 @@ def compute_premium_bounds(
     """
     days = _days_to_expiry() + 1
     sigma = iv * math.sqrt(days / 365.0)
-    intrinsic = max(0.0, (underlying_price - strike) if direction == Direction.CALL else (strike - underlying_price))
+    intrinsic = max(
+        0.0,
+        (underlying_price - strike) if direction == Direction.CALL else (strike - underlying_price),
+    )
     extrinsic = underlying_price * sigma * 0.4
     mid = intrinsic + extrinsic
     spread = mid * 0.1

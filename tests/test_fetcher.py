@@ -21,6 +21,7 @@ class TestFinnhubFetcher:
     @pytest.mark.asyncio
     async def test_no_api_key_returns_none(self) -> None:
         from src.ingestion.fetcher import FinnhubFetcher
+
         fetcher = FinnhubFetcher(api_key="")
         result = await fetcher.fetch_quote("SPY")
         assert result is None
@@ -30,6 +31,7 @@ class TestBraveFetcher:
     @pytest.mark.asyncio
     async def test_no_api_key_returns_empty(self) -> None:
         from src.ingestion.fetcher import BraveFetcher
+
         fetcher = BraveFetcher(api_key="")
         results = await fetcher.fetch_news()
         assert results == []
@@ -39,6 +41,7 @@ class TestRSSFetcher:
     @pytest.mark.asyncio
     async def test_empty_urls_returns_empty(self) -> None:
         from src.ingestion.fetcher import RSSFetcher
+
         fetcher = RSSFetcher(feed_urls=[])
         results = await fetcher.fetch_all()
         assert results == []

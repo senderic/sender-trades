@@ -1,7 +1,9 @@
+"""Event-driven trading strategy implementation."""
+
 from __future__ import annotations
 
 import time
-from datetime import date, datetime, timezone
+from datetime import date
 
 import structlog
 
@@ -15,13 +17,36 @@ from src.models.recommendation import Direction, PositionIntent, StrategyResult,
 logger = structlog.get_logger()
 
 CATALYST_KEYWORDS = [
-    "fed", "interest rate", "cpi", "ppi", "unemployment", "jobs report",
-    "earnings", "revenue", "guidance", "buyback", "dividend",
-    "tariff", "trade deal", "regulation", "antitrust",
-    "geopolitical", "sanctions", "conflict", "ceasefire",
-    "inflation", "deflation", "recession", "gdp",
-    "consumer sentiment", "retail sales", "manufacturing",
-    "sp500", "nasdaq", "dow jones", "futures",
+    "fed",
+    "interest rate",
+    "cpi",
+    "ppi",
+    "unemployment",
+    "jobs report",
+    "earnings",
+    "revenue",
+    "guidance",
+    "buyback",
+    "dividend",
+    "tariff",
+    "trade deal",
+    "regulation",
+    "antitrust",
+    "geopolitical",
+    "sanctions",
+    "conflict",
+    "ceasefire",
+    "inflation",
+    "deflation",
+    "recession",
+    "gdp",
+    "consumer sentiment",
+    "retail sales",
+    "manufacturing",
+    "sp500",
+    "nasdaq",
+    "dow jones",
+    "futures",
 ]
 
 
@@ -29,6 +54,11 @@ class EventDrivenStrategy(TradingStrategy):
     """Event-driven trading strategy — detects catalysts from briefing/news and trades on pre-market reaction."""
 
     def __init__(self, config: Settings):
+        """Initialize EventDrivenStrategy with application settings.
+
+        Args:
+            config: Application settings.
+        """
         super().__init__(label="event_driven", config=config)
 
     async def evaluate(
@@ -74,8 +104,7 @@ class EventDrivenStrategy(TradingStrategy):
             prior_close = quote.previous_close
             current = quote.current_price
             premarket_move_pct = (
-                (current - prior_close) / prior_close * 100
-                if prior_close > 0 else 0.0
+                (current - prior_close) / prior_close * 100 if prior_close > 0 else 0.0
             )
             trace[f"{asset}_premarket_move_pct"] = premarket_move_pct
 
@@ -143,7 +172,9 @@ class EventDrivenStrategy(TradingStrategy):
         )
 
     def _detect_catalysts(
-        self, briefing: BriefingData, market: MarketSnapshot,
+        self,
+        briefing: BriefingData,
+        market: MarketSnapshot,
     ) -> list[dict]:
         """Detect market catalysts from briefing text, news, and RSS items.
 
@@ -155,9 +186,7 @@ class EventDrivenStrategy(TradingStrategy):
             List of catalyst dicts with keyword and source fields.
         """
         catalysts: list[dict] = []
-        all_text = (
-            briefing.executive_summary + " " + briefing.key_connections + " "
-        )
+        all_text = briefing.executive_summary + " " + briefing.key_connections + " "
         for item in briefing.news_items:
             all_text += f" {item.title} {item.snippet}" if item.snippet else f" {item.title}"
         for headline in market.news:
@@ -180,10 +209,24 @@ class EventDrivenStrategy(TradingStrategy):
         Returns:
             Signed polarity between -1.0 and 1.0.
         """
-        positive_keywords = {"fed", "buyback", "dividend", "ceasefire",
-                             "consumer sentiment", "gdp", "retail sales"}
-        negative_keywords = {"tariff", "sanctions", "conflict", "recession",
-                             "inflation", "antitrust", "unemployment"}
+        positive_keywords = {
+            "fed",
+            "buyback",
+            "dividend",
+            "ceasefire",
+            "consumer sentiment",
+            "gdp",
+            "retail sales",
+        }
+        negative_keywords = {
+            "tariff",
+            "sanctions",
+            "conflict",
+            "recession",
+            "inflation",
+            "antitrust",
+            "unemployment",
+        }
         pos = sum(1 for c in catalysts if c["keyword"] in positive_keywords)
         neg = sum(1 for c in catalysts if c["keyword"] in negative_keywords)
         total = pos + neg

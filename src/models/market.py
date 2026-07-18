@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class DataSource(str, Enum):
+class DataSource(StrEnum):
     """Enumeration of supported market data sources."""
 
     FINNHUB = "finnhub"
@@ -37,7 +36,7 @@ class NewsHeadline(BaseModel):
     title: str
     source: str
     url: str
-    published_at: Optional[datetime] = None
+    published_at: datetime | None = None
     snippet: str = ""
     polarity: float = 0.0
 
@@ -48,7 +47,7 @@ class RSSCacheItem(BaseModel):
     title: str
     source: str
     url: str
-    published_at: Optional[datetime] = None
+    published_at: datetime | None = None
     summary: str = ""
 
 
@@ -68,6 +67,4 @@ class MarketSnapshot(BaseModel):
         """
         if not self.news:
             return 0.0
-        return round(
-            sum(n.polarity for n in self.news) / len(self.news), 4
-        )
+        return round(sum(n.polarity for n in self.news) / len(self.news), 4)

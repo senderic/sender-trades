@@ -1,13 +1,13 @@
+"""MCP message schemas and serialization utilities."""
+
 from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Optional
 
 from src.models.recommendation import (
     AlpacaOrderPayload,
     ExecutionCommand,
-    Leg,
     RobinhoodOrderPayload,
     TradeRecommendation,
 )
@@ -16,8 +16,8 @@ from src.models.recommendation import (
 def build_alpaca_execution(
     rec: TradeRecommendation,
     occ_symbol: str,
-    bid: Optional[float] = None,
-    ask: Optional[float] = None,
+    bid: float | None = None,
+    ask: float | None = None,
 ) -> ExecutionCommand:
     """Build an execution command for the Alpaca MCP broker.
 
@@ -117,7 +117,7 @@ def occ_option_symbol(
         OCC option symbol string.
     """
     date_part = expiry.replace("-", "")
-    strike_int = int(round(strike * 1000))
+    strike_int = round(strike * 1000)
     return f"{underlying}{date_part}{option_type.upper()[0]}{strike_int:08d}"
 
 
@@ -131,13 +131,19 @@ def format_execution_json(cmd: ExecutionCommand) -> str:
         Indented JSON string of the command payload.
     """
     if isinstance(cmd.payload, AlpacaOrderPayload):
-        return json.dumps({
+        return json.dumps(
+            {
+                "action": cmd.action,
+                "payload": cmd.payload.model_dump(exclude_none=True),
+                "env_mode": cmd.env_mode,
+            },
+            indent=2,
+        )
+    return json.dumps(
+        {
             "action": cmd.action,
             "payload": cmd.payload.model_dump(exclude_none=True),
             "env_mode": cmd.env_mode,
-        }, indent=2)
-    return json.dumps({
-        "action": cmd.action,
-        "payload": cmd.payload.model_dump(exclude_none=True),
-        "env_mode": cmd.env_mode,
-    }, indent=2)
+        },
+        indent=2,
+    )

@@ -13,7 +13,9 @@ from src.models.recommendation import Direction
 
 class TestMomentumStrategy:
     @pytest.mark.asyncio
-    async def test_gap_up_generates_call(self, sample_briefing_data, sample_market_snapshot) -> None:
+    async def test_gap_up_generates_call(
+        self, sample_briefing_data, sample_market_snapshot
+    ) -> None:
         config = Settings()
         config.strategies.momentum.gap_threshold_pct = 0.1
         strategy = MomentumStrategy(config)
@@ -22,7 +24,9 @@ class TestMomentumStrategy:
         assert result.recommendation.direction == Direction.CALL
 
     @pytest.mark.asyncio
-    async def test_low_confidence_returns_none(self, sample_briefing_data, sample_market_snapshot) -> None:
+    async def test_low_confidence_returns_none(
+        self, sample_briefing_data, sample_market_snapshot
+    ) -> None:
         config = Settings()
         config.strategies.momentum.min_confidence = 1.0
         strategy = MomentumStrategy(config)
@@ -32,7 +36,9 @@ class TestMomentumStrategy:
 
 class TestMeanReversionStrategy:
     @pytest.mark.asyncio
-    async def test_evaluates_without_error(self, sample_briefing_data, sample_market_snapshot) -> None:
+    async def test_evaluates_without_error(
+        self, sample_briefing_data, sample_market_snapshot
+    ) -> None:
         strategy = MeanReversionStrategy(Settings())
         result = await strategy.evaluate(sample_briefing_data, sample_market_snapshot)
         assert result.label == "mean_reversion"

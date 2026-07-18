@@ -1,10 +1,11 @@
+"""Logging configuration and structured JSON file logging."""
+
 from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ class JSONFileLogger:
         Returns:
             Path to today's log directory.
         """
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         day_dir = self.log_dir / today
         day_dir.mkdir(parents=True, exist_ok=True)
         return day_dir
@@ -58,7 +59,7 @@ class JSONFileLogger:
 
 def _json_serializer(obj: object, *args: Any, **kwargs: Any) -> bytes:
     kwargs.pop("default", None)
-    return json.dumps(obj, default=str, *args, **kwargs).encode("utf-8")
+    return json.dumps(obj, default=str, *args, **kwargs).encode("utf-8")  # noqa: B026
 
 
 def setup_logging(settings: Settings, correlation_id: str) -> JSONFileLogger:
@@ -102,18 +103,20 @@ def setup_logging(settings: Settings, correlation_id: str) -> JSONFileLogger:
         event_dict: dict[str, Any],
     ) -> dict[str, Any]:
         event_dict.setdefault("correlation_id", correlation_id)
-        event_dict.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+        event_dict.setdefault("timestamp", datetime.now(UTC).isoformat())
         file_logger.write_entry(event_dict)
         return event_dict
 
-    structlog.configure(processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        log_event,
-        structlog.dev.ConsoleRenderer()
-        if sys.stderr.isatty()
-        else structlog.processors.JSONRenderer(serializer=_json_serializer),
-    ])
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            log_event,
+            structlog.dev.ConsoleRenderer()
+            if sys.stderr.isatty()
+            else structlog.processors.JSONRenderer(serializer=_json_serializer),
+        ]
+    )
 
     return file_logger

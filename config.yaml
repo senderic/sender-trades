@@ -6,7 +6,7 @@ general:
   execute: false
 
 atlas_briefing:
-  directory: ~/atlas-morning-briefing
+  directory: ~/atlas-morning-briefing/briefings
   snapshot_enabled: true
 
 finnhub:

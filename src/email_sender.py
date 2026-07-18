@@ -135,7 +135,8 @@ def send_email(
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
-    to = list(recipients) if recipients else [os.environ.get("RECIPIENT_EMAIL", "") or user]
+    raw_recipients = os.environ.get("RECIPIENT_EMAIL", "") if recipients is None else ",".join(recipients)
+    to = [r.strip() for r in raw_recipients.split(",") if r.strip()] or ([user] if user else [])
 
     if not user or not password:
         logger.warning("GMAIL_USER or GMAIL_APP_PASSWORD not set — skipping email")

@@ -122,7 +122,7 @@ async def main(argv: list[str] | None = None) -> int:
     if should_email and result.decision and result.decision.forecast:
         send_email(
             forecast=result.decision.forecast,
-            dry_run=not settings.general.execute,
+            dry_run=False,
         )
 
     return 0 if len(result.errors) == 0 else 1

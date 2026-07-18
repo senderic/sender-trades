@@ -13,6 +13,8 @@ class DataSource(StrEnum):
     MCP_CHAIN = "mcp_chain"
     BRIEFING = "briefing"
     BRAVE = "brave"
+    REDDIT = "reddit"
+    UNUSUAL_WHALES = "unusual_whales"
 
 
 class Quote(BaseModel):

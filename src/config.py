@@ -40,6 +40,22 @@ class BraveConfig(BaseModel):
     news_query: str = "SPY QQQ stock market intraday trading"
 
 
+class RedditConfig(BaseModel):
+    """Configuration for Reddit source scraping."""
+
+    enabled: bool = True
+    subreddits: list[str] = Field(default_factory=lambda: ["wallstreetbets", "options"])
+    post_limit: int = 25
+    user_agent: str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) sender-trades/1.0"
+
+
+class UnusualWhalesConfig(BaseModel):
+    """Configuration for Unusual Whales options flow API."""
+
+    api_key: str = ""
+    enabled: bool = True
+
+
 class RSSFeedItem(BaseModel):
     """A single RSS feed URL to poll for market news."""
 
@@ -106,6 +122,9 @@ class MCPConfig(BaseModel):
     """Configuration for MCP broker connections."""
 
     alpaca: MCPDaemonConfig = MCPDaemonConfig()
+    robinhood: MCPDaemonConfig = MCPDaemonConfig(
+        args=["robinhood-mcp-server"],
+    )
 
 
 class LoggingConfig(BaseModel):
@@ -130,6 +149,8 @@ class Settings(BaseSettings):
     atlas_briefing: AtlasBriefingConfig = AtlasBriefingConfig()
     finnhub: FinnhubConfig = FinnhubConfig()
     brave: BraveConfig = BraveConfig()
+    reddit: RedditConfig = RedditConfig()
+    unusual_whales: UnusualWhalesConfig = UnusualWhalesConfig()
     rss_feeds: list[RSSFeedItem] = Field(default_factory=list)
     strategies: StrategiesConfig = StrategiesConfig()
     risk: RiskConfig = RiskConfig()

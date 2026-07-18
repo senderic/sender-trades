@@ -16,9 +16,22 @@ brave:
   api_key: ${BRAVE_API_KEY}
   news_query: "SPY QQQ stock market intraday trading"
 
+reddit:
+  enabled: true
+  subreddits:
+    - wallstreetbets
+    - options
+  post_limit: 25
+
+unusual_whales:
+  enabled: true
+  api_key: ${UNUSUAL_WHALES_API_KEY}
+
 rss_feeds:
   - url: https://feeds.content.dowjones.io/public/rss/mw_topstories
-  - url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+  - url: https://www.investing.com/rss/news.rss
+  - url: https://seekingalpha.com/feed.xml
+  - url: https://reutersagency.com/feed/?taxonomy=best-topics&post_type=best&best=best
 
 strategies:
   momentum:

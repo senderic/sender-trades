@@ -159,6 +159,13 @@ class Pipeline:
                 brave_key=self.config.brave.api_key,
                 brave_query=self.config.brave.news_query,
                 rss_urls=[f.url for f in self.config.rss_feeds],
+                reddit_subreddits=self.config.reddit.subreddits
+                if self.config.reddit.enabled
+                else None,
+                reddit_post_limit=self.config.reddit.post_limit,
+                unusual_whales_key=self.config.unusual_whales.api_key
+                if self.config.unusual_whales.enabled
+                else "",
                 timeout=self.config.finnhub.request_timeout_sec,
             )
             self.result.market = market

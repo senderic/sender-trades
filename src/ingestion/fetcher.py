@@ -155,6 +155,111 @@ class BraveFetcher:
             return []
 
 
+class RedditFetcher:
+    """Fetches hot posts from configured subreddits via Reddit's public JSON API."""
+
+    def __init__(
+        self,
+        subreddits: list[str],
+        post_limit: int = 25,
+        user_agent: str = "sender-trades/1.0",
+        timeout: int = 10,
+    ):
+        self.subreddits = subreddits
+        self.post_limit = post_limit
+        self.user_agent = user_agent
+        self.timeout = timeout
+
+    async def fetch_posts(self) -> list[NewsHeadline]:
+        headlines: list[NewsHeadline] = []
+        headers = {"User-Agent": self.user_agent}
+        async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+            for sub in self.subreddits:
+                try:
+                    url = f"https://www.reddit.com/r/{sub}/hot.json?limit={self.post_limit}"
+                    resp = await client.get(url)
+                    if resp.status_code == 429:
+                        logger.warning("reddit_rate_limited", subreddit=sub)
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    for child in data.get("data", {}).get("children", []):
+                        post = child.get("data", {})
+                        if post.get("stickied"):
+                            continue
+                        created = (
+                            datetime.fromtimestamp(post.get("created_utc", 0), tz=UTC)
+                            if post.get("created_utc")
+                            else None
+                        )
+                        snippet = (post.get("selftext", "") or "")[:500]
+                        headlines.append(
+                            NewsHeadline(
+                                title=post.get("title", ""),
+                                source=f"r/{sub}",
+                                url=f"https://www.reddit.com{post.get('permalink', '')}",
+                                published_at=created,
+                                snippet=snippet,
+                                polarity=_estimate_polarity(f"{post.get('title', '')} {snippet}"),
+                            )
+                        )
+                except httpx.TimeoutException:
+                    logger.error("reddit_timeout", subreddit=sub)
+                except httpx.HTTPStatusError as e:
+                    logger.error("reddit_http_error", subreddit=sub, status=e.response.status_code)
+                except Exception as e:
+                    logger.error("reddit_error", subreddit=sub, error=str(e))
+        return headlines
+
+
+class UnusualWhalesFetcher:
+    """Fetches options flow data from Unusual Whales API (paid subscription required)."""
+
+    BASE_URL = "https://api.unusualwhales.com/v1"
+
+    def __init__(self, api_key: str, timeout: int = 10):
+        self.api_key = api_key
+        self.timeout = timeout
+
+    async def fetch_flow_news(self) -> list[NewsHeadline]:
+        if not self.api_key:
+            logger.warning("unusual_whales_no_api_key")
+            return []
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        headlines: list[NewsHeadline] = []
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout, headers=headers) as client:
+                resp = await client.get(f"{self.BASE_URL}/flow/tickers")
+                resp.raise_for_status()
+                data = resp.json()
+                for item in data.get("data", [])[:20]:
+                    ticker = item.get("ticker", "")
+                    sentiment = item.get("flow_sentiment", "neutral")
+                    headline_text = (
+                        f"{ticker} unusual options flow: {sentiment} "
+                        f"- {item.get('option_type', '')} {item.get('strike', '')}"
+                    )
+                    headlines.append(
+                        NewsHeadline(
+                            title=headline_text,
+                            source="unusualwhales",
+                            url=item.get("url", f"https://unusualwhales.com/{ticker}"),
+                            published_at=datetime.now(UTC),
+                            snippet=headline_text,
+                            polarity=0.3
+                            if sentiment == "bullish"
+                            else (-0.3 if sentiment == "bearish" else 0.0),
+                        )
+                    )
+        except httpx.TimeoutException:
+            logger.error("unusual_whales_timeout")
+        except httpx.HTTPStatusError as e:
+            logger.error("unusual_whales_http_error", status=e.response.status_code)
+        except Exception as e:
+            logger.error("unusual_whales_error", error=str(e))
+        return headlines
+
+
 class RSSFetcher:
     """Fetches entries from a list of RSS/Atom feeds."""
 
@@ -232,9 +337,12 @@ async def fetch_market_data(
     brave_key: str,
     brave_query: str,
     rss_urls: list[str],
+    reddit_subreddits: list[str] | None = None,
+    reddit_post_limit: int = 25,
+    unusual_whales_key: str = "",
     timeout: int = 10,
 ) -> MarketSnapshot:
-    """Fetch all market data concurrently: quotes, news, and RSS feeds.
+    """Fetch all market data concurrently: quotes, news, RSS, Reddit, and Unusual Whales.
 
     Args:
         symbols: List of ticker symbols for which to fetch quotes.
@@ -242,23 +350,36 @@ async def fetch_market_data(
         brave_key: Brave Search API key.
         brave_query: Brave news search query.
         rss_urls: List of RSS feed URLs.
+        reddit_subreddits: List of subreddits to scrape, or None to skip.
+        reddit_post_limit: Max posts per subreddit.
+        unusual_whales_key: Unusual Whales API key (empty to skip).
         timeout: HTTP request timeout in seconds.
 
     Returns:
-        A MarketSnapshot containing quotes, news, and RSS items.
+        A MarketSnapshot containing quotes, news, RSS items, and social sentiment.
     """
     finnhub = FinnhubFetcher(finnhub_key, timeout)
     brave = BraveFetcher(brave_key, brave_query, timeout)
     rss = RSSFetcher(rss_urls, timeout)
+    reddit = RedditFetcher(
+        subreddits=reddit_subreddits or [],
+        post_limit=reddit_post_limit,
+        timeout=timeout,
+    )
+    uw = UnusualWhalesFetcher(unusual_whales_key, timeout)
 
     quote_tasks = [finnhub.fetch_quote(sym) for sym in symbols]
     news_task = brave.fetch_news()
     rss_task = rss.fetch_all()
+    reddit_task = reddit.fetch_posts()
+    uw_task = uw.fetch_flow_news()
 
-    quotes_results, news_results, rss_results = await asyncio.gather(
+    quotes_results, news_results, rss_results, reddit_results, uw_results = await asyncio.gather(
         asyncio.gather(*quote_tasks),
         news_task,
         rss_task,
+        reddit_task,
+        uw_task,
     )
 
     quotes: dict[str, Quote] = {}
@@ -266,9 +387,11 @@ async def fetch_market_data(
         if q is not None:
             quotes[q.symbol] = q
 
+    all_news = news_results + reddit_results + uw_results
+
     return MarketSnapshot(
         quotes=quotes,
-        news=news_results,
+        news=all_news,
         rss_items=rss_results,
         captured_at=datetime.now(UTC),
     )

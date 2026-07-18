@@ -5,7 +5,6 @@ __pycache__/
 logs/**/*.json
 logs/**/*log
 .atlas-state.json
-uv.lock
 .DS_Store
 *.egg-info/
 dist/

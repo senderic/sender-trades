@@ -151,16 +151,41 @@ class LLMConfig(BaseModel):
     When the upstream LLM layer fails (e.g. the 2026-07-18 DeepSeek
     free-tier hang documented in ``LESSONS_LEARNED.md``), this project
     invokes the ``opencode`` CLI locally to re-synthesise the executive
-    summary from the raw feed items. A primary model is tried first
-    under a strict timeout; on timeout or failure the fallback chain is
-    walked in order.
+    summary from the raw feed items.
+
+    Models are split into two tiers by provider namespace:
+
+    - ``zen_models`` — the free OpenCode Zen namespace (``opencode/*``).
+      Tried first, in order, under a strict per-call timeout. Default
+      list includes every ``-free`` Zen model currently published by
+      ``opencode models``, ordered by expected quality / context fit.
+    - ``paid_go_models`` — the paid OpenCode Go namespace
+      (``opencode-go/*``). Tried only after every Zen model has been
+      exhausted. Surface via :attr:`OpencodeLLMClient.paid_used` so
+      the pipeline can log when a re-synthesis incurred a cost.
+
+    As of 2026-07-18 these Zen IDs were observed via ``opencode models``:
+    ``opencode/deepseek-v4-flash-free``, ``opencode/mimo-v2.5-free``,
+    ``opencode/hy3-free``, ``opencode/nemotron-3-ultra-free``,
+    ``opencode/north-mini-code-free``, ``opencode/big-pickle``.
     """
 
     enabled: bool = True
     opencode_path: str = "opencode"
-    primary_model: str = "opencode/deepseek-v4-flash-free"
-    fallback_models: list[str] = Field(
-        default_factory=lambda: ["opencode-go/glm-5.2", "opencode/deepseek-v4-flash-free"]
+    zen_models: list[str] = Field(
+        default_factory=lambda: [
+            "opencode/deepseek-v4-flash-free",
+            "opencode/mimo-v2.5-free",
+            "opencode/nemotron-3-ultra-free",
+            "opencode/hy3-free",
+        ]
+    )
+    paid_go_models: list[str] = Field(
+        default_factory=lambda: [
+            "opencode-go/glm-5.2",
+            "opencode-go/kimi-k3",
+            "opencode-go/qwen3.7-max",
+        ]
     )
     timeout_sec: int = 60
     max_calls_per_run: int = 5

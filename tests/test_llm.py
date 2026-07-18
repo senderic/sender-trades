@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from src.config import LLMConfig
-from src.llm.client import OpencodeLLMClient, _parse_ndjson_response
+from src.llm.client import OpencodeLLMClient, _parse_ndjson_response, is_paid_model
 from src.llm.resynthesizer import resynthesize_briefing
 from src.models.briefing import BriefingData, BriefingQuality
 
@@ -16,6 +16,20 @@ from src.models.briefing import BriefingData, BriefingQuality
 def _ndjson_output(text: str) -> str:
     """Build a synthetic NDJSON stream with one text event."""
     return json.dumps({"type": "text", "part": {"text": text}}) + "\n"
+
+
+class TestIsPaidModel:
+    def test_go_namespace_is_paid(self) -> None:
+        assert is_paid_model("opencode-go/glm-5.2") is True
+        assert is_paid_model("opencode-go/kimi-k3") is True
+
+    def test_zen_namespace_is_free(self) -> None:
+        assert is_paid_model("opencode/deepseek-v4-flash-free") is False
+        assert is_paid_model("opencode/mimo-v2.5-free") is False
+
+    def test_unknown_namespace_is_free(self) -> None:
+        # Conservative default: not-paid unless we are certain.
+        assert is_paid_model("deepinfra/foo") is False
 
 
 class TestParseNdjsonResponse:
@@ -56,7 +70,7 @@ class TestOpencodeLLMClientInvoke:
             args=["opencode"], returncode=rc, stdout=stdout, stderr=""
         )
 
-    def test_primary_success(self) -> None:
+    def test_first_zen_model_success(self) -> None:
         client = OpencodeLLMClient(
             LLMConfig(enabled=True, opencode_path="opencode", timeout_sec=60)
         )
@@ -69,20 +83,33 @@ class TestOpencodeLLMClientInvoke:
         ):
             response = client.invoke("test prompt")
         assert response == "synthetic summary"
+        # First successful model is the first entry in zen_models.
         assert client.last_served_by == "opencode/deepseek-v4-flash-free"
         assert client.last_fallback_hit is False
-        # Verify the invocation used the primary model id.
+        assert client.paid_used is False
         assert mock_run.call_args.kwargs["timeout"] == 60
         args = mock_run.call_args.args[0]
         assert "opencode/deepseek-v4-flash-free" in args
 
-    def test_primary_timeout_falls_back_to_glm(self) -> None:
-        client = OpencodeLLMClient(LLMConfig(enabled=True, opencode_path="opencode", timeout_sec=5))
+    def test_first_zen_timeout_falls_back_to_second_zen(self) -> None:
+        # The chain should walk Zen models first before touching paid Go.
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            timeout_sec=5,
+            zen_models=[
+                "opencode/deepseek-v4-flash-free",
+                "opencode/mimo-v2.5-free",
+            ],
+            paid_go_models=["opencode-go/glm-5.2"],
+        )
+        client = OpencodeLLMClient(cfg)
 
         def run_side_effect(cmd, **kwargs):
-            # First call (primary) times out; second call (glm) succeeds.
             if "opencode/deepseek-v4-flash-free" in cmd:
                 raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 5))
+            if "opencode/mimo-v2.5-free" in cmd:
+                return self._success_completed(_ndjson_output("mimo ok"))
             return self._success_completed(_ndjson_output("glm summary"))
 
         with (
@@ -90,33 +117,75 @@ class TestOpencodeLLMClientInvoke:
             patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
         ):
             response = client.invoke("prompt")
-        assert response == "glm summary"
-        assert client.last_served_by == "opencode-go/glm-5.2"
+        assert response == "mimo ok"
+        assert client.last_served_by == "opencode/mimo-v2.5-free"
         assert client.last_fallback_hit is True
-        assert "timeout after 5s" not in client.last_error
+        # Second Zen model is still free.
+        assert client.paid_used is False
 
-    def test_primary_nonzero_rc_falls_back(self) -> None:
-        client = OpencodeLLMClient(LLMConfig(enabled=True, opencode_path="opencode"))
+    def test_all_zen_fail_falls_back_to_paid_go(self) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            zen_models=["opencode/deepseek-v4-flash-free", "opencode/mimo-v2.5-free"],
+            paid_go_models=["opencode-go/glm-5.2"],
+        )
+        client = OpencodeLLMClient(cfg)
 
         def run_side_effect(cmd, **kwargs):
-            if "opencode/deepseek-v4-flash-free" in cmd:
-                return subprocess.CompletedProcess(cmd, 1, "", "boom")
-            return self._success_completed(_ndjson_output("glm ok"))
+            if "opencode-go/glm-5.2" in cmd:
+                return self._success_completed(_ndjson_output("paid glm ok"))
+            # All Zen models fail with non-zero rc.
+            return subprocess.CompletedProcess(cmd, 1, "", "zen fail")
 
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
         ):
             response = client.invoke("prompt")
-        assert response == "glm ok"
+        assert response == "paid glm ok"
+        assert client.last_served_by == "opencode-go/glm-5.2"
         assert client.last_fallback_hit is True
+        # Serving model is from opencode-go/* so paid tracking must fire.
+        assert client.paid_used is True
+
+    def test_paid_model_failure_does_not_mark_paid_used(self) -> None:
+        # If a paid model is tried but fails, and a subsequent free
+        # Zen model succeeds, paid_used should remain False (the
+        # response didn't actually come from a paid model).
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            zen_models=["opencode/deepseek-v4-flash-free"],
+            paid_go_models=["opencode-go/glm-5.2", "opencode/mimo-v2.5-free"],
+        )
+        client = OpencodeLLMClient(cfg)
+
+        def run_side_effect(cmd, **kwargs):
+            if "opencode/deepseek-v4-flash-free" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "fail")
+            if "opencode-go/glm-5.2" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "fail")
+            if "opencode/mimo-v2.5-free" in cmd:
+                return self._success_completed(_ndjson_output("zen mimo ok"))
+
+            return self._success_completed(_ndjson_output("unexpected"))
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            response = client.invoke("prompt")
+        assert response == "zen mimo ok"
+        assert client.last_served_by == "opencode/mimo-v2.5-free"
+        assert client.paid_used is False
 
     def test_all_models_fail(self) -> None:
         cfg = LLMConfig(
             enabled=True,
             opencode_path="opencode",
-            primary_model="opencode/deepseek-v4-flash-free",
-            fallback_models=["opencode-go/glm-5.2"],
+            zen_models=["opencode/deepseek-v4-flash-free"],
+            paid_go_models=["opencode-go/glm-5.2"],
         )
         client = OpencodeLLMClient(cfg)
         with (
@@ -129,10 +198,48 @@ class TestOpencodeLLMClientInvoke:
             response = client.invoke("prompt")
         assert response is None
         assert client.last_served_by is None
+        assert client.paid_used is False
         assert client.last_error != ""
 
+    def test_dedup_across_zen_and_paid(self) -> None:
+        # A model appearing in both lists must only be tried once
+        # (preserving first appearance, i.e. Zen tier wins).
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            zen_models=["opencode/deepseek-v4-flash-free"],
+            paid_go_models=["opencode/deepseek-v4-flash-free", "opencode-go/glm-5.2"],
+        )
+        client = OpencodeLLMClient(cfg)
+        call_count = {"n": 0}
+
+        def run_side_effect(cmd, **kwargs):
+            call_count["n"] += 1
+            if "opencode-go/glm-5.2" in cmd:
+                return self._success_completed(_ndjson_output("paid glm ok"))
+            # Zen primary fails.
+            return subprocess.CompletedProcess(cmd, 1, "", "fail")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            response = client.invoke("prompt")
+        assert response == "paid glm ok"
+        # First call: zen deepseek (fail). Second call: paid glm (ok).
+        # The duplicate opencode/deepseek-v4-flash-free in paid_go_models
+        # must NOT be retried.
+        assert call_count["n"] == 2
+
     def test_empty_response_counts_as_failure(self) -> None:
-        client = OpencodeLLMClient(LLMConfig(enabled=True, opencode_path="opencode"))
+        client = OpencodeLLMClient(
+            LLMConfig(
+                enabled=True,
+                opencode_path="opencode",
+                zen_models=["opencode/deepseek-v4-flash-free"],
+                paid_go_models=["opencode-go/glm-5.2"],
+            )
+        )
 
         def run_side_effect(cmd, **kwargs):
             if "opencode/deepseek-v4-flash-free" in cmd:
@@ -146,6 +253,7 @@ class TestOpencodeLLMClientInvoke:
             response = client.invoke("prompt")
         assert response == "fallback ok"
         assert client.last_fallback_hit is True
+        assert client.paid_used is True
 
     def test_budget_exhausted_returns_none(self) -> None:
         client = OpencodeLLMClient(

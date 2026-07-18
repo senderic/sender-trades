@@ -159,6 +159,7 @@ class Pipeline:
             resynth_attempted = False
             resynth_served_by: str | None = None
             resynth_fallback_hit = False
+            resynth_paid_used = False
             resynth_error = ""
 
             if briefing.briefing_quality != BriefingQuality.FULL and self.config.llm.enabled:
@@ -167,6 +168,7 @@ class Pipeline:
                 briefing = resynthesize_briefing(briefing, client)
                 resynth_served_by = client.last_served_by
                 resynth_fallback_hit = client.last_fallback_hit
+                resynth_paid_used = client.paid_used
                 resynth_error = client.last_error
 
             self.result.briefing = briefing
@@ -186,6 +188,7 @@ class Pipeline:
                     "resynth_attempted": resynth_attempted,
                     "resynth_served_by": resynth_served_by,
                     "resynth_fallback_hit": resynth_fallback_hit,
+                    "resynth_paid_used": resynth_paid_used,
                     "resynth_error": resynth_error,
                     "pre_resynth_quality": pre_resynth_quality.value,
                 }

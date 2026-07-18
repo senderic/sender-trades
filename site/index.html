@@ -28,17 +28,16 @@
     }
     .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
 
-    /* Nav */
     nav {
       display: flex; justify-content: space-between; align-items: center;
       padding: 16px 24px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--bg); z-index: 10;
     }
     nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none; }
     nav .logo span { color: var(--accent); }
     nav a:not(.logo) { color: var(--muted); text-decoration: none; font-size: 0.9rem; margin-left: 24px; }
     nav a:hover { color: var(--text); }
 
-    /* Hero */
     .hero {
       text-align: center; padding: 100px 24px 80px;
       background: radial-gradient(ellipse at 50% 0%, rgba(88,166,255,0.08) 0%, transparent 60%);
@@ -65,13 +64,12 @@
     .btn.secondary { border: 1px solid var(--border); color: var(--text); }
     .btn.secondary:hover { border-color: var(--muted); background: var(--surface); }
 
-    /* Sections */
     section { padding: 72px 0; }
     section + section { border-top: 1px solid var(--border); }
     h2 { font-size: 1.75rem; font-weight: 700; margin-bottom: 40px; text-align: center; }
     h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+    h4 { font-size: 0.95rem; font-weight: 600; margin-bottom: 6px; color: var(--muted); }
 
-    /* Features grid */
     .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
     .feature {
       background: var(--surface); border: 1px solid var(--border);
@@ -81,7 +79,21 @@
     .feature .icon { font-size: 1.5rem; margin-bottom: 12px; }
     .feature p { color: var(--muted); font-size: 0.95rem; }
 
-    /* Flow */
+    .arch {
+      display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0;
+    }
+    .arch-row {
+      display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+    }
+    .arch-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 20px; font-size: 0.9rem; text-align: center;
+      min-width: 110px;
+    }
+    .arch-box .tag { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .arch-box .val { font-weight: 600; margin-top: 4px; font-size: 0.85rem; }
+    .arch-arrow { color: var(--muted); font-size: 1.2rem; }
+
     .flow { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
     .flow-step {
       background: var(--surface); border: 1px solid var(--border);
@@ -92,7 +104,6 @@
     .flow-step .value { font-weight: 600; margin-top: 4px; }
     .flow-arrow { color: var(--muted); font-size: 1.2rem; }
 
-    /* Commands */
     .cmd-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
     .cmd-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; }
     .cmd-item code {
@@ -100,18 +111,39 @@
     }
     .cmd-item .desc { color: var(--muted); font-size: 0.85rem; }
 
-    /* Repo info */
+    .diagram {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 32px; margin: 24px 0; overflow-x: auto;
+    }
+    .diagram pre {
+      font-family: var(--mono); font-size: 0.8rem; line-height: 1.5; color: var(--text);
+    }
+
+    .pill-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    .pill-table th { text-align: left; padding: 10px 12px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .pill-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .pill {
+      display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 500;
+    }
+    .pill.green { background: rgba(63,185,80,0.12); color: var(--green); }
+    .pill.blue { background: rgba(88,166,255,0.12); color: var(--accent); }
+    .pill.orange { background: rgba(210,153,34,0.12); color: var(--orange); }
+    .pill.red { background: rgba(248,81,73,0.12); color: var(--red); }
+
+    ul.compact { list-style: none; padding: 0; }
+    ul.compact li { padding: 6px 0; color: var(--muted); font-size: 0.9rem; }
+    ul.compact li::before { content: "▸ "; color: var(--accent); }
+
     .repo-links { display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; }
     .repo-links a { color: var(--accent); text-decoration: none; font-size: 1rem; }
     .repo-links a:hover { text-decoration: underline; }
 
-    /* Footer */
     footer { text-align: center; padding: 40px 24px; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); }
 
     @media (max-width: 600px) {
       .hero h1 { font-size: 2rem; }
-      .flow { flex-direction: column; }
-      .flow-arrow { transform: rotate(90deg); }
+      .flow, .arch-row { flex-direction: column; }
+      .flow-arrow, .arch-arrow { transform: rotate(90deg); }
     }
   </style>
 </head>
@@ -120,23 +152,25 @@
     <a href="#" class="logo">sender-<span>trades</span></a>
     <div>
       <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
       <a href="#how">How it works</a>
       <a href="#quickstart">Quick start</a>
-      <a href="https://github.com/senderic/sender-trades">GitHub</a>
+      <a href="#docs">Docs</a>
     </div>
   </nav>
 
   <section class="hero">
     <h1>sender-<span>trades</span></h1>
-    <p>0DTE intraday options trading recommendation system for SPY and QQQ. Ingest, analyse, decide, execute — on your own infrastructure.</p>
+    <p>0DTE intraday options trading recommendation system for SPY and QQQ. Ingest, analyse, decide, execute — on your own infrastructure. Snapshot-aware: reuses atlas-morning-briefing data to avoid duplicate API calls.</p>
     <div class="hero-badges">
       <span class="badge green">● 63 tests</span>
       <span class="badge blue">● 3 strategies</span>
       <span class="badge orange">● 8 risk guardrails</span>
+      <span class="badge green">● Snapshot-aware</span>
     </div>
     <div class="hero-buttons">
       <a href="#quickstart" class="btn primary">Get started</a>
-      <a href="https://github.com/senderic/sender-trades" class="btn secondary">View on GitHub</a>
+      <a href="#docs" class="btn secondary">API docs</a>
     </div>
   </section>
 
@@ -147,43 +181,106 @@
         <div class="feature">
           <div class="icon">📈</div>
           <h3>Momentum strategy</h3>
-          <p>Detects gap openings and intraday momentum breaks on SPY and QQQ.</p>
+          <p>Detects gap openings and intraday momentum breaks on SPY and QQQ. Triggers on opening range breakouts and trendline violations with volume confirmation.</p>
         </div>
         <div class="feature">
           <div class="icon">↔️</div>
           <h3>Mean-reversion strategy</h3>
-          <p>RSI-based contrarian signals when the market over-extends.</p>
+          <p>RSI-based contrarian signals when the market over-extends. Enters fade positions when RSI crosses below 35 (oversold) or above 65 (overbought) on 5-minute bars.</p>
         </div>
         <div class="feature">
           <div class="icon">⚡</div>
           <h3>Event-driven strategy</h3>
-          <p>Catalyst-aware recommendations from news sentiment and macro data.</p>
+          <p>Catalyst-aware recommendations from news sentiment and macro data. Parses Atlas morning briefings for macro sentiment, sector rotation, and thematic shifts.</p>
         </div>
         <div class="feature">
           <div class="icon">🧩</div>
           <h3>Decision aggregator</h3>
-          <p>Picks the highest-confidence recommendation or merges near-ties with 2-of-3 consensus.</p>
+          <p>Picks the highest-confidence recommendation or merges near-ties with 2-of-3 consensus. Produces a directional forecast table (UP / DOWN / SIDEWAYS confidence + expected MOVE %).</p>
         </div>
         <div class="feature">
           <div class="icon">🛡️</div>
           <h3>8 risk guardrails</h3>
-          <p>Max loss cap, bid/ask spread check, time windows, OCC chain validation, statistical sanity, and more.</p>
+          <p>Max loss cap (0.3% underlying premium estimate), bid/ask spread ≤20%, statistical sanity (≤2% move), time checks (no trades after 2PM, close by 3:30PM), OCC chain existence, 2-of-3 consensus, rationale schema.</p>
         </div>
         <div class="feature">
           <div class="icon">🔌</div>
           <h3>MCP broker abstraction</h3>
-          <p>Subprocess stdio transport for Alpaca and Robinhood. Dry-run by default — nothing leaves your machine.</p>
+          <p>Subprocess stdio transport for Alpaca and Robinhood. Dry-run by default — nothing leaves your machine. Use <code>--execute</code> to enable live trading.</p>
         </div>
         <div class="feature">
           <div class="icon">📰</div>
           <h3>Multi-source ingestion</h3>
-          <p>Finnhub quotes, Brave news, Reddit WSB/options sentiment, Unusual Whales options flow, RSS feeds, and Atlas morning briefings.</p>
+          <p>Finnhub quotes, Brave news, Reddit WSB/options sentiment, Unusual Whales options flow, RSS feeds, and Atlas morning briefings. Snapshot-aware — reuses cached data from atlas-morning-briefing to avoid duplicate API calls and rate limits.</p>
         </div>
         <div class="feature">
           <div class="icon">📋</div>
           <h3>Structured logging</h3>
-          <p>JSON logs with per-run correlation IDs. Every decision is traceable.</p>
+          <p>JSON logs with per-run correlation IDs. Every decision, risk check, and execution step is traceable. Logs organized by date in <code>logs/YYYY-MM-DD/</code> with run and summary files.</p>
         </div>
+        <div class="feature">
+          <div class="icon">📬</div>
+          <h3>Email reports</h3>
+          <p>Styled HTML forecast table sent via Gmail SMTP (app password). Use <code>--email</code> to receive the directional forecast in your inbox each morning.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🐳</div>
+          <h3>Docker + CI/CD</h3>
+          <p>Multi-stage Dockerfile, docker-compose for app + docs, GitHub Actions for CI (ruff + pytest) and GitHub Pages deploy for the brochure site.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <div class="container">
+      <h2>Architecture</h2>
+
+      <h4>Pipeline overview</h4>
+      <div class="arch">
+        <div class="arch-row">
+          <div class="arch-box"><div class="tag">Phase 1</div><div class="val">Ingest<br>briefing</div><div class="tag">Atlas markdown</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 2</div><div class="val">Ingest<br>market</div><div class="tag">Snapshots or API</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 3</div><div class="val">Analyse</div><div class="tag">3 strategies</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Decide</div><div class="tag">Aggregate + Risk</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 5</div><div class="val">Execute</div><div class="tag">MCP (or dry-run)</div></div>
+        </div>
+      </div>
+
+      <h4>Data sources</h4>
+      <table class="pill-table">
+        <tr><th>Source</th><th>Data</th><th>Snapshot cached</th></tr>
+        <tr><td>Finnhub</td><td>Real-time stock quotes (SPY, QQQ)</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>Brave Search</td><td>Financial news headlines</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>Reddit</td><td>WSB + r/options hot posts</td><td><span class="pill red">No</span></td></tr>
+        <tr><td>Unusual Whales</td><td>Options flow sentiment</td><td><span class="pill red">No</span></td></tr>
+        <tr><td>RSS Feeds</td><td>Market news feeds</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>Atlas Briefing</td><td>Macro summary, ticker table, news, blogs, papers</td><td><span class="pill blue">N/A</span></td></tr>
+      </table>
+
+      <h4 style="margin-top: 32px;">Snapshot flow</h4>
+      <p style="color: var(--muted); font-size: 0.9rem;">
+        atlas-morning-briefing saves raw API responses to <code>snapshots/YYYY-MM-DD/</code>. sender-trades checks this directory
+        before making any API call. If snapshot has quotes for all target assets plus news — zero API calls are made.
+        This avoids duplicate Finnhub/Brave charges and rate limits.
+      </p>
+      <div class="diagram">
+<pre>atlas-morning-briefing/                     sender-trades/
+  snapshots/                                  ┌─────────────────┐
+    └── 2026-07-18/                           │                 │
+        ├── finnhub_data.json  ──────────────>│ SnapshotLoader   │
+        ├── brave_news.json    ──────────────>│ is_complete()?   │
+        ├── rss_feeds.json                   │  ┌─── Yes ────┐  │
+        └── snapshot_manifest.json            │  │ Use cached │  │
+                                              │  └───────────┘  │
+  Atlas-Briefing-2026.07.18.md                │  ┌─── No ─────┐  │
+    └─────────────────────────────────────────>│  │ Live API   │  │
+        Parser → BriefingData                  │  └───────────┘  │
+                                              └─────────────────┘</pre>
       </div>
     </div>
   </section>
@@ -215,30 +312,103 @@
           <div class="desc">Clone the repository</div>
         </div>
         <div class="cmd-item">
-          <code>uv sync --all-extras</code>
-          <div class="desc">Install dependencies</div>
-        </div>
-        <div class="cmd-item">
           <code>cp .env.example .env</code>
           <div class="desc">Configure API keys (Finnhub, Brave, Alpaca)</div>
         </div>
         <div class="cmd-item">
-          <code>python -m src.main --dry-run</code>
+          <code>uv sync --all-extras</code>
+          <div class="desc">Install dependencies (uv recommended)</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run python -m src.main --dry-run</code>
           <div class="desc">Run a dry run — no trades executed</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run python -m src.main --dry-run --email</code>
+          <div class="desc">Dry run + send forecast email</div>
         </div>
         <div class="cmd-item">
           <code>docker compose run --rm app python -m src.main --dry-run</code>
           <div class="desc">Or run via Docker</div>
         </div>
         <div class="cmd-item">
-          <code>make check</code>
-          <div class="desc">Run lint + format check + tests</div>
+          <code>uv run pytest</code>
+          <div class="desc">Run all 63 tests</div>
         </div>
         <div class="cmd-item">
-          <code>docker compose up docs</code>
-          <div class="desc">View Sphinx API docs at localhost:8080</div>
+          <code>uv run ruff check &amp;&amp; uv run ruff format --check</code>
+          <div class="desc">Lint and format check</div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="container">
+      <h2>Documentation</h2>
+      <p style="text-align:center; color: var(--muted); margin-bottom: 32px;">
+        Full API reference and module documentation generated by Sphinx.
+      </p>
+      <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
+        <a href="#quickstart" class="btn primary">Quick start</a>
+        <a href="https://github.com/senderic/sender-trades" class="btn secondary">GitHub →</a>
+      </div>
+      <p style="text-align:center; color: var(--muted); margin-top: 24px; font-size: 0.85rem;">
+        To build and view the Sphinx docs locally:
+      </p>
+      <div class="cmd-list" style="max-width: 540px; margin: 16px auto 0;">
+        <div class="cmd-item">
+          <code>docker compose up docs</code>
+          <div class="desc">Sphinx autobuild at localhost:8080 (use <code>up</code>, not <code>run</code>)</div>
+        </div>
+        <div class="cmd-item">
+          <code>docker compose run --service-ports --rm docs</code>
+          <div class="desc">Or run once with ports published</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run sphinx-build docs/source docs/build</code>
+          <div class="desc">Static build (requires dev extras)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="container">
+      <h2>Strategy reference</h2>
+      <table class="pill-table">
+        <tr><th>Strategy</th><th>Trigger</th><th>Direction</th><th>Confidence floor</th></tr>
+        <tr>
+          <td>Momentum</td>
+          <td>Gap opening &gt;0.5%, intraday breakout</td>
+          <td>Follow momentum</td>
+          <td>0.40</td>
+        </tr>
+        <tr>
+          <td>Mean reversion</td>
+          <td>RSI &lt;35 (oversold) or &gt;65 (overbought)</td>
+          <td>Fade the move</td>
+          <td>0.40</td>
+        </tr>
+        <tr>
+          <td>Event-driven</td>
+          <td>News sentiment + macro catalyst</td>
+          <td>Aligned with catalyst</td>
+          <td>0.45</td>
+        </tr>
+      </table>
+
+      <h4 style="margin-top: 32px;">Risk guardrails</h4>
+      <ul class="compact">
+        <li>Source-verified prices — quote must come from Finnhub or snapshot</li>
+        <li>Chain existence — OCC option chain must be live</li>
+        <li>Bid/ask spread ≤20% of mid-price</li>
+        <li>2-of-3 consensus — briefing sentiment, news polarity, and macro must agree</li>
+        <li>Statistical sanity — expected move ≤2% of underlying</li>
+        <li>Max loss hard cap — 0.3% of underlying (realistic 0DTE ATM premium estimate, default $1000)</li>
+        <li>Time check — no entries after 2PM ET, all positions closed by 3:30PM ET</li>
+        <li>Rationale schema — every trade must have a documented reason</li>
+      </ul>
     </div>
   </section>
 

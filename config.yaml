@@ -7,6 +7,7 @@ general:
 
 atlas_briefing:
   directory: ~/atlas-morning-briefing
+  snapshot_enabled: true
 
 finnhub:
   api_key: ${FINNHUB_API_KEY}

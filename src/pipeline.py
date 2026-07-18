@@ -15,6 +15,7 @@ from src.engine.strategy_b import MeanReversionStrategy
 from src.engine.strategy_c import EventDrivenStrategy
 from src.ingestion.fetcher import fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
+from src.ingestion.snapshot_loader import SnapshotLoader
 from src.logging_setup import JSONFileLogger
 from src.mcp.client import MCPBrokerClient
 from src.models.briefing import BriefingData
@@ -155,12 +156,49 @@ class Pipeline:
             return None
 
     async def _phase_ingest_market(self) -> MarketSnapshot:
-        """Phase 2: Fetch live market data (quotes, news, RSS).
+        """Phase 2: Ingest market data from snapshots or live API.
+
+        Tries to load from atlas-morning-briefing snapshots first.
+        Falls back to live API calls (Finnhub, Brave, RSS, Reddit, UW)
+        when snapshot data is missing or incomplete.
 
         Returns:
             MarketSnapshot with quotes, news, and RSS data.
         """
         try:
+            # --- Try snapshot first ---
+            if self.config.atlas_briefing.snapshot_enabled:
+                loader = SnapshotLoader(self.config.atlas_briefing.directory)
+                if loader.is_complete(self.config.general.target_assets):
+                    market = loader.load()
+                    if market is not None:
+                        logger.info(
+                            "market_data_from_snapshots",
+                            quotes=list(market.quotes.keys()),
+                            news_count=len(market.news),
+                        )
+                        self.result.market = market
+                        self.file_logger.write_entry(
+                            {
+                                "phase": "ingest_market",
+                                "source": "snapshot",
+                                "status": "success",
+                                "quotes": {
+                                    s: q.current_price for s, q in market.quotes.items()
+                                },
+                                "news_count": len(market.news),
+                                "rss_count": len(market.rss_items),
+                                "avg_news_polarity": market.avg_sentiment_polarity(),
+                            }
+                        )
+                        return market
+                elif loader.is_available():
+                    logger.info(
+                        "snapshot_incomplete",
+                        target_assets=self.config.general.target_assets,
+                    )
+
+            # --- Fall back to live API ---
             market = await fetch_market_data(
                 symbols=self.config.general.target_assets,
                 finnhub_key=self.config.finnhub.api_key,
@@ -180,6 +218,7 @@ class Pipeline:
             self.file_logger.write_entry(
                 {
                     "phase": "ingest_market",
+                    "source": "live_api",
                     "status": "success",
                     "quotes": {s: q.current_price for s, q in market.quotes.items()},
                     "news_count": len(market.news),

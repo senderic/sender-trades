@@ -15,6 +15,7 @@ class AtlasBriefingConfig(BaseModel):
     """Configuration for the Atlas morning briefing directory."""
 
     directory: str = "~/atlas-morning-briefing"
+    snapshot_enabled: bool = True
 
     @property
     def resolved_directory(self) -> Path:

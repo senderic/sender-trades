@@ -18,3 +18,8 @@ Submodules
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: ingestion.snapshot_loader
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -361,18 +361,18 @@
         This avoids duplicate Finnhub/Brave charges and rate limits.
       </p>
       <div class="diagram">
-<pre>atlas-morning-briefing/                     sender-trades/
-  snapshots/                                  ┌─────────────────┐
-    └── 2026-07-18/                           │                 │
-        ├── finnhub_data.json  ──────────────>│ SnapshotLoader   │
-        ├── brave_news.json    ──────────────>│ is_complete()?   │
-        ├── rss_feeds.json                   │  ┌─── Yes ────┐  │
-        └── snapshot_manifest.json            │  │ Use cached │  │
-                                              │  └───────────┘  │
-  Atlas-Briefing-2026.07.18.md                │  ┌─── No ─────┐  │
-    └─────────────────────────────────────────>│  │ Live API   │  │
-        Parser → BriefingData                  │  └───────────┘  │
-                                              └─────────────────┘</pre>
+<pre>atlas-morning-briefing/              sender-trades/
+                                          ┌────────────────────────┐
+  snapshots/                              │                        │
+    └── 2026-07-18/                       │     SnapshotLoader     │
+        ├── finnhub_data.json  ──────────►│    is_complete()?      │
+        ├── brave_news.json    ──────────►│     ┌─── Yes ────┐     │
+        ├── rss_feeds.json                │     │ Use cached │     │
+        └── snapshot_manifest.json        │     └────────────┘     │
+                                          │     ┌─── No ─────┐     │
+Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
+  Parser → BriefingData ─────────────────►│     └────────────┘     │
+                                          └────────────────────────┘</pre>
       </div>
     </div>
   </section>

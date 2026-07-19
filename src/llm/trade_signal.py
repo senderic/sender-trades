@@ -43,7 +43,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import date
 from typing import Any
 
 import structlog
@@ -61,6 +60,8 @@ from src.models.recommendation import (
     StrategyResult,
     TradeRecommendation,
 )
+from src.prediction_tracker import format_history_for_prompt, load_history
+from src.timezone import today_local
 
 logger = structlog.get_logger()
 
@@ -170,7 +171,10 @@ class LLMTradeStrategy(TradingStrategy):
                 duration_ms=round((time.perf_counter() - start) * 1000, 2),
             )
 
-        prompt = _build_prompt(briefing, market, self.config.general.target_assets)
+        history_str = format_history_for_prompt(
+            load_history(self.config.logging.json_dir),
+        )
+        prompt = _build_prompt(briefing, market, self.config.general.target_assets, history_str)
         response = self._client.invoke(prompt=prompt, system_prompt=SYSTEM_PROMPT)
 
         trace["served_by"] = self._client.last_served_by
@@ -312,7 +316,7 @@ class LLMTradeStrategy(TradingStrategy):
         strike = compute_otm_strike(quote.current_price, direction)
         delta = estimate_delta(quote.current_price, strike, 0, iv=0.20, direction=direction)
         sources = _normalise_sources(sources_raw)
-        today_str = date.today().isoformat()
+        today_str = today_local().isoformat()
 
         rec = TradeRecommendation(
             correlation_id="",
@@ -352,6 +356,7 @@ def _build_prompt(
     briefing: BriefingData,
     market: MarketSnapshot,
     target_assets: list[str],
+    prediction_history: str = "",
 ) -> str:
     """Assemble the LLM prediction prompt from briefing + market data.
 
@@ -416,6 +421,9 @@ def _build_prompt(
 
     polarity = market.avg_sentiment_polarity()
     sections.append(f"Market-average news sentiment polarity: {polarity:+.3f}")
+
+    if prediction_history:
+        sections.append(f"Recent prediction history (learn from past outcomes):\n{prediction_history}")
 
     return "\n\n".join(sections)
 

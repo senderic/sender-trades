@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from datetime import date
 
 import structlog
 
@@ -13,6 +12,7 @@ from src.engine.options_strategy import compute_otm_strike, estimate_delta
 from src.models.briefing import BriefingData
 from src.models.market import MarketSnapshot
 from src.models.recommendation import Direction, PositionIntent, StrategyResult, TradeRecommendation
+from src.timezone import today_local
 
 logger = structlog.get_logger()
 
@@ -94,7 +94,7 @@ class MomentumStrategy(TradingStrategy):
 
             strike = compute_otm_strike(quote.current_price, direction)
             delta = estimate_delta(quote.current_price, strike, 0, iv=0.20, direction=direction)
-            today_str = date.today().isoformat()
+            today_str = today_local().isoformat()
 
             recommendation = TradeRecommendation(
                 correlation_id="",

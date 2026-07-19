@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ from src.models.market import (
     Quote,
     RSSCacheItem,
 )
+from src.timezone import today_local
 
 logger = structlog.get_logger()
 
@@ -85,7 +86,7 @@ class SnapshotLoader:
                 (e.g. ``~/atlas-morning-briefing``).
         """
         self.atlas_dir = Path(atlas_briefing_dir).expanduser().resolve()
-        self.today = date.today()
+        self.today = today_local()
         self.snapshot_dir = self.atlas_dir / "snapshots" / self.today.isoformat()
 
     def is_available(self) -> bool:

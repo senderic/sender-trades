@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 
 import structlog
@@ -14,7 +14,7 @@ from src.engine.risk import RiskEngine
 from src.engine.strategy_a import MomentumStrategy
 from src.engine.strategy_b import MeanReversionStrategy
 from src.engine.strategy_c import EventDrivenStrategy
-from src.ingestion.fetcher import fetch_market_data
+from src.ingestion.fetcher import FinnhubFetcher, fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
 from src.ingestion.snapshot_loader import SnapshotLoader
 from src.ingestion.status import read_briefing_status
@@ -30,8 +30,16 @@ from src.models.recommendation import (
     DecisionOutput,
     Direction,
     DirectionalForecast,
+    PredictionOutcome,
     StrategyResult,
 )
+from src.prediction_tracker import (
+    append_outcomes,
+    check_outcome,
+    find_previous_business_day,
+    read_previous_forecasts,
+)
+from src.timezone import now_local, today_local
 
 logger = structlog.get_logger()
 
@@ -48,13 +56,14 @@ class PipelineResult:
         self.decision: DecisionOutput | None = None
         self.execution_result: dict | None = None
         self.errors: list[str] = []
-        self.start_time: datetime = datetime.now(UTC)
+        self.start_time: datetime = now_local()
         self.end_time: datetime | None = None
+        self.yesterday_outcomes: list[PredictionOutcome] = []
 
     @property
     def duration_seconds(self) -> float:
         """Total wall-clock duration of the pipeline run in seconds."""
-        end = self.end_time or datetime.now(UTC)
+        end = self.end_time or now_local()
         return (end - self.start_time).total_seconds()
 
     def to_summary(self) -> dict:
@@ -115,9 +124,12 @@ class Pipeline:
         else:
             logger.info("pipeline_no_trade", rationale=decision.rationale)
 
-        self.result.end_time = datetime.now(UTC)
         self.result.decision = decision
         self.result.execution_result = execution
+
+        await self._check_yesterday_prediction()
+
+        self.result.end_time = now_local()
 
         summary = self.result.to_summary()
         self.file_logger.write_summary(summary)
@@ -300,7 +312,7 @@ class Pipeline:
             List of StrategyResult from each enabled strategy.
         """
         if briefing is None:
-            briefing = BriefingData(briefing_date=datetime.now(UTC).date())
+            briefing = BriefingData(briefing_date=today_local())
 
         strategies = []
         if self.config.strategies.momentum.enabled:
@@ -530,3 +542,41 @@ class Pipeline:
             logger.error("execution_error", error=str(e))
             self.result.errors.append(msg)
             return {"error": msg}
+
+    async def _check_yesterday_prediction(self) -> None:
+        if not self.config.finnhub.api_key:
+            logger.info("yesterday_check_skipped", reason="no_finnhub_api_key")
+            return
+
+        fetcher = FinnhubFetcher(
+            self.config.finnhub.api_key,
+            timeout=self.config.finnhub.request_timeout_sec,
+        )
+        log_dir = self.config.logging.json_dir
+
+        biz_date = await find_previous_business_day(log_dir, fetcher)
+        if biz_date is None:
+            logger.info("yesterday_check_skipped", reason="no_business_day_found")
+            return
+
+        forecasts = read_previous_forecasts(log_dir, biz_date)
+        if not forecasts:
+            logger.info("yesterday_check_skipped", reason="no_forecasts_found", biz_date=biz_date.isoformat())
+            return
+
+        outcomes: list[PredictionOutcome] = []
+        for pred in forecasts:
+            daily = await fetcher.fetch_daily_candle(pred["asset"], biz_date)
+            hourly = await fetcher.fetch_intraday_candles(pred["asset"], biz_date)
+            outcome = check_outcome(pred, daily, hourly)
+            outcomes.append(outcome)
+            logger.info(
+                "yesterday_outcome",
+                asset=outcome.asset,
+                predicted=outcome.predicted_direction,
+                result=outcome.result,
+                details=outcome.details,
+            )
+
+        self.result.yesterday_outcomes = outcomes
+        append_outcomes(log_dir, outcomes)

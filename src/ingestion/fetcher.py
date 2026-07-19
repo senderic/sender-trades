@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 import structlog
@@ -15,6 +16,8 @@ from src.models.market import (
     Quote,
     RSSCacheItem,
 )
+
+ET_TZ = ZoneInfo("America/New_York")
 
 logger = structlog.get_logger()
 
@@ -78,6 +81,86 @@ class FinnhubFetcher:
             return None
         except Exception as e:
             logger.error("finnhub_error", symbol=symbol, error=str(e))
+            return None
+
+
+    async def fetch_daily_candle(
+        self, symbol: str, target_date: date
+    ) -> dict | None:
+        if not self.api_key:
+            logger.warning("finnhub_no_api_key", symbol=symbol)
+            return None
+        start_dt = datetime(target_date.year, target_date.month, target_date.day, tzinfo=ET_TZ)
+        end_dt = start_dt + timedelta(days=1) - timedelta(seconds=1)
+        url = "https://finnhub.io/api/v1/stock/candle"
+        params = {
+            "symbol": symbol,
+            "resolution": "D",
+            "from": int(start_dt.timestamp()),
+            "to": int(end_dt.timestamp()),
+            "token": self.api_key,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("s") != "ok":
+                    logger.warning("finnhub_candle_no_data", symbol=symbol, target=target_date.isoformat())
+                    return None
+                return data
+        except httpx.TimeoutException:
+            logger.error("finnhub_candle_timeout", symbol=symbol)
+            return None
+        except httpx.HTTPStatusError as e:
+            logger.error("finnhub_candle_http_error", symbol=symbol, status=e.response.status_code)
+            return None
+        except Exception as e:
+            logger.error("finnhub_candle_error", symbol=symbol, error=str(e))
+            return None
+
+    async def fetch_intraday_candles(
+        self, symbol: str, target_date: date, resolution: int = 60
+    ) -> list[dict] | None:
+        if not self.api_key:
+            logger.warning("finnhub_no_api_key", symbol=symbol)
+            return None
+        start_dt = datetime(target_date.year, target_date.month, target_date.day, tzinfo=ET_TZ)
+        end_dt = start_dt + timedelta(days=1) - timedelta(seconds=1)
+        url = "https://finnhub.io/api/v1/stock/candle"
+        params = {
+            "symbol": symbol,
+            "resolution": str(resolution),
+            "from": int(start_dt.timestamp()),
+            "to": int(end_dt.timestamp()),
+            "token": self.api_key,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("s") != "ok":
+                    return None
+                candles: list[dict] = []
+                for i in range(len(data.get("t", []))):
+                    candles.append({
+                        "timestamp": data["t"][i],
+                        "open": data["o"][i],
+                        "high": data["h"][i],
+                        "low": data["l"][i],
+                        "close": data["c"][i],
+                        "volume": data["v"][i],
+                    })
+                return candles
+        except httpx.TimeoutException:
+            logger.error("finnhub_intraday_timeout", symbol=symbol)
+            return None
+        except httpx.HTTPStatusError as e:
+            logger.error("finnhub_intraday_http_error", symbol=symbol, status=e.response.status_code)
+            return None
+        except Exception as e:
+            logger.error("finnhub_intraday_error", symbol=symbol, error=str(e))
             return None
 
 

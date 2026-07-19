@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import structlog
 
 from src.config import Settings
+from src.timezone import now_local, today_local
 
 
 class JSONFileLogger:
@@ -28,8 +28,7 @@ class JSONFileLogger:
         Returns:
             Path to today's log directory.
         """
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
-        day_dir = self.log_dir / today
+        day_dir = self.log_dir / today_local().isoformat()
         day_dir.mkdir(parents=True, exist_ok=True)
         return day_dir
 
@@ -103,7 +102,7 @@ def setup_logging(settings: Settings, correlation_id: str) -> JSONFileLogger:
         event_dict: dict[str, Any],
     ) -> dict[str, Any]:
         event_dict.setdefault("correlation_id", correlation_id)
-        event_dict.setdefault("timestamp", datetime.now(UTC).isoformat())
+        event_dict.setdefault("timestamp", now_local().isoformat())
         file_logger.write_entry(event_dict)
         return event_dict
 

@@ -14,6 +14,7 @@ from src.models.briefing import (
     PaperItem,
     TickerRow,
 )
+from src.timezone import today_local
 
 # Literal deterministic fallback string emitted by
 # atlas-morning-briefing's generate_markdown_briefing() when the LLM
@@ -71,7 +72,7 @@ def find_todays_briefing(
             candidates.append(subdir)
     candidates.append(root)
 
-    today = date.today()
+    today = today_local()
     expected_name = f"Atlas-Briefing-{today.year}.{today.month:02d}.{today.day:02d}.md"
 
     for search_dir in candidates:

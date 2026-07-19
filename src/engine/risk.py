@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import datetime, time
 
 import structlog
 
 from src.config import Settings
 from src.models.market import MarketSnapshot
 from src.models.recommendation import TradeRecommendation
+from src.timezone import ET_TZ, today_local
 
 logger = structlog.get_logger()
 
@@ -66,8 +67,7 @@ class RiskEngine:
         Raises:
             RiskError: If current time is at or past the close deadline.
         """
-        now = datetime.now(UTC)
-        now_est = now
+        now_est = datetime.now(ET_TZ)
         cutoff_parts = self.risk_config.close_deadline_est.split(":")
         cutoff = time(int(cutoff_parts[0]), int(cutoff_parts[1]))
         cutoff_dt_est = now_est.replace(
@@ -75,8 +75,8 @@ class RiskEngine:
         )
         if now_est >= cutoff_dt_est:
             raise RiskError(
-                f"Current time {now_est.strftime('%H:%M')} EST is at or past close deadline "
-                f"{self.risk_config.close_deadline_est} EST. 0DTE must be closed before market close.",
+                f"Current time {now_est.strftime('%H:%M')} ET is at or past close deadline "
+                f"{self.risk_config.close_deadline_est} ET. 0DTE must be closed before market close.",
                 guardrail="time_check",
             )
 
@@ -138,7 +138,7 @@ class RiskEngine:
         if rec.expires_at:
             try:
                 expiry = datetime.fromisoformat(rec.expires_at).date()
-                today = date.today()
+                today = today_local()
                 dte = (expiry - today).days
                 if dte < self.risk_config.min_dte or dte > self.risk_config.max_dte:
                     raise RiskError(

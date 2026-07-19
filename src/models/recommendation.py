@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from src.timezone import now_local
 
 
 class Direction(StrEnum):
@@ -149,7 +151,7 @@ class DirectionalForecast(BaseModel):
 
     forecasts: list[AssetForecast] = Field(default_factory=list)
     market_vibe: str = ""
-    generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    generated_at: datetime = Field(default_factory=now_local)
 
     def table(self) -> str:
         """Return a formatted table string for terminal output."""
@@ -171,6 +173,23 @@ class DirectionalForecast(BaseModel):
         if self.market_vibe:
             lines.append(f"\nMarket Vibe: {self.market_vibe}")
         return "\n".join(lines)
+
+
+class PredictionOutcome(BaseModel):
+    date: str
+    correlation_id: str = ""
+    asset: Literal["SPY", "QQQ"]
+    predicted_direction: Literal["UP", "DOWN"]
+    confidence: float = 0.0
+    rationale: str = ""
+    result: Literal["success", "fail", "unknown"] = "unknown"
+    details: str = ""
+    open_price: float | None = None
+    high_price: float | None = None
+    low_price: float | None = None
+    close_price: float | None = None
+    triggered_at: str = ""
+    duration_hours: float | None = None
 
 
 class DecisionOutput(BaseModel):

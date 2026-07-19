@@ -6,12 +6,12 @@ import logging
 import os
 import smtplib
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from src.models.recommendation import DirectionalForecast
+from src.models.recommendation import DirectionalForecast, PredictionOutcome
+from src.timezone import format_la, today_local
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,14 @@ th {
 .down { color: #cf222e; font-weight: 600; }
 .sideways { color: #9a6700; font-weight: 600; }
 .vibe { font-size: 14px; padding: 10px 14px; background: #f0f6ff; border-radius: 6px; border-left: 4px solid #58a6ff; margin: 12px 0; }
+.outcome-card { font-size: 13px; padding: 10px 14px; border-radius: 6px; margin: 8px 0; }
+.outcome-card p { margin: 4px 0; }
+.outcome-success { background: #f0faf1; border-left: 4px solid #1a7f37; }
+.outcome-fail { background: #faf0f0; border-left: 4px solid #cf222e; }
+.outcome-unknown { background: #faf8f0; border-left: 4px solid #9a6700; }
+.outcome-asset { font-weight: 600; }
+.badge-success { display: inline-block; background: #1a7f37; color: #fff; border-radius: 4px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+.badge-fail { display: inline-block; background: #cf222e; color: #fff; border-radius: 4px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
 .footer {
   margin-top: 32px;
   padding-top: 16px;
@@ -79,7 +87,10 @@ th {
 """
 
 
-def render_forecast_html(forecast: DirectionalForecast) -> str:
+def render_forecast_html(
+    forecast: DirectionalForecast,
+    yesterday_outcomes: list[PredictionOutcome] | None = None,
+) -> str:
     rows = ""
     for f in forecast.forecasts:
         if f.direction is None:
@@ -108,6 +119,8 @@ def render_forecast_html(forecast: DirectionalForecast) -> str:
     if forecast.market_vibe:
         vibe = f'<p class="vibe"><strong>Market Vibe:</strong> {forecast.market_vibe}</p>'
 
+    yesterday_html = _render_yesterday_section(yesterday_outcomes)
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -118,7 +131,7 @@ def render_forecast_html(forecast: DirectionalForecast) -> str:
 <body>
 <div class="container">
 <h1>sender-trades — Intraday Prediction</h1>
-<p>Generated at {forecast.generated_at.strftime("%Y-%m-%d %H:%M UTC")}</p>
+<p>Generated at {format_la(forecast.generated_at)}</p>
 {vibe}
 <table>
 <thead>
@@ -128,6 +141,7 @@ def render_forecast_html(forecast: DirectionalForecast) -> str:
 {rows}
 </tbody>
 </table>
+{yesterday_html}
 <div class="footer">
 sender-trades &mdash; 0DTE Intraday Prediction Engine<br>
 Powered by opencode LLM + Market Research
@@ -137,6 +151,35 @@ Powered by opencode LLM + Market Research
 </html>"""
 
 
+def _render_yesterday_section(
+    outcomes: list[PredictionOutcome] | None,
+) -> str:
+    if not outcomes:
+        return ""
+
+    cards = ""
+    for o in outcomes:
+        if o.result == "success":
+            badge = '<span class="badge-success">SUCCESS</span>'
+            card_class = "outcome-success"
+        elif o.result == "fail":
+            badge = '<span class="badge-fail">FAIL</span>'
+            card_class = "outcome-fail"
+        else:
+            badge = ""
+            card_class = "outcome-unknown"
+
+        details_html = o.details.replace(" | ", "<br>")
+        pred_move = f"{o.confidence:.0%} confidence"
+        cards += f"""<div class="outcome-card {card_class}">
+  <p><span class="outcome-asset">{o.asset}</span> — Predicted <strong>{o.predicted_direction}</strong> ({pred_move}) {badge}</p>
+  <p>{details_html}</p>
+</div>"""
+
+    return f"""<h2>Yesterday's Prediction Recap</h2>
+{cards}"""
+
+
 def send_email(
     forecast: DirectionalForecast,
     subject: str = "sender-trades — Directional Forecast",
@@ -144,6 +187,7 @@ def send_email(
     dry_run: bool = False,
     correlation_id: str = "",
     log_dir: str | Path | None = None,
+    yesterday_outcomes: list[PredictionOutcome] | None = None,
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -164,8 +208,17 @@ def send_email(
         logger.info("Dry-run — would send email to %s", to)
         return dict.fromkeys(to, True)
 
-    html = render_forecast_html(forecast)
-    plain = f"sender-trades Directional Forecast\n\n{forecast.table()}\n\n---\nsender-trades"
+    html = render_forecast_html(forecast, yesterday_outcomes=yesterday_outcomes)
+
+    plain_parts = [f"sender-trades Directional Forecast\n\n{forecast.table()}"]
+    if yesterday_outcomes:
+        plain_parts.append("\n\nYesterday's Prediction Recap:")
+        for o in yesterday_outcomes:
+            result_label = {"success": "SUCCESS", "fail": "FAIL", "unknown": "UNKNOWN"}.get(o.result, "?")
+            plain_parts.append(f"  {o.asset}: {o.predicted_direction} ({o.confidence:.0%}) — {result_label}")
+            plain_parts.append(f"  {o.details}")
+    plain_parts.append("\n---\nsender-trades")
+    plain = "\n".join(plain_parts)
 
     # Persist the rendered HTML body to the run's log directory so it can
     # be inspected post-hoc by correlation_id -- useful for audit and for
@@ -173,7 +226,7 @@ def send_email(
     # the file is non-fatal; the email itself still goes out.
     if log_dir is not None and correlation_id:
         try:
-            day_dir = Path(log_dir).expanduser() / datetime.now(UTC).date().isoformat()
+            day_dir = Path(log_dir).expanduser() / today_local().isoformat()
             day_dir.mkdir(parents=True, exist_ok=True)
             suffix = f"-{correlation_id}" if correlation_id else ""
             (day_dir / f"email{suffix}.html").write_text(html, encoding="utf-8")

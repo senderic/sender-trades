@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import date
 from typing import Any
 
 import structlog
@@ -20,6 +19,7 @@ from src.models.recommendation import (
     ExecutionCommand,
     TradeRecommendation,
 )
+from src.timezone import today_local
 
 logger = structlog.get_logger()
 
@@ -57,7 +57,7 @@ class MCPBrokerClient:
             List of option contract dicts from the MCP daemon.
         """
         if expiry is None:
-            expiry = date.today().isoformat()
+            expiry = today_local().isoformat()
         logger.info("mcp_chain_query", asset=asset, expiry=expiry)
         return await self._mcp_call(
             "get_option_contracts",
@@ -99,7 +99,7 @@ class MCPBrokerClient:
         Returns:
             Dict with execution status, occ_symbol, bid, ask, and result.
         """
-        today_str = date.today().isoformat()
+        today_str = today_local().isoformat()
         option_type = "C" if rec.direction.value == "CALL" else "P"
         expiry = rec.expires_at or today_str
         occ_sym = occ_option_symbol(rec.asset, expiry, rec.target_strike, option_type)

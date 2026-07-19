@@ -138,6 +138,99 @@
     .repo-links a { color: var(--accent); text-decoration: none; font-size: 1rem; }
     .repo-links a:hover { text-decoration: underline; }
 
+    /* End-to-end example section */
+    .example-intro {
+      text-align: center; color: var(--muted); max-width: 640px;
+      margin: 0 auto 48px; font-size: 0.95rem;
+    }
+    .example-intro code { color: var(--accent); font-family: var(--mono); font-size: 0.85rem; }
+    .stages { display: flex; flex-direction: column; gap: 32px; max-width: 760px; margin: 0 auto; }
+    .stage {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
+    }
+    .stage-header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 16px 24px; border-bottom: 1px solid var(--border);
+      background: rgba(88,166,255,0.04);
+    }
+    .stage-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #0d1117; font-weight: 700; font-size: 0.9rem;
+    }
+    .stage-title { font-weight: 600; font-size: 1rem; }
+    .stage-meta { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
+    .stage-meta a { color: var(--accent); text-decoration: none; }
+    .stage-meta a:hover { text-decoration: underline; }
+    .stage-body { padding: 24px; }
+    .stage-body p { color: var(--muted); font-size: 0.9rem; margin: 0 0 12px; }
+    .stage-body p strong { color: var(--text); font-weight: 600; }
+    .stage-body code { font-family: var(--mono); color: var(--accent); font-size: 0.85rem; }
+    .stage-link { display: inline-block; margin-top: 12px; color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+    .stage-link:hover { text-decoration: underline; }
+
+    .briefing-excerpt {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px; margin: 16px 0;
+      font-size: 0.85rem; line-height: 1.55;
+    }
+    .briefing-excerpt .meta { color: var(--muted); font-size: 0.78rem; display: block; margin-bottom: 12px; }
+    .briefing-excerpt h4 { color: var(--text); font-size: 0.95rem; margin: 16px 0 8px; }
+    .briefing-excerpt h4:first-of-type { margin-top: 0; }
+    .briefing-excerpt p { color: var(--muted); font-size: 0.85rem; margin: 0 0 10px; }
+    .ticker-table {
+      width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.8rem;
+    }
+    .ticker-table th, .ticker-table td {
+      text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+    }
+    .ticker-table th { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+
+    .json-pick {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px; margin: 16px 0;
+      font-family: var(--mono); font-size: 0.82rem; line-height: 1.5;
+      overflow-x: auto; white-space: pre; color: var(--text);
+    }
+    .json-pick .k { color: var(--accent); }
+    .json-pick .s { color: var(--green); }
+    .json-pick .n { color: var(--orange); }
+
+    /* Light-themed email preview render */
+    .email-preview {
+      background: #f8f9fa; color: #1a1a1a; border-radius: 8px;
+      padding: 20px; margin: 16px 0; border: 1px solid var(--border);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    .email-preview .email-container {
+      background: #ffffff; border-radius: 8px; padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .email-preview h1 {
+      color: #0d1117; font-size: 1.2rem; font-weight: 700;
+      border-bottom: 2px solid #58a6ff; padding-bottom: 8px; margin: 0 0 12px;
+    }
+    .email-preview p { color: #57606a; font-size: 0.85rem; margin: 0 0 16px; }
+    .email-preview table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .email-preview th { background: #f0f3f6; border: 1px solid #d0d7de; padding: 8px 10px; text-align: left; font-weight: 600; color: #1f2328; }
+    .email-preview td { border: 1px solid #d0d7de; padding: 8px 10px; text-align: left; color: #1f2328; }
+    .email-preview .up-cell { color: #1a7f37; font-weight: 600; }
+    .email-preview .down-cell { color: #cf222e; font-weight: 600; }
+    .email-preview .side-cell { color: #9a6700; font-weight: 600; }
+    .email-preview .src-cell { font-family: var(--mono); font-size: 0.75rem; color: #57606a; }
+    .email-preview .email-footer {
+      margin-top: 20px; padding-top: 12px; border-top: 1px solid #e1e4e8;
+      font-size: 0.75rem; color: #8b949e; text-align: center;
+    }
+    .email-stamp {
+      display: inline-block; padding: 4px 10px; border-radius: 4px;
+      background: rgba(63,185,80,0.12); color: var(--green);
+      font-size: 0.75rem; font-weight: 500; margin-bottom: 12px;
+    }
+
     footer { text-align: center; padding: 40px 24px; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); }
 
     @media (max-width: 600px) {
@@ -154,6 +247,7 @@
       <a href="#features">Features</a>
       <a href="#architecture">Architecture</a>
       <a href="#how">How it works</a>
+      <a href="#example">Example</a>
       <a href="#quickstart">Quick start</a>
       <a href="#docs">Docs</a>
     </div>
@@ -163,8 +257,8 @@
     <h1>sender-<span>trades</span></h1>
     <p>0DTE intraday options trading recommendation system for SPY and QQQ. Ingest, analyse, decide, execute — on your own infrastructure. Snapshot-aware: reuses atlas-morning-briefing data to avoid duplicate API calls.</p>
     <div class="hero-badges">
-      <span class="badge green">● 63 tests</span>
-      <span class="badge blue">● 3 strategies</span>
+      <span class="badge green">● 126 tests</span>
+      <span class="badge blue">● 4 strategies (LLM-driven)</span>
       <span class="badge orange">● 8 risk guardrails</span>
       <span class="badge green">● Snapshot-aware</span>
     </div>
@@ -194,6 +288,11 @@
           <p>Catalyst-aware recommendations from news sentiment and macro data. Parses Atlas morning briefings for macro sentiment, sector rotation, and thematic shifts.</p>
         </div>
         <div class="feature">
+          <div class="icon">🤖</div>
+          <h3>LLM trade-signal strategy</h3>
+          <p>Asks the <code>opencode</code> CLI to emit a structured JSON pick (asset / direction / confidence / rationale / sources) over the briefing + market snapshot. Free Zen first, paid Go fallback (60s timeout). Surfaces root provenance — e.g. <code>↓llm:atlas-briefing:executive_summary, llm:watchlist:NVDA</code> — in the forecast table.</p>
+        </div>
+        <div class="feature">
           <div class="icon">🧩</div>
           <h3>Decision aggregator</h3>
           <p>Picks the highest-confidence recommendation or merges near-ties with 2-of-3 consensus. Produces a directional forecast table (UP / DOWN / SIDEWAYS confidence + expected MOVE %).</p>
@@ -221,7 +320,7 @@
         <div class="feature">
           <div class="icon">📬</div>
           <h3>Email reports</h3>
-          <p>Styled HTML forecast table sent via Gmail SMTP (app password). Use <code>--email</code> to receive the directional forecast in your inbox each morning.</p>
+          <p>Styled HTML forecast table sent via Gmail SMTP (app password). Each send is also persisted to <code>logs/&lt;date&gt;/email-&lt;correlation_id&gt;.html</code> for audit. Use <code>--email</code> to receive the directional forecast in your inbox each morning.</p>
         </div>
         <div class="feature">
           <div class="icon">🐳</div>
@@ -243,7 +342,7 @@
           <div class="arch-arrow">→</div>
           <div class="arch-box"><div class="tag">Phase 2</div><div class="val">Ingest<br>market</div><div class="tag">Snapshots or API</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 3</div><div class="val">Analyse</div><div class="tag">3 strategies</div></div>
+          <div class="arch-box"><div class="tag">Phase 3</div><div class="val">Analyse</div><div class="tag">4 strategies</div></div>
           <div class="arch-arrow">→</div>
           <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Decide</div><div class="tag">Aggregate + Risk</div></div>
           <div class="arch-arrow">→</div>
@@ -291,7 +390,7 @@
       <div class="flow">
         <div class="flow-step"><div class="label">1</div><div class="value">Ingest</div><div class="label">quotes, news, Reddit, RSS</div></div>
         <div class="flow-arrow">→</div>
-        <div class="flow-step"><div class="label">2</div><div class="value">Analyse</div><div class="label">3 strategies in parallel</div></div>
+        <div class="flow-step"><div class="label">2</div><div class="value">Analyse</div><div class="label">4 strategies in parallel</div></div>
         <div class="flow-arrow">→</div>
         <div class="flow-step"><div class="label">3</div><div class="value">Decide</div><div class="label">aggregate + risk checks</div></div>
         <div class="flow-arrow">→</div>
@@ -299,6 +398,196 @@
       </div>
       <p style="text-align:center; color:var(--muted); margin-top: 24px; font-size:0.95rem;">
         Dry-run is the default. Set <code style="color:var(--accent)">execute: true</code> or pass <code style="color:var(--accent)">--execute</code> to enable live trading.
+      </p>
+    </div>
+  </section>
+
+  <section id="example">
+    <div class="container">
+      <h2>End-to-end example</h2>
+      <p class="example-intro">
+        A real trial run from <code>2026-07-19</code> against the latest
+        <a href="https://github.com/senderic/atlas-morning-briefing" style="color: var(--accent);">atlas-morning-briefing</a>
+        snapshot. Three stages: upstream briefing → LLM trade signal → email in your inbox.
+        Correlation ID: <code>ffa5e8ff85ba</code>.
+      </p>
+
+      <div class="stages">
+
+        <!-- Stage 1: upstream briefing -->
+        <div class="stage">
+          <div class="stage-header">
+            <span class="stage-num">1</span>
+            <span class="stage-title">Upstream — Atlas morning briefing</span>
+            <span class="stage-meta">
+              <a href="https://github.com/senderic/atlas-morning-briefing">atlas-morning-briefing repo →</a>
+            </span>
+          </div>
+          <div class="stage-body">
+            <p>
+              <strong>Parsed from</strong> <code>~/atlas-morning-briefing/briefings/Atlas-Briefing-2026.07.18.md</code>.
+              Upstream runs an LLM distillation pass at <code>06:00 cron</code> and ships a 25-row watchlist,
+              an executive summary, AI &amp; tech news, blog updates, and top papers.
+            </p>
+            <p>
+              <strong>Atlas parser</strong> (this repo) classified the briefing as
+              <code>quality = full</code> based on the executive-summary content and
+              the sibling <code>status.json</code> reporting
+              <code>intelligence_enabled = true</code>. No re-synthesis needed — the
+              happy path stays LLM-free for this stage.
+            </p>
+
+            <div class="briefing-excerpt">
+              <span class="meta">Saturday, July 18, 2026 · 09:40 AM PDT</span>
+              <h4>Executive Summary (excerpt)</h4>
+              <p>
+                While headlines fixated on <strong>Kimi K3</strong> — Moonshot AI's
+                2.8-trillion-parameter open-weight model topping Claude Fable 5 and
+                GPT-5.6 Sol on frontend-coding benchmarks — the more consequential
+                moves were structural. Two hyperscalers shipped agentic defense
+                tooling on the same day: AWS demoed a Bedrock + MCP Computer Vision
+                MCP Server, while Google Cloud folded its Wiz acquisition into
+                "Agentic Defense." The market caught the rotation: NVDA -2.2%,
+                GOOGL -2.2%, META -2.8%, MSFT -1.8% all sold off, while the
+                defense/space-infrastructure periphery held or rallied.
+              </p>
+              <h4>Financial Market Overview (excerpt)</h4>
+              <table class="ticker-table">
+                <tr><th>Ticker</th><th>Price</th><th>Change</th></tr>
+                <tr><td><strong>QQQ</strong></td><td>$695.33</td><td class="neg">-1.50%</td></tr>
+                <tr><td><strong>SPY</strong></td><td>$743.29</td><td class="neg">-0.99%</td></tr>
+                <tr><td><strong>META</strong></td><td>$646.01</td><td class="neg">-2.79%</td></tr>
+                <tr><td><strong>NVDA</strong></td><td>$202.81</td><td class="neg">-2.21%</td></tr>
+                <tr><td><strong>LITE</strong></td><td>$732.82</td><td class="pos">+3.77%</td></tr>
+                <tr><td><strong>BKSY</strong></td><td>$22.19</td><td class="pos">+3.40%</td></tr>
+              </table>
+              <p style="margin-top: 10px; font-size: 0.75rem; color: var(--muted);">
+                19 more rows omitted.
+                <a href="https://github.com/senderic/atlas-morning-briefing" style="color: var(--accent);">
+                  See full briefings in the upstream repo →
+                </a>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stage 2: LLM decision -->
+        <div class="stage">
+          <div class="stage-header">
+            <span class="stage-num">2</span>
+            <span class="stage-title">LLM trade signal — decision</span>
+            <span class="stage-meta">opencode/deepseek-v4-flash-free · 13.1s · free Zen tier</span>
+          </div>
+          <div class="stage-body">
+            <p>
+              <strong>Strategy:</strong> <code>llm_trade</code> — fed the briefing +
+              market snapshot + news sentiment to the <code>opencode</code> CLI and
+              asked for a single JSON pick. The free Zen model
+              <code>opencode/deepseek-v4-flash-free</code> responded first (no paid
+              Go tier needed — <code>paid_used = false</code>).
+            </p>
+            <p>
+              The LLM was asked to cite <strong>root provenance</strong> — which
+              upstream input actually drove the call — not just say "LLM said so".
+              It cited three sources: the briefing's executive summary, and two
+              watchlist tickers (NVDA, META).
+            </p>
+
+            <div class="json-pick">{
+  <span class="k">"asset"</span>: <span class="s">"QQQ"</span>,
+  <span class="k">"direction"</span>: <span class="s">"PUT"</span>,
+  <span class="k">"confidence"</span>: <span class="n">0.62</span>,
+  <span class="k">"rationale"</span>: <span class="s">"Consumer-AI tech names that dominate QQQ are being sold off (NVDA -2.21%, META -2.79%, GOOGL -2.17%, MSFT -1.81%) while defense/space infrastructure holds or rallies — the agentic-defense rotation narrative from the morning briefing indicates continued capital rotation out of QQQ's heaviest weights."</span>,
+  <span class="k">"sources"</span>: [
+    <span class="s">"atlas-briefing:executive_summary"</span>,
+    <span class="s">"watchlist:NVDA"</span>,
+    <span class="s">"watchlist:META"</span>
+  ]
+}</div>
+
+            <p>
+              <strong>Decision aggregator</strong>: selected <code>llm_trade @ 0.62</code>
+              (other three strategies abstained below threshold).
+              <strong>Risk engine</strong>: <code>_check_statistical_sanity</code>
+              flagged the 15% OTM strike and halved confidence to
+              <code>0.31</code>. Final recommendation:
+              <strong>QQQ PUT @ $591, 1 contract, 0.31 confidence</strong>.
+            </p>
+          </div>
+        </div>
+
+        <!-- Stage 3: email render -->
+        <div class="stage">
+          <div class="stage-header">
+            <span class="stage-num">3</span>
+            <span class="stage-title">Email output — as delivered</span>
+            <span class="stage-meta">Gmail SMTP · 2/2 sent</span>
+          </div>
+          <div class="stage-body">
+            <p>
+              The pipeline's forecast table is rendered into an HTML email via
+              Gmail SMTP. The LLM's root provenance flows verbatim into the
+              <em>Sources</em> column, so each email immediately shows <em>why</em>
+              the LLM picked what it picked — not just the strategy name.
+            </p>
+
+            <div class="email-preview">
+              <div class="email-container">
+                <span class="email-stamp" style="background: rgba(88,166,255,0.12); color: #58a6ff;">Inbox preview</span>
+                <h1>sender-trades — Directional Forecast</h1>
+                <p>Generated at 2026-07-19 00:17 UTC</p>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Asset</th><th>UP</th><th>DOWN</th><th>SIDE</th><th>MOVE</th><th>Sources</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>SPY</td>
+                      <td class="up-cell">0%</td>
+                      <td class="down-cell">0%</td>
+                      <td class="side-cell">100%</td>
+                      <td class="side-cell">+0.0%</td>
+                      <td>—</td>
+                    </tr>
+                    <tr>
+                      <td>QQQ</td>
+                      <td class="up-cell">0%</td>
+                      <td class="down-cell">100%</td>
+                      <td class="side-cell">0%</td>
+                      <td class="down-cell">-9.3%</td>
+                      <td class="src-cell">↓llm:atlas-briefing:executive_summary,<br>llm:watchlist:NVDA,<br>llm:watchlist:META</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p style="margin-top: 16px; font-size: 0.78rem; color: #57606a;">
+                  <strong>Selected trade:</strong> QQQ PUT @ $591.0 ·
+                  Confidence 0.31 · 1 contract · Strategy <code>llm_trade</code>
+                </p>
+                <div class="email-footer">
+                  sender-trades — 0DTE Intraday Options Trading System
+                </div>
+              </div>
+            </div>
+
+            <p style="margin-top: 16px;">
+              A copy of the rendered HTML body is also persisted to
+              <code>logs/2026-07-19/email-ffa5e8ff85ba.html</code> on disk for
+              audit alongside the structured run log. The plain-text twin lands at
+              <code>email-ffa5e8ff85ba.txt</code>.
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      <p style="text-align: center; color: var(--muted); margin-top: 40px; font-size: 0.85rem;">
+        Read the full design notes for the degraded-briefing fallback and the
+        LLM trade-signal strategy in
+        <a href="https://github.com/senderic/sender-trades/blob/main/LESSONS_LEARNED.md" style="color: var(--accent);">LESSONS_LEARNED.md</a>
+        and the
+        <a href="https://github.com/senderic/sender-trades/blob/main/src/llm/trade_signal.py" style="color: var(--accent);">LLMTradeStrategy source</a>.
       </p>
     </div>
   </section>
@@ -333,7 +622,7 @@
         </div>
         <div class="cmd-item">
           <code>uv run pytest</code>
-          <div class="desc">Run all 63 tests</div>
+          <div class="desc">Run all 126 tests</div>
         </div>
         <div class="cmd-item">
           <code>uv run ruff check &amp;&amp; uv run ruff format --check</code>
@@ -394,6 +683,12 @@
           <td>Event-driven</td>
           <td>News sentiment + macro catalyst</td>
           <td>Aligned with catalyst</td>
+          <td>0.45</td>
+        </tr>
+        <tr>
+          <td>LLM trade-signal</td>
+          <td>JSON pick from opencode LLM over briefing+market</td>
+          <td>LLM-cited (free Zen first, paid Go fallback)</td>
           <td>0.45</td>
         </tr>
       </table>

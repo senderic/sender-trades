@@ -214,8 +214,12 @@ def send_email(
     if yesterday_outcomes:
         plain_parts.append("\n\nYesterday's Prediction Recap:")
         for o in yesterday_outcomes:
-            result_label = {"success": "SUCCESS", "fail": "FAIL", "unknown": "UNKNOWN"}.get(o.result, "?")
-            plain_parts.append(f"  {o.asset}: {o.predicted_direction} ({o.confidence:.0%}) — {result_label}")
+            result_label = {"success": "SUCCESS", "fail": "FAIL", "unknown": "UNKNOWN"}.get(
+                o.result, "?"
+            )
+            plain_parts.append(
+                f"  {o.asset}: {o.predicted_direction} ({o.confidence:.0%}) — {result_label}"
+            )
             plain_parts.append(f"  {o.details}")
     plain_parts.append("\n---\nsender-trades")
     plain = "\n".join(plain_parts)

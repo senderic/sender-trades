@@ -82,15 +82,18 @@ def read_previous_forecasts(
             else:
                 continue
 
-        results.append({
-            "asset": asset,
-            "direction": direction,
-            "confidence": round(confidence, 4),
-            "predicted_move_pct": f.get("predicted_move_pct") or f.get("expected_move_pct", 0.0),
-            "rationale": f.get("rationale", ""),
-            "sources": f.get("sources", []),
-            "correlation_id": summary.get("correlation_id", ""),
-        })
+        results.append(
+            {
+                "asset": asset,
+                "direction": direction,
+                "confidence": round(confidence, 4),
+                "predicted_move_pct": f.get("predicted_move_pct")
+                or f.get("expected_move_pct", 0.0),
+                "rationale": f.get("rationale", ""),
+                "sources": f.get("sources", []),
+                "correlation_id": summary.get("correlation_id", ""),
+            }
+        )
 
     return results
 
@@ -172,9 +175,7 @@ def check_outcome(
             parts = [f"Triggered at {triggered_at_str}"]
             if duration_h is not None and duration_h > 1:
                 parts.append(f"held for ~{duration_h} hours")
-            parts.append(
-                f"Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}"
-            )
+            parts.append(f"Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}")
             details_parts.append(" | ".join(parts))
         else:
             details_parts.append(
@@ -244,7 +245,9 @@ def format_history_for_prompt(
 
     parts: list[str] = [
         f"Overall prediction record: {successes}/{total} successful "
-        f"({successes / total * 100:.0f}%)" if total > 0 else "No prior predictions."
+        f"({successes / total * 100:.0f}%)"
+        if total > 0
+        else "No prior predictions."
     ]
 
     recent = sorted(history, key=lambda h: h.get("date", ""), reverse=True)

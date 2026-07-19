@@ -423,7 +423,9 @@ def _build_prompt(
     sections.append(f"Market-average news sentiment polarity: {polarity:+.3f}")
 
     if prediction_history:
-        sections.append(f"Recent prediction history (learn from past outcomes):\n{prediction_history}")
+        sections.append(
+            f"Recent prediction history (learn from past outcomes):\n{prediction_history}"
+        )
 
     return "\n\n".join(sections)
 

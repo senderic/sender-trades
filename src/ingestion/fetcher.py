@@ -83,10 +83,7 @@ class FinnhubFetcher:
             logger.error("finnhub_error", symbol=symbol, error=str(e))
             return None
 
-
-    async def fetch_daily_candle(
-        self, symbol: str, target_date: date
-    ) -> dict | None:
+    async def fetch_daily_candle(self, symbol: str, target_date: date) -> dict | None:
         if not self.api_key:
             logger.warning("finnhub_no_api_key", symbol=symbol)
             return None
@@ -106,7 +103,9 @@ class FinnhubFetcher:
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("s") != "ok":
-                    logger.warning("finnhub_candle_no_data", symbol=symbol, target=target_date.isoformat())
+                    logger.warning(
+                        "finnhub_candle_no_data", symbol=symbol, target=target_date.isoformat()
+                    )
                     return None
                 return data
         except httpx.TimeoutException:
@@ -144,20 +143,24 @@ class FinnhubFetcher:
                     return None
                 candles: list[dict] = []
                 for i in range(len(data.get("t", []))):
-                    candles.append({
-                        "timestamp": data["t"][i],
-                        "open": data["o"][i],
-                        "high": data["h"][i],
-                        "low": data["l"][i],
-                        "close": data["c"][i],
-                        "volume": data["v"][i],
-                    })
+                    candles.append(
+                        {
+                            "timestamp": data["t"][i],
+                            "open": data["o"][i],
+                            "high": data["h"][i],
+                            "low": data["l"][i],
+                            "close": data["c"][i],
+                            "volume": data["v"][i],
+                        }
+                    )
                 return candles
         except httpx.TimeoutException:
             logger.error("finnhub_intraday_timeout", symbol=symbol)
             return None
         except httpx.HTTPStatusError as e:
-            logger.error("finnhub_intraday_http_error", symbol=symbol, status=e.response.status_code)
+            logger.error(
+                "finnhub_intraday_http_error", symbol=symbol, status=e.response.status_code
+            )
             return None
         except Exception as e:
             logger.error("finnhub_intraday_error", symbol=symbol, error=str(e))

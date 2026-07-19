@@ -561,7 +561,11 @@ class Pipeline:
 
         forecasts = read_previous_forecasts(log_dir, biz_date)
         if not forecasts:
-            logger.info("yesterday_check_skipped", reason="no_forecasts_found", biz_date=biz_date.isoformat())
+            logger.info(
+                "yesterday_check_skipped",
+                reason="no_forecasts_found",
+                biz_date=biz_date.isoformat(),
+            )
             return
 
         outcomes: list[PredictionOutcome] = []

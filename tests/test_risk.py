@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -6,6 +7,9 @@ from src.config import Settings
 from src.engine.risk import RiskEngine
 from src.models.market import MarketSnapshot
 from src.models.recommendation import Direction, PositionIntent, TradeRecommendation
+
+ET_TZ = ZoneInfo("America/New_York")
+_9_30_AM_ET = datetime(2026, 1, 1, 9, 30, tzinfo=ET_TZ)
 
 
 @pytest.fixture
@@ -37,7 +41,7 @@ class TestRiskEngineTimeCheck:
     ) -> None:
         valid_rec.target_strike = 100.0
         valid_rec.contracts = 1
-        result = risk_engine.validate(valid_rec, MarketSnapshot())
+        result = risk_engine.validate(valid_rec, MarketSnapshot(), _now=_9_30_AM_ET)
         assert result is valid_rec
 
     def test_max_position_size_exceeded(

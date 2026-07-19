@@ -38,12 +38,14 @@ class RiskEngine:
         self,
         rec: TradeRecommendation,
         market: MarketSnapshot,
+        _now: datetime | None = None,
     ) -> TradeRecommendation:
         """Run all risk checks against a trade recommendation.
 
         Args:
             rec: The trade recommendation to validate.
             market: Current market snapshot for sanity checks.
+            _now: Override current time (used in tests). Defaults to now.
 
         Returns:
             The validated (possibly modified) recommendation.
@@ -51,23 +53,24 @@ class RiskEngine:
         Raises:
             RiskError: If any guardrail is breached.
         """
-        self._check_time(rec)
+        self._check_time(rec, _now=_now)
         self._check_max_position_size(rec)
         self._check_max_loss(rec)
         self._check_dte(rec)
         self._check_statistical_sanity(rec, market)
         return rec
 
-    def _check_time(self, rec: TradeRecommendation) -> None:
+    def _check_time(self, rec: TradeRecommendation, _now: datetime | None = None) -> None:
         """Verify there is enough time remaining before market close.
 
         Args:
             rec: The trade recommendation to check.
+            _now: Override current time (used in tests). Defaults to now.
 
         Raises:
             RiskError: If current time is at or past the close deadline.
         """
-        now_est = datetime.now(ET_TZ)
+        now_est = _now if _now is not None else datetime.now(ET_TZ)
         cutoff_parts = self.risk_config.close_deadline_est.split(":")
         cutoff = time(int(cutoff_parts[0]), int(cutoff_parts[1]))
         cutoff_dt_est = now_est.replace(

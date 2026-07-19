@@ -123,6 +123,8 @@ async def main(argv: list[str] | None = None) -> int:
         send_email(
             forecast=result.decision.forecast,
             dry_run=False,
+            correlation_id=correlation_id,
+            log_dir=settings.logging.json_dir,
         )
 
     return 0 if len(result.errors) == 0 else 1

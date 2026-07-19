@@ -6,8 +6,10 @@ import logging
 import os
 import smtplib
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from pathlib import Path
 
 from src.models.recommendation import DirectionalForecast
 
@@ -132,6 +134,8 @@ def send_email(
     subject: str = "sender-trades — Directional Forecast",
     recipients: Sequence[str] | None = None,
     dry_run: bool = False,
+    correlation_id: str = "",
+    log_dir: str | Path | None = None,
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -154,6 +158,20 @@ def send_email(
 
     html = render_forecast_html(forecast)
     plain = f"sender-trades Directional Forecast\n\n{forecast.table()}\n\n---\nsender-trades"
+
+    # Persist the rendered HTML body to the run's log directory so it can
+    # be inspected post-hoc by correlation_id -- useful for audit and for
+    # the trial runs documented in LESSONS_LEARNED.md. Failure to write
+    # the file is non-fatal; the email itself still goes out.
+    if log_dir is not None and correlation_id:
+        try:
+            day_dir = Path(log_dir).expanduser() / datetime.now(UTC).date().isoformat()
+            day_dir.mkdir(parents=True, exist_ok=True)
+            suffix = f"-{correlation_id}" if correlation_id else ""
+            (day_dir / f"email{suffix}.html").write_text(html, encoding="utf-8")
+            (day_dir / f"email{suffix}.txt").write_text(plain, encoding="utf-8")
+        except OSError as e:
+            logger.warning("Failed to persist email body to log dir: %s", e)
 
     msg = MIMEMultipart("alternative")
     msg["From"] = user

@@ -7,16 +7,40 @@ for today's 0DTE session:
     {"asset": "SPY" | "QQQ",
      "direction": "CALL" | "PUT",
      "confidence": 0.0-1.0,
-     "rationale": "short one-sentence reason"}
+     "rationale": "short one-sentence reason",
+     "sources": [
+        "atlas-briefing:executive_summary",
+        "reuters:<headline>",
+        "watchlist:<TICKER>",
+        ...
+     ]}
 
 The pick is validated, clamped to the configured asset universe, and
 returned as a :class:`StrategyResult` with label ``"llm_trade"`` so the
 existing :class:`DecisionAggregator` folds it into the final decision
 alongside Momentum / MeanReversion / EventDriven.
 
+The ``sources`` array carries *root provenance* -- the LLM must cite
+which upstream inputs drove its conclusion, using one of:
+
+- ``"atlas-briefing:<section>"`` for content originally distilled by
+  the upstream atlas-morning-briefing LLM (e.g.
+  ``"atlas-briefing:executive_summary"``).
+- ``"<publisher>:<slug-or-headline>"`` for market-news feed items
+  (e.g. ``"reuters:kimi-k3-open-weight"``).
+- ``"watchlist:<TICKER>"`` for watchlist ticker drivers.
+- ``"market:<TICKER>"`` for live / snapshot quote metrics.
+- ``"news-sentiment"`` for the aggregate-polarity signal.
+
+These citations are surfaced verbatim (prefixed with ``llm:``) as the
+forecast table's ``up_sources`` / ``down_sources`` entries, so the
+reader sees ``↓llm:atlas-briefing+reuters+watchlist:NVDA`` rather than
+the opaque ``↓llm_trade``.
+
 This makes the LLM an explicit participant in the buy/sell decision
 rather than only indirectly influencing it via the re-synthesised
-executive summary's word-counted sentiment.
+executive summary's word-counted sentiment, and it preserves the
+provenance of *why* the LLM picked what it picked.
 """
 
 from __future__ import annotations
@@ -51,8 +75,21 @@ SYSTEM_PROMPT = (
     "as a single JSON object with these keys: "
     'asset ("SPY" or "QQQ"), direction ("CALL" or "PUT"), confidence '
     "(a float in [0.0, 1.0] reflecting how strongly the evidence "
-    "supports the pick), and rationale (one short sentence citing "
-    "specific briefing/news/catalyst evidence). "
+    "supports the pick), rationale (one short sentence citing the "
+    "specific evidence that drove the choice), and sources (a list "
+    "of 1-3 strings citing the ROOT provenance -- where the evidence "
+    "originally came from, not this LLM. Use these citation forms: "
+    '"atlas-briefing:<section>" for content distilled by the upstream '
+    "atlas-morning-briefing LLM (e.g. "
+    '"atlas-briefing:executive_summary", "atlas-briefing:watchlist"); '
+    '"<publisher>:<short-slug>" for market news feed items (e.g. '
+    '"reuters:kimi-k3-release", "bloomberg:fed-cautious-stance"); '
+    '"watchlist:<TICKER>" for a specific watchlist row that drove '
+    "the call; "
+    '"market:<TICKER>" for raw quote / price-action evidence; '
+    '"news-sentiment" for the aggregate news-polarity reading). '
+    "Do NOT cite this LLM itself or the trade-signal strategy. Cite "
+    "the upstream source that produced the evidence. "
     "Output ONLY the JSON object. No prose, no code fence, no "
     "explanation outside the JSON."
 )
@@ -143,6 +180,7 @@ class LLMTradeStrategy(TradingStrategy):
         direction_raw = pick.get("direction")
         confidence_raw = pick.get("confidence", 0.0)
         rationale_text = pick.get("rationale", "")
+        sources_raw = pick.get("sources", [])
 
         if asset not in self.config.general.target_assets:
             trace["skip_reason"] = "llm_asset_out_of_universe"
@@ -158,6 +196,19 @@ class LLMTradeStrategy(TradingStrategy):
             return self._abstain(trace, start)
         confidence = max(0.0, min(1.0, confidence))
         trace["llm_confidence_clamped"] = confidence
+
+        # Extract and normalise provenance citations. The LLM is asked
+        # to return 1-3 root-source strings (see SYSTEM_PROMPT). We
+        # defensively default to ["llm:atlas-briefing"] when missing /
+        # malformed so the forecast still surfaces something honest
+        # ("we don't know which upstream input the LLM leaned on")
+        # rather than the opaque "llm_trade" label.
+        sources = _normalise_sources(sources_raw)
+        trace["llm_sources_raw"] = sources_raw
+        trace["llm_sources"] = sources
+        # Forecast-table labels prefix each source with "llm:" so the
+        # reader sees the LLM was the reasoner *and* what it read.
+        forecast_source_labels = [f"llm:{s}" for s in sources]
 
         direction = Direction(direction_raw)
         quote = market.quotes.get(asset)
@@ -191,6 +242,7 @@ class LLMTradeStrategy(TradingStrategy):
                 "llm_direction": direction.value,
                 "llm_confidence_raw": confidence_raw,
                 "llm_rationale": rationale_text,
+                "llm_sources": sources,
                 "delta": round(delta, 4),
                 "entry_price": quote.current_price,
                 "strategy": "LLM trade signal: opencode JSON pick over briefing+market",
@@ -204,6 +256,7 @@ class LLMTradeStrategy(TradingStrategy):
             confidence=recommendation.confidence,
             debug_trace=trace,
             duration_ms=round((time.perf_counter() - start) * 1000, 2),
+            forecast_source_labels=forecast_source_labels,
         )
 
     def _abstain(self, trace: dict, start: float) -> StrategyResult:
@@ -324,3 +377,43 @@ def _parse_pick(response: str) -> dict[str, Any] | None:
     if not isinstance(parsed, dict):
         return None
     return parsed
+
+
+def _normalise_sources(sources_raw: Any) -> list[str]:
+    """Normalise the LLM's ``sources`` array into 1-3 provenance strings.
+
+    Accepts either a list of strings or a single string. Drops empty /
+    overlong entries, clamps the list to 1-3 items (keeping order), and
+    falls back to ``["atlas-briefing"]`` when the LLM omitted the field
+    entirely or returned something unparseable. The fallback is honest:
+    it tells the reader "the LLM was fed the atlas-briefing and may have
+    leaned on it, but it did not specify which upstream source" -- far
+    better than the opaque ``"llm_trade"`` strategy name.
+
+    Args:
+        sources_raw: Whatever the LLM put under the ``sources`` key.
+
+    Returns:
+        A list of 1-3 short citation strings ready to be prefixed with
+        ``"llm:"`` for the forecast table.
+    """
+    if isinstance(sources_raw, str):
+        candidates = [sources_raw]
+    elif isinstance(sources_raw, list):
+        candidates = [s for s in sources_raw if isinstance(s, str)]
+    else:
+        candidates = []
+
+    cleaned: list[str] = []
+    for s in candidates:
+        s = s.strip()
+        # Reject empty / whitespace-only / absurdly long citations.
+        if not s or len(s) > 120:
+            continue
+        cleaned.append(s)
+        if len(cleaned) == 3:
+            break
+
+    if not cleaned:
+        return ["atlas-briefing"]
+    return cleaned

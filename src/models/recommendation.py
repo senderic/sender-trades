@@ -94,13 +94,25 @@ class TradeRecommendation(BaseModel):
 
 
 class StrategyResult(BaseModel):
-    """The output of a single strategy evaluation."""
+    """The output of a single strategy evaluation.
+
+    ``forecast_source_labels`` lets a strategy override the default
+    ``[label]`` provenance surfaced in the forecast table's
+    ``up_sources`` / ``down_sources`` columns. Deterministic
+    strategies leave it as ``None`` so the aggregator falls back to
+    ``[label]``. LLM-driven strategies populate it with the
+    LLM-cited root provenance (e.g. ``["llm:atlas-briefing",
+    "llm:reuters", "llm:watchlist:NVDA"]``) so the forecast reader can
+    see what actually drove the decision rather than just the strategy
+    name.
+    """
 
     label: str
     recommendation: TradeRecommendation | None = None
     confidence: float
     debug_trace: dict[str, Any] = Field(default_factory=dict)
     duration_ms: float = 0.0
+    forecast_source_labels: list[str] | None = None
 
 
 class AssetForecast(BaseModel):

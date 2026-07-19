@@ -427,12 +427,17 @@ class Pipeline:
                 rec = r.recommendation
                 if rec is None or rec.asset != asset:
                     continue
+                # Use the strategy's explicit source labels when set
+                # (LLM strategy cites root provenance); otherwise fall
+                # back to the strategy label so deterministic strategies
+                # surface e.g. "momentum" / "mean_reversion" as before.
+                src_labels = r.forecast_source_labels or [r.label]
                 if rec.direction == Direction.CALL:
                     up_sum += r.confidence
-                    up_sources.append(r.label)
+                    up_sources.extend(src_labels)
                 else:
                     down_sum += r.confidence
-                    down_sources.append(r.label)
+                    down_sources.extend(src_labels)
 
                 current = (
                     self.result.market.quotes.get(asset).current_price

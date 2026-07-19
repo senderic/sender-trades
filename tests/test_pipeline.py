@@ -8,6 +8,13 @@ import pytest
 
 from src.config import Settings
 from src.logging_setup import setup_logging
+from src.models.recommendation import (
+    DecisionOutput,
+    Direction,
+    PositionIntent,
+    StrategyResult,
+    TradeRecommendation,
+)
 from src.pipeline import Pipeline
 
 
@@ -111,3 +118,109 @@ async def test_pipeline_upstream_intelligence_disabled_forces_degraded(tmp_path)
     assert briefing is not None
     assert briefing.briefing_quality.value == "degraded"
     assert briefing.macro_sentiment is None
+
+
+@pytest.mark.asyncio
+async def test_compute_forecast_uses_forecast_source_labels(tmp_path) -> None:
+    """``forecast_source_labels`` on a strategy result must surface in the
+    forecast ``up_sources`` / ``down_sources`` columns verbatim -- this
+    is the provenance path used by ``LLMTradeStrategy`` to expose the
+    LLM-cited root sources instead of the opaque strategy label.
+    """
+    config = Settings()
+    config.logging.json_dir = str(tmp_path / "logs")
+    cid = uuid.uuid4().hex[:12]
+    logger = setup_logging(config, cid)
+    pipeline = Pipeline(config, cid, logger)
+
+    # Build a synthetic strategy result with explicit provenance labels.
+    recommendation = TradeRecommendation(
+        correlation_id=cid,
+        strategy_label="llm_trade",
+        asset="QQQ",
+        direction=Direction.PUT,
+        confidence=0.6,
+        target_strike=680.0,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={"llm_sources": ["reuters:kimi-k3", "watchlist:NVDA"]},
+        expires_at="2026-07-18",
+        must_close_before="15:30",
+    )
+    results = [
+        StrategyResult(
+            label="llm_trade",
+            recommendation=recommendation,
+            confidence=0.6,
+            forecast_source_labels=[
+                "llm:reuters:kimi-k3",
+                "llm:watchlist:NVDA",
+            ],
+        ),
+    ]
+
+    forecast = pipeline._compute_forecast(
+        results,
+        DecisionOutput(
+            selected_label="llm_trade",
+            recommendation=recommendation,
+            rationale="test",
+        ),
+    )
+
+    qqq = next(f for f in forecast.forecasts if f.asset == "QQQ")
+    assert qqq.down_sources == ["llm:reuters:kimi-k3", "llm:watchlist:NVDA"]
+    assert qqq.down_confidence == 1.0
+    # SPY has no recommendation -> empty sources, 0 / 0 / 100% sideways.
+    spy = next(f for f in forecast.forecasts if f.asset == "SPY")
+    assert spy.up_sources == []
+    assert spy.down_sources == []
+
+
+@pytest.mark.asyncio
+async def test_compute_forecast_falls_back_to_strategy_label_when_unset(
+    tmp_path,
+) -> None:
+    """Deterministic strategies leave ``forecast_source_labels=None`` and
+    the forecast must surface the strategy label as before (regression
+    guard).
+    """
+    config = Settings()
+    config.logging.json_dir = str(tmp_path / "logs")
+    cid = uuid.uuid4().hex[:12]
+    logger = setup_logging(config, cid)
+    pipeline = Pipeline(config, cid, logger)
+
+    recommendation = TradeRecommendation(
+        correlation_id=cid,
+        strategy_label="momentum",
+        asset="SPY",
+        direction=Direction.CALL,
+        confidence=0.55,
+        target_strike=750.0,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={},
+        expires_at="2026-07-18",
+        must_close_before="15:30",
+    )
+    results = [
+        StrategyResult(
+            label="momentum",
+            recommendation=recommendation,
+            confidence=0.55,
+            # forecast_source_labels intentionally omitted
+        ),
+    ]
+    forecast = pipeline._compute_forecast(
+        results,
+        DecisionOutput(
+            selected_label="momentum",
+            recommendation=recommendation,
+            rationale="test",
+        ),
+    )
+    spy = next(f for f in forecast.forecasts if f.asset == "SPY")
+    assert spy.up_sources == ["momentum"]

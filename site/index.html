@@ -261,6 +261,7 @@
       <span class="badge blue">● LLM-driven predictions</span>
       <span class="badge orange">● Per-asset % forecasts</span>
       <span class="badge green">● Snapshot-aware</span>
+      <span class="badge orange">● Prediction history &amp; learning</span>
     </div>
     <div class="hero-buttons">
       <a href="#quickstart" class="btn primary">Get started</a>
@@ -313,6 +314,21 @@
           <p>Styled HTML forecast sent via Gmail SMTP. Clear table with Direction, Confidence, Predicted Move, and Key Drivers of the Prediction per asset. Each send is persisted to <code>logs/&lt;date&gt;/email-&lt;correlation_id&gt;.html</code> for audit.</p>
         </div>
         <div class="feature">
+          <div class="icon">🔄</div>
+          <h3>Yesterday's prediction recap</h3>
+          <p>After each run, checks the previous business day's prediction against finhub 1-hour candles. Determines if the predicted direction came true at any point intraday, when it triggered, and how long it held. Success/fail results appear in the email and are persisted to <code>logs/prediction-history.json</code>.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🧠</div>
+          <h3>Learning from history</h3>
+          <p>Prediction history is pruned and injected into the LLM's user prompt — prioritizing recent misses — so the model can learn from past outcomes. Aggregate success rate and per-prediction rationales help refine future calls without unbounded prompt growth.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🕐</div>
+          <h3>LA timezone aware</h3>
+          <p>All dates and times use <code>America/Los_Angeles</code> — log directories, email timestamps, briefing lookup, and risk engine deadlines. Market-close checks use actual <code>America/New_York</code> time.</p>
+        </div>
+        <div class="feature">
           <div class="icon">🛡️</div>
           <h3>Risk guardrails (optional)</h3>
           <p>When best_trade execution is enabled: max loss cap, realistic 0DTE strikes, bid/ask spread ≤20%, time checks (no entries after 2PM), and OCC chain existence validation.</p>
@@ -339,9 +355,11 @@
           <div class="arch-arrow">→</div>
           <div class="arch-box"><div class="tag">Phase 3</div><div class="val">Analyse</div><div class="tag">LLM + 3 strategies</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Predict</div><div class="tag">Per-asset forecast</div></div>
+          <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Forecast</div><div class="tag">Per-asset table</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 5</div><div class="val">Optional execute</div><div class="tag">MCP (or dry-run)</div></div>
+          <div class="arch-box"><div class="tag">Phase 5</div><div class="val">Yesterday check</div><div class="tag">finhub candles</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 6</div><div class="val">Optional execute</div><div class="tag">MCP (or dry-run)</div></div>
         </div>
       </div>
 
@@ -387,7 +405,9 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
         <div class="flow-arrow">→</div>
         <div class="flow-step"><div class="label">3</div><div class="value">Forecast</div><div class="label">table + market vibe</div></div>
         <div class="flow-arrow">→</div>
-        <div class="flow-step"><div class="label">4</div><div class="value">Email</div><div class="label">prediction report</div></div>
+        <div class="flow-step"><div class="label">4</div><div class="value">Check yesterday</div><div class="label">finhub 1h candles</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">5</div><div class="value">Email</div><div class="label">forecast + recap</div></div>
       </div>
       <p style="text-align:center; color:var(--muted); margin-top: 24px; font-size:0.95rem;">
         Predictions are always free. Set <code style="color:var(--accent)">llm.trade_signal_enabled: true</code> and
@@ -505,7 +525,7 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
               <div class="email-container">
                 <span class="email-stamp" style="background: rgba(88,166,255,0.12); color: #58a6ff;">Inbox preview</span>
                 <h1>sender-trades — Intraday Prediction</h1>
-                <p>Generated at 2026-07-19 05:40 UTC</p>
+                <p>Generated at 2026-07-19 01:23 AM PDT</p>
                 <p style="font-size:0.82rem; background:#f0f6ff; padding:10px 14px; border-radius:6px; border-left:4px solid #58a6ff;">
                   <strong>Market Vibe:</strong> Rotation from consumer-AI compute into defense/space
                   infrastructure; tech-heavy indices gapping down as capital exits mega-cap tech
@@ -536,15 +556,28 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
                     </tr>
                   </tbody>
                 </table>
+                <div style="margin-top: 20px; padding: 10px 14px; border-radius: 6px; border-left: 4px solid #1a7f37; background: #f0faf1; font-size: 0.82rem;">
+                  <p style="margin: 4px 0; color: #1f2328;"><strong>Yesterday's Prediction Recap</strong></p>
+                  <p style="margin: 4px 0; color: #1f2328;">
+                    <strong>QQQ</strong> — Predicted <strong>DOWN</strong> (72% confidence)
+                    <span style="display:inline-block; background:#1a7f37; color:#fff; border-radius:4px; padding:1px 8px; font-size:0.7rem; font-weight:600;">SUCCESS</span>
+                  </p>
+                  <p style="margin: 4px 0; color: #57606a;">
+                    Triggered at 07:00 AM PDT | held for ~3 hours |
+                    Daily range: $685.00 &ndash; $700.10 | Close: $690.50
+                  </p>
+                </div>
                 <div class="email-footer">
-                  sender-trades — 0DTE Intraday Prediction Engine
+                  sender-trades &mdash; 0DTE Intraday Prediction Engine
                 </div>
               </div>
             </div>
 
             <p style="margin-top: 16px;">
-              A copy is also persisted to
+              A copy is persisted to
               <code>logs/2026-07-19/email-test-run-001.html</code> for audit.
+              Prediction outcomes are appended to
+              <code>logs/prediction-history.json</code> for learning.
             </p>
           </div>
         </div>
@@ -637,7 +670,7 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
         <tr><th>Strategy</th><th>Approach</th><th>Output</th></tr>
         <tr>
           <td>LLM prediction (primary)</td>
-          <td>Opencode LLM over briefing + market snapshot + news sentiment</td>
+          <td>Opencode LLM over briefing + market snapshot + news sentiment + prediction history context</td>
           <td>Per-asset direction, confidence %, predicted move %, cited sources, market vibe</td>
         </tr>
         <tr>

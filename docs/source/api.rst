@@ -10,3 +10,13 @@ API Reference
    :members:
    :undoc-members:
    :show-inheritance:
+
+.. automodule:: prediction_tracker
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: timezone
+   :members:
+   :undoc-members:
+   :show-inheritance:

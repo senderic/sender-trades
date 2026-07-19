@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>sender-trades — 0DTE Intraday Options Trading System</title>
+  <title>sender-trades — 0DTE Intraday Prediction Engine</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -255,11 +255,11 @@
 
   <section class="hero">
     <h1>sender-<span>trades</span></h1>
-    <p>0DTE intraday options trading recommendation system for SPY and QQQ. Ingest, analyse, decide, execute — on your own infrastructure. Snapshot-aware: reuses atlas-morning-briefing data to avoid duplicate API calls.</p>
+    <p>LLM-powered intraday directional prediction engine for SPY and QQQ. Ingest the Atlas Morning Briefing, run LLM research, and get a clear % direction prediction with cited evidence — all on your own infrastructure.</p>
     <div class="hero-badges">
-      <span class="badge green">● 126 tests</span>
-      <span class="badge blue">● 4 strategies (LLM-driven)</span>
-      <span class="badge orange">● 8 risk guardrails</span>
+      <span class="badge green">● 127 tests</span>
+      <span class="badge blue">● LLM-driven predictions</span>
+      <span class="badge orange">● Per-asset % forecasts</span>
       <span class="badge green">● Snapshot-aware</span>
     </div>
     <div class="hero-buttons">
@@ -273,59 +273,54 @@
       <h2>Features</h2>
       <div class="features">
         <div class="feature">
-          <div class="icon">📈</div>
-          <h3>Momentum strategy</h3>
-          <p>Detects gap openings and intraday momentum breaks on SPY and QQQ. Triggers on opening range breakouts and trendline violations with volume confirmation.</p>
-        </div>
-        <div class="feature">
-          <div class="icon">↔️</div>
-          <h3>Mean-reversion strategy</h3>
-          <p>RSI-based contrarian signals when the market over-extends. Enters fade positions when RSI crosses below 35 (oversold) or above 65 (overbought) on 5-minute bars.</p>
-        </div>
-        <div class="feature">
-          <div class="icon">⚡</div>
-          <h3>Event-driven strategy</h3>
-          <p>Catalyst-aware recommendations from news sentiment and macro data. Parses Atlas morning briefings for macro sentiment, sector rotation, and thematic shifts.</p>
-        </div>
-        <div class="feature">
           <div class="icon">🤖</div>
-          <h3>LLM trade-signal strategy</h3>
-          <p>Asks the <code>opencode</code> CLI to emit a structured JSON pick (asset / direction / confidence / rationale / sources) over the briefing + market snapshot. Free Zen first, paid Go fallback (60s timeout). Surfaces root provenance — e.g. <code>↓llm:atlas-briefing:executive_summary, llm:watchlist:NVDA</code> — in the forecast table.</p>
+          <h3>LLM-powered prediction</h3>
+          <p>Asks the <code>opencode</code> CLI to emit per-asset directional predictions (direction, confidence %, expected move %, rationale, sources). Free Zen models first, paid Go fallback. Traces predictions back to original news publishers and market data — not the briefing itself.</p>
         </div>
         <div class="feature">
-          <div class="icon">🧩</div>
-          <h3>Decision aggregator</h3>
-          <p>Picks the highest-confidence recommendation or merges near-ties with 2-of-3 consensus. Produces a directional forecast table (UP / DOWN / SIDEWAYS confidence + expected MOVE %).</p>
+          <div class="icon">📊</div>
+          <h3>Clear forecast table</h3>
+          <p>No confusing UP/DOWN/SIDE columns. Each asset gets a simple readout: Direction (UP/DOWN), Confidence, Predicted Move %, and Key Drivers of the Prediction with cited evidence. Also includes a <em>Market Vibe</em> summary for overall context.</p>
         </div>
         <div class="feature">
-          <div class="icon">🛡️</div>
-          <h3>8 risk guardrails</h3>
-          <p>Max loss cap (0.3% underlying premium estimate), bid/ask spread ≤20%, statistical sanity (≤2% move), time checks (no trades after 2PM, close by 3:30PM), OCC chain existence, 2-of-3 consensus, rationale schema.</p>
+          <div class="icon">🔍</div>
+          <h3>Root-provenance citation</h3>
+          <p>The LLM must cite where each prediction's evidence came from — original publisher (reuters, bloomberg, seekingalpha), watchlist ticker, or market data. No more opaque "LLM said so" or "per the briefing."</p>
         </div>
         <div class="feature">
-          <div class="icon">🔌</div>
-          <h3>MCP broker abstraction</h3>
-          <p>Subprocess stdio transport for Alpaca and Robinhood. Dry-run by default — nothing leaves your machine. Use <code>--execute</code> to enable live trading.</p>
+          <div class="icon">📈</div>
+          <h3>Momentum + MeanReversion + EventDriven</h3>
+          <p>Three deterministic strategies run alongside the LLM for cross-reference: gap-based momentum, RSI-based mean-reversion, and catalyst-aware event-driven logic from macro data and news polarity.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🎯</div>
+          <h3>Realistic 0DTE strikes</h3>
+          <p>Strike computation fixed — no more 15% OTM strikes that don't exist in the chain. 30-delta options now target ~0.6% OTM, producing strikes like QQQ PUT @ 691 (not 591) for a 695 underlying.</p>
         </div>
         <div class="feature">
           <div class="icon">📰</div>
           <h3>Multi-source ingestion</h3>
-          <p>Finnhub quotes, Brave news, Reddit WSB/options sentiment, Unusual Whales options flow, RSS feeds, and Atlas morning briefings. Snapshot-aware — reuses cached data from atlas-morning-briefing to avoid duplicate API calls and rate limits.</p>
+          <p>Finnhub quotes, Brave news, RSS feeds, and Atlas morning briefings. Snapshot-aware — reuses cached data from atlas-morning-briefing to avoid duplicate API calls and rate limits.</p>
         </div>
         <div class="feature">
           <div class="icon">📋</div>
           <h3>Structured logging</h3>
-          <p>JSON logs with per-run correlation IDs. Every decision, risk check, and execution step is traceable. Logs organized by date in <code>logs/YYYY-MM-DD/</code> with run and summary files.</p>
+          <p>JSON logs with per-run correlation IDs. Every prediction, risk check, and execution step is traceable. Logs organized by date in <code>logs/YYYY-MM-DD/</code> with run and summary files.</p>
         </div>
         <div class="feature">
           <div class="icon">📬</div>
           <h3>Email reports</h3>
-          <p>Styled HTML forecast table sent via Gmail SMTP (app password). Each send is also persisted to <code>logs/&lt;date&gt;/email-&lt;correlation_id&gt;.html</code> for audit. Use <code>--email</code> to receive the directional forecast in your inbox each morning.</p>
+          <p>Styled HTML forecast sent via Gmail SMTP. Clear table with Direction, Confidence, Predicted Move, and Key Drivers of the Prediction per asset. Each send is persisted to <code>logs/&lt;date&gt;/email-&lt;correlation_id&gt;.html</code> for audit.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🛡️</div>
+          <h3>Risk guardrails (optional)</h3>
+          <p>When best_trade execution is enabled: max loss cap, realistic 0DTE strikes, bid/ask spread ≤20%, time checks (no entries after 2PM), and OCC chain existence validation.</p>
         </div>
         <div class="feature">
           <div class="icon">🐳</div>
           <h3>Docker + CI/CD</h3>
-          <p>Multi-stage Dockerfile, docker-compose for app + docs, GitHub Actions for CI (ruff + pytest) and GitHub Pages deploy for the brochure site.</p>
+          <p>Multi-stage Dockerfile, docker-compose for app + docs, GitHub Actions for CI (ruff + pytest, 127 tests) and GitHub Pages deploy.</p>
         </div>
       </div>
     </div>
@@ -342,11 +337,11 @@
           <div class="arch-arrow">→</div>
           <div class="arch-box"><div class="tag">Phase 2</div><div class="val">Ingest<br>market</div><div class="tag">Snapshots or API</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 3</div><div class="val">Analyse</div><div class="tag">4 strategies</div></div>
+          <div class="arch-box"><div class="tag">Phase 3</div><div class="val">Analyse</div><div class="tag">LLM + 3 strategies</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Decide</div><div class="tag">Aggregate + Risk</div></div>
+          <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Predict</div><div class="tag">Per-asset forecast</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 5</div><div class="val">Execute</div><div class="tag">MCP (or dry-run)</div></div>
+          <div class="arch-box"><div class="tag">Phase 5</div><div class="val">Optional execute</div><div class="tag">MCP (or dry-run)</div></div>
         </div>
       </div>
 
@@ -355,9 +350,7 @@
         <tr><th>Source</th><th>Data</th><th>Snapshot cached</th></tr>
         <tr><td>Finnhub</td><td>Real-time stock quotes (SPY, QQQ)</td><td><span class="pill green">Yes</span></td></tr>
         <tr><td>Brave Search</td><td>Financial news headlines</td><td><span class="pill green">Yes</span></td></tr>
-        <tr><td>Reddit</td><td>WSB + r/options hot posts</td><td><span class="pill red">No</span></td></tr>
-        <tr><td>Unusual Whales</td><td>Options flow sentiment</td><td><span class="pill red">No</span></td></tr>
-        <tr><td>RSS Feeds</td><td>Market news feeds</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>RSS Feeds (4)</td><td>Market news from Reuters, Dow Jones, Seeking Alpha, Investing.com</td><td><span class="pill green">Yes</span></td></tr>
         <tr><td>Atlas Briefing</td><td>Macro summary, ticker table, news, blogs, papers</td><td><span class="pill blue">N/A</span></td></tr>
       </table>
 
@@ -388,16 +381,17 @@
     <div class="container">
       <h2>How it works</h2>
       <div class="flow">
-        <div class="flow-step"><div class="label">1</div><div class="value">Ingest</div><div class="label">quotes, news, Reddit, RSS</div></div>
+        <div class="flow-step"><div class="label">1</div><div class="value">Ingest</div><div class="label">briefing + market data</div></div>
         <div class="flow-arrow">→</div>
-        <div class="flow-step"><div class="label">2</div><div class="value">Analyse</div><div class="label">4 strategies in parallel</div></div>
+        <div class="flow-step"><div class="label">2</div><div class="value">LLM Predict</div><div class="label">per-asset direction + %</div></div>
         <div class="flow-arrow">→</div>
-        <div class="flow-step"><div class="label">3</div><div class="value">Decide</div><div class="label">aggregate + risk checks</div></div>
+        <div class="flow-step"><div class="label">3</div><div class="value">Forecast</div><div class="label">table + market vibe</div></div>
         <div class="flow-arrow">→</div>
-        <div class="flow-step"><div class="label">4</div><div class="value">Execute</div><div class="label">MCP broker (or dry-run)</div></div>
+        <div class="flow-step"><div class="label">4</div><div class="value">Email</div><div class="label">prediction report</div></div>
       </div>
       <p style="text-align:center; color:var(--muted); margin-top: 24px; font-size:0.95rem;">
-        Dry-run is the default. Set <code style="color:var(--accent)">execute: true</code> or pass <code style="color:var(--accent)">--execute</code> to enable live trading.
+        Predictions are always free. Set <code style="color:var(--accent)">llm.trade_signal_enabled: true</code> and
+        <code style="color:var(--accent)">execute: true</code> to also produce a best-trade recommendation.
       </p>
     </div>
   </section>
@@ -406,112 +400,88 @@
     <div class="container">
       <h2>End-to-end example</h2>
       <p class="example-intro">
-        A real trial run from <code>2026-07-19</code> against the latest
+        A live prediction run from <code>2026-07-18</code> against the
         <a href="https://github.com/senderic/atlas-morning-briefing" style="color: var(--accent);">atlas-morning-briefing</a>
-        snapshot. Three stages: upstream briefing → LLM trade signal → email in your inbox.
-        Correlation ID: <code>ffa5e8ff85ba</code>.
+        snapshot. Three stages: ingest briefing + market → LLM predicts per-asset → email delivered.
+        Correlation ID: <code>test-run-001</code>.
       </p>
 
       <div class="stages">
 
-        <!-- Stage 1: upstream briefing -->
+        <!-- Stage 1: ingest briefing + market -->
         <div class="stage">
           <div class="stage-header">
             <span class="stage-num">1</span>
-            <span class="stage-title">Upstream — Atlas morning briefing</span>
+            <span class="stage-title">Ingest — Atlas briefing + market snapshots</span>
             <span class="stage-meta">
               <a href="https://github.com/senderic/atlas-morning-briefing">atlas-morning-briefing repo →</a>
             </span>
           </div>
           <div class="stage-body">
             <p>
-              <strong>Parsed from</strong> <code>~/atlas-morning-briefing/briefings/Atlas-Briefing-2026.07.18.md</code>.
-              Upstream runs an LLM distillation pass at <code>06:00 cron</code> and ships a 25-row watchlist,
-              an executive summary, AI &amp; tech news, blog updates, and top papers.
+              <strong>Parsed briefing</strong> from <code>~/atlas-morning-briefing/briefings/Atlas-Briefing-2026.07.18.md</code>.
+              Upstream runs an LLM distillation pass and ships a 25-row watchlist,
+              executive summary, AI &amp; tech news, blog updates, and top papers.
             </p>
             <p>
-              <strong>Atlas parser</strong> (this repo) classified the briefing as
-              <code>quality = full</code> based on the executive-summary content and
-              the sibling <code>status.json</code> reporting
-              <code>intelligence_enabled = true</code>. No re-synthesis needed — the
-              happy path stays LLM-free for this stage.
+              <strong>Market data</strong> loaded from snapshot
+              <code>snapshots/2026-07-18/</code> — 241 news items, 24 quotes, 67 RSS
+              entries. Zero API calls made.
             </p>
-
-            <div class="briefing-excerpt">
-              <span class="meta">Saturday, July 18, 2026 · 09:40 AM PDT</span>
-              <h4>Executive Summary (excerpt)</h4>
-              <p>
-                While headlines fixated on <strong>Kimi K3</strong> — Moonshot AI's
-                2.8-trillion-parameter open-weight model topping Claude Fable 5 and
-                GPT-5.6 Sol on frontend-coding benchmarks — the more consequential
-                moves were structural. Two hyperscalers shipped agentic defense
-                tooling on the same day: AWS demoed a Bedrock + MCP Computer Vision
-                MCP Server, while Google Cloud folded its Wiz acquisition into
-                "Agentic Defense." The market caught the rotation: NVDA -2.2%,
-                GOOGL -2.2%, META -2.8%, MSFT -1.8% all sold off, while the
-                defense/space-infrastructure periphery held or rallied.
-              </p>
-              <h4>Financial Market Overview (excerpt)</h4>
-              <table class="ticker-table">
-                <tr><th>Ticker</th><th>Price</th><th>Change</th></tr>
-                <tr><td><strong>QQQ</strong></td><td>$695.33</td><td class="neg">-1.50%</td></tr>
-                <tr><td><strong>SPY</strong></td><td>$743.29</td><td class="neg">-0.99%</td></tr>
-                <tr><td><strong>META</strong></td><td>$646.01</td><td class="neg">-2.79%</td></tr>
-                <tr><td><strong>NVDA</strong></td><td>$202.81</td><td class="neg">-2.21%</td></tr>
-                <tr><td><strong>LITE</strong></td><td>$732.82</td><td class="pos">+3.77%</td></tr>
-                <tr><td><strong>BKSY</strong></td><td>$22.19</td><td class="pos">+3.40%</td></tr>
-              </table>
-              <p style="margin-top: 10px; font-size: 0.75rem; color: var(--muted);">
-                19 more rows omitted.
-                <a href="https://github.com/senderic/atlas-morning-briefing" style="color: var(--accent);">
-                  See full briefings in the upstream repo →
-                </a>
-              </p>
-            </div>
           </div>
         </div>
 
-        <!-- Stage 2: LLM decision -->
+        <!-- Stage 2: LLM prediction -->
         <div class="stage">
           <div class="stage-header">
             <span class="stage-num">2</span>
-            <span class="stage-title">LLM trade signal — decision</span>
-            <span class="stage-meta">opencode/deepseek-v4-flash-free · 13.1s · free Zen tier</span>
+            <span class="stage-title">LLM prediction — per-asset forecast</span>
+            <span class="stage-meta">opencode/deepseek-v4-flash-free · 17.2s · free Zen tier</span>
           </div>
           <div class="stage-body">
             <p>
-              <strong>Strategy:</strong> <code>llm_trade</code> — fed the briefing +
-              market snapshot + news sentiment to the <code>opencode</code> CLI and
-              asked for a single JSON pick. The free Zen model
-              <code>opencode/deepseek-v4-flash-free</code> responded first (no paid
-              Go tier needed — <code>paid_used = false</code>).
+              <strong>LLM prompt</strong> asked for predictions covering ALL target
+              assets (SPY and QQQ), not just a single trade. The free Zen model
+              <code>opencode/deepseek-v4-flash-free</code> responded first.
             </p>
             <p>
-              The LLM was asked to cite <strong>root provenance</strong> — which
-              upstream input actually drove the call — not just say "LLM said so".
-              It cited three sources: the briefing's executive summary, and two
-              watchlist tickers (NVDA, META).
+              The LLM was instructed to cite <strong>root provenance</strong> — tracing
+              evidence back to the original news publisher (reuters, bloomberg, etc.) or
+              market data — not the atlas briefing itself. The response included both
+              per-asset predictions and an optional best_trade.
             </p>
 
             <div class="json-pick">{
-  <span class="k">"asset"</span>: <span class="s">"QQQ"</span>,
-  <span class="k">"direction"</span>: <span class="s">"PUT"</span>,
-  <span class="k">"confidence"</span>: <span class="n">0.62</span>,
-  <span class="k">"rationale"</span>: <span class="s">"Consumer-AI tech names that dominate QQQ are being sold off (NVDA -2.21%, META -2.79%, GOOGL -2.17%, MSFT -1.81%) while defense/space infrastructure holds or rallies — the agentic-defense rotation narrative from the morning briefing indicates continued capital rotation out of QQQ's heaviest weights."</span>,
-  <span class="k">"sources"</span>: [
-    <span class="s">"atlas-briefing:executive_summary"</span>,
-    <span class="s">"watchlist:NVDA"</span>,
-    <span class="s">"watchlist:META"</span>
-  ]
+  <span class="k">"predictions"</span>: {
+    <span class="k">"SPY"</span>: {
+      <span class="k">"direction"</span>: <span class="s">"DOWN"</span>,
+      <span class="k">"confidence"</span>: <span class="n">0.82</span>,
+      <span class="k">"predicted_move_pct"</span>: <span class="n">-1.2</span>,
+      <span class="k">"rationale"</span>: <span class="s">"Broad-based selloff led by mega-cap tech (NVDA -2.2%, META -2.8%, MSFT -1.8%) and a -1.15% gap-down open signals capital rotation out of consumer-AI compute into defense/space infrastructure."</span>,
+      <span class="k">"sources"</span>: [<span class="s">"reuters:agentic-defense"</span>, <span class="s">"market:NVDA"</span>, <span class="s">"market:META"</span>]
+    },
+    <span class="k">"QQQ"</span>: {
+      <span class="k">"direction"</span>: <span class="s">"DOWN"</span>,
+      <span class="k">"confidence"</span>: <span class="n">0.88</span>,
+      <span class="k">"predicted_move_pct"</span>: <span class="n">-1.8</span>,
+      <span class="k">"rationale"</span>: <span class="s">"QQQ is the epicenter of the rotation: gapped -2.02%, now -1.50%, with every major tech holding (NVDA -2.2%, GOOGL -2.2%, META -2.8%, MSFT -1.8%) selling off as capital rotates from consumer-AI compute into defense/space infrastructure."</span>,
+      <span class="k">"sources"</span>: [<span class="s">"reuters:agentic-defense"</span>, <span class="s">"market:NVDA"</span>, <span class="s">"market:GOOGL"</span>]
+    }
+  },
+  <span class="k">"market_vibe"</span>: <span class="s">"Rotation from consumer-AI compute into defense/space infrastructure; tech-heavy indices gapping down as capital exits mega-cap tech for physical/electronic defense plays."</span>,
+  <span class="k">"best_trade"</span>: {
+    <span class="k">"asset"</span>: <span class="s">"QQQ"</span>,
+    <span class="k">"direction"</span>: <span class="s">"PUT"</span>,
+    <span class="k">"confidence"</span>: <span class="n">0.85</span>,
+    <span class="k">"rationale"</span>: <span class="s">"QQQ's heavy big-tech exposure makes it the cleanest directional play on the rotation."</span>,
+    <span class="k">"sources"</span>: [<span class="s">"market:QQQ"</span>]
+  }
 }</div>
 
             <p>
-              <strong>Decision aggregator</strong>: selected <code>llm_trade @ 0.62</code>
-              (other three strategies abstained below threshold).
-              <strong>Risk engine</strong>: <code>_check_statistical_sanity</code>
-              flagged the 15% OTM strike and halved confidence to
-              <code>0.31</code>. Final recommendation:
-              <strong>QQQ PUT @ $591, 1 contract, 0.31 confidence</strong>.
+              <strong>Forecast table</strong> uses per-asset predictions directly.
+              The optional <code>best_trade</code> feeds into the execution path
+              (risk checks, strike computation, MCP submission).
             </p>
           </div>
         </div>
@@ -525,57 +495,56 @@
           </div>
           <div class="stage-body">
             <p>
-              The pipeline's forecast table is rendered into an HTML email via
-              Gmail SMTP. The LLM's root provenance flows verbatim into the
-              <em>Sources</em> column, so each email immediately shows <em>why</em>
-              the LLM picked what it picked — not just the strategy name.
+              The forecast table is rendered into an HTML email via Gmail SMTP.
+              No confusing UP/DOWN/SIDE columns — just clear Direction, Confidence,
+              Predicted Move, and Key Drivers of the Prediction per asset. The optional
+              <em>Market Vibe</em> section gives overall context.
             </p>
 
             <div class="email-preview">
               <div class="email-container">
                 <span class="email-stamp" style="background: rgba(88,166,255,0.12); color: #58a6ff;">Inbox preview</span>
-                <h1>sender-trades — Directional Forecast</h1>
-                <p>Generated at 2026-07-19 00:17 UTC</p>
+                <h1>sender-trades — Intraday Prediction</h1>
+                <p>Generated at 2026-07-19 05:40 UTC</p>
+                <p style="font-size:0.82rem; background:#f0f6ff; padding:10px 14px; border-radius:6px; border-left:4px solid #58a6ff;">
+                  <strong>Market Vibe:</strong> Rotation from consumer-AI compute into defense/space
+                  infrastructure; tech-heavy indices gapping down as capital exits mega-cap tech
+                  for physical/electronic defense plays.
+                </p>
                 <table>
                   <thead>
                     <tr>
-                      <th>Asset</th><th>UP</th><th>DOWN</th><th>SIDE</th><th>MOVE</th><th>Sources</th>
+                      <th>Asset</th><th>Direction</th><th>Confidence</th><th>Pred. Move</th><th>Key Drivers of the Prediction</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr>
                       <td>SPY</td>
-                      <td class="up-cell">0%</td>
-                      <td class="down-cell">0%</td>
-                      <td class="side-cell">100%</td>
-                      <td class="side-cell">+0.0%</td>
-                      <td>—</td>
+                      <td class="down-cell">DOWN</td>
+                      <td>82%</td>
+                      <td class="down-cell">-1.2%</td>
+                      <td>Broad-based selloff led by mega-cap tech (NVDA -2.2%, META -2.8%, MSFT -1.8%) and a -1.15% gap-down open signals capital rotation out of consumer-AI compute into defense/space infrastructure.<br>
+                      <span style="font-size:0.75rem;color:#8b949e">reuters:agentic-defense · market:NVDA · market:META</span></td>
                     </tr>
                     <tr>
                       <td>QQQ</td>
-                      <td class="up-cell">0%</td>
-                      <td class="down-cell">100%</td>
-                      <td class="side-cell">0%</td>
-                      <td class="down-cell">-9.3%</td>
-                      <td class="src-cell">↓llm:atlas-briefing:executive_summary,<br>llm:watchlist:NVDA,<br>llm:watchlist:META</td>
+                      <td class="down-cell">DOWN</td>
+                      <td>88%</td>
+                      <td class="down-cell">-1.8%</td>
+                      <td>QQQ is the epicenter of the rotation: gapped -2.02%, now -1.50%, with every major tech holding (NVDA -2.2%, GOOGL -2.2%, META -2.8%, MSFT -1.8%) selling off as capital rotates from consumer-AI compute into defense/space infrastructure.<br>
+                      <span style="font-size:0.75rem;color:#8b949e">reuters:agentic-defense · market:NVDA · market:GOOGL</span></td>
                     </tr>
                   </tbody>
                 </table>
-                <p style="margin-top: 16px; font-size: 0.78rem; color: #57606a;">
-                  <strong>Selected trade:</strong> QQQ PUT @ $591.0 ·
-                  Confidence 0.31 · 1 contract · Strategy <code>llm_trade</code>
-                </p>
                 <div class="email-footer">
-                  sender-trades — 0DTE Intraday Options Trading System
+                  sender-trades — 0DTE Intraday Prediction Engine
                 </div>
               </div>
             </div>
 
             <p style="margin-top: 16px;">
-              A copy of the rendered HTML body is also persisted to
-              <code>logs/2026-07-19/email-ffa5e8ff85ba.html</code> on disk for
-              audit alongside the structured run log. The plain-text twin lands at
-              <code>email-ffa5e8ff85ba.txt</code>.
+              A copy is also persisted to
+              <code>logs/2026-07-19/email-test-run-001.html</code> for audit.
             </p>
           </div>
         </div>
@@ -583,8 +552,7 @@
       </div>
 
       <p style="text-align: center; color: var(--muted); margin-top: 40px; font-size: 0.85rem;">
-        Read the full design notes for the degraded-briefing fallback and the
-        LLM trade-signal strategy in
+        Read the full design notes in
         <a href="https://github.com/senderic/sender-trades/blob/main/LESSONS_LEARNED.md" style="color: var(--accent);">LESSONS_LEARNED.md</a>
         and the
         <a href="https://github.com/senderic/sender-trades/blob/main/src/llm/trade_signal.py" style="color: var(--accent);">LLMTradeStrategy source</a>.
@@ -622,7 +590,7 @@
         </div>
         <div class="cmd-item">
           <code>uv run pytest</code>
-          <div class="desc">Run all 126 tests</div>
+          <div class="desc">Run all 127 tests</div>
         </div>
         <div class="cmd-item">
           <code>uv run ruff check &amp;&amp; uv run ruff format --check</code>
@@ -666,43 +634,36 @@
     <div class="container">
       <h2>Strategy reference</h2>
       <table class="pill-table">
-        <tr><th>Strategy</th><th>Trigger</th><th>Direction</th><th>Confidence floor</th></tr>
+        <tr><th>Strategy</th><th>Approach</th><th>Output</th></tr>
+        <tr>
+          <td>LLM prediction (primary)</td>
+          <td>Opencode LLM over briefing + market snapshot + news sentiment</td>
+          <td>Per-asset direction, confidence %, predicted move %, cited sources, market vibe</td>
+        </tr>
         <tr>
           <td>Momentum</td>
-          <td>Gap opening &gt;0.5%, intraday breakout</td>
-          <td>Follow momentum</td>
-          <td>0.40</td>
+          <td>Gap opening detection + sentiment confirmation</td>
+          <td>CALL/PUT recommendation + confidence</td>
         </tr>
         <tr>
           <td>Mean reversion</td>
-          <td>RSI &lt;35 (oversold) or &gt;65 (overbought)</td>
-          <td>Fade the move</td>
-          <td>0.40</td>
+          <td>RSI-estimate contrarian signals</td>
+          <td>CALL/PUT recommendation + confidence</td>
         </tr>
         <tr>
           <td>Event-driven</td>
-          <td>News sentiment + macro catalyst</td>
-          <td>Aligned with catalyst</td>
-          <td>0.45</td>
-        </tr>
-        <tr>
-          <td>LLM trade-signal</td>
-          <td>JSON pick from opencode LLM over briefing+market</td>
-          <td>LLM-cited (free Zen first, paid Go fallback)</td>
-          <td>0.45</td>
+          <td>News catalyst keyword matching + polarity</td>
+          <td>CALL/PUT recommendation + confidence</td>
         </tr>
       </table>
 
-      <h4 style="margin-top: 32px;">Risk guardrails</h4>
+      <h4 style="margin-top: 32px;">Risk guardrails (for best_trade execution)</h4>
       <ul class="compact">
-        <li>Source-verified prices — quote must come from Finnhub or snapshot</li>
-        <li>Chain existence — OCC option chain must be live</li>
+        <li>Realistic 0DTE strikes — ~0.6% OTM for 30-delta, strikes that actually exist in the chain</li>
+        <li>Max loss hard cap — default $500</li>
         <li>Bid/ask spread ≤20% of mid-price</li>
-        <li>2-of-3 consensus — briefing sentiment, news polarity, and macro must agree</li>
-        <li>Statistical sanity — expected move ≤2% of underlying</li>
-        <li>Max loss hard cap — 0.3% of underlying (realistic 0DTE ATM premium estimate, default $1000)</li>
-        <li>Time check — no entries after 2PM ET, all positions closed by 3:30PM ET</li>
-        <li>Rationale schema — every trade must have a documented reason</li>
+        <li>OCC chain existence verification</li>
+        <li>Time check — no entries after 2PM ET</li>
       </ul>
     </div>
   </section>
@@ -719,7 +680,7 @@
   </section>
 
   <footer>
-    sender-trades &mdash; 0DTE intraday options trading recommendation system
+    sender-trades &mdash; 0DTE Intraday Prediction Engine · Powered by opencode LLM
   </footer>
 </body>
 </html>

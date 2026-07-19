@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 
@@ -402,19 +403,46 @@ class Pipeline:
     ) -> DirectionalForecast:
         """Build a directional forecast table from strategy results.
 
-        Aggregates each strategy's direction and confidence into
-        UP / DOWN / SIDEWAYS probabilities per asset.
+        Uses the LLM strategy's per-asset predictions (when available)
+        as the primary forecast data, falling back to the legacy
+        CALL/PUT aggregation for deterministic strategies.
 
         Args:
             results: Raw strategy results (pre-risk).
             decision: The final decision (for rationale / selected trade).
 
         Returns:
-            A DirectionalForecast with per-asset confidence buckets.
+            A DirectionalForecast with per-asset predictions.
         """
         assets = self.config.general.target_assets
-        forecasts: list[AssetForecast] = []
+        llm_result = next((r for r in results if r.predictions is not None), None)
+        market_vibe = ""
 
+        if llm_result is not None:
+            # Primary path: use LLM predictions directly.
+            trace = llm_result.debug_trace
+            market_vibe = trace.get("market_vibe", "")
+            forecasts: list[AssetForecast] = []
+            for asset in assets:
+                pred = llm_result.predictions.get(asset)
+                if pred is not None:
+                    llm_sources = [f"llm:{s}" for s in pred.sources]
+                    forecasts.append(
+                        AssetForecast(
+                            asset=pred.asset,
+                            direction=pred.direction,
+                            confidence=pred.confidence,
+                            predicted_move_pct=pred.predicted_move_pct,
+                            rationale=pred.rationale,
+                            sources=llm_sources,
+                        )
+                    )
+                else:
+                    forecasts.append(AssetForecast(asset=asset))  # type: ignore
+            return DirectionalForecast(forecasts=forecasts, market_vibe=market_vibe)
+
+        # Fallback: legacy aggregation from deterministic strategies.
+        forecasts = []
         for asset in assets:
             up_sum = 0.0
             down_sum = 0.0
@@ -427,10 +455,6 @@ class Pipeline:
                 rec = r.recommendation
                 if rec is None or rec.asset != asset:
                     continue
-                # Use the strategy's explicit source labels when set
-                # (LLM strategy cites root provenance); otherwise fall
-                # back to the strategy label so deterministic strategies
-                # surface e.g. "momentum" / "mean_reversion" as before.
                 src_labels = r.forecast_source_labels or [r.label]
                 if rec.direction == Direction.CALL:
                     up_sum += r.confidence
@@ -457,17 +481,17 @@ class Pipeline:
                 up_conf = 0.0
                 down_conf = 0.0
 
-            sideways_conf = round(max(0.0, 1.0 - up_conf - down_conf), 4)
-            magnitude = round((weighted_magnitude / mag_count) * 100 if mag_count > 0 else 0.0, 2)
+            direction: Literal["UP", "DOWN"] | None = (
+                "UP" if up_conf > down_conf else ("DOWN" if down_conf > up_conf else None)
+            )
+            pct = round((weighted_magnitude / mag_count) * 100 if mag_count > 0 else 0.0, 2)
             forecasts.append(
                 AssetForecast(
                     asset=asset,
-                    up_confidence=up_conf,
-                    down_confidence=down_conf,
-                    sideways_confidence=sideways_conf,
-                    expected_move_pct=magnitude,
-                    up_sources=up_sources,
-                    down_sources=down_sources,
+                    direction=direction,
+                    confidence=max(up_conf, down_conf),
+                    predicted_move_pct=pct if direction else 0.0,
+                    sources=up_sources + down_sources,
                 )
             )
 

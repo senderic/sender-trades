@@ -1,11 +1,45 @@
-# Lessons Learned — Atlas Morning Briefing as a Dependency
+# Lessons Learned
 
-Cross-project notes about `~/atlas-morning-briefing`, the daily morning
-briefing this project ingests via `src/ingestion/parser.py`. Each entry
-documents a real production incident upstream and how this project
-should respond.
+Cross-project notes about running an LLM-driven intraday prediction system.
 
 Newest entries at the top.
+
+---
+
+## 2026-07-18b — Redesigned from trade-executor to prediction-engine
+
+### What we changed
+
+The system was originally designed to find a single trade (asset, direction,
+strike, contracts) and execute it via MCP. Users found the output confusing
+— "buy sell side" language, opaque UP/DOWN/SIDE columns, absurd strikes (15%
+OTM), and no clear prediction of *how much* an asset would move.
+
+### Changes made
+
+1. **LLM prompt redesigned**: Instead of "Choose exactly ONE trade", the LLM
+   now outputs per-asset predictions for ALL target assets: direction (UP/DOWN),
+   confidence, predicted_move_pct, rationale, and root-provenance sources.
+
+2. **Forecast table simplified**: Replaced UP/DOWN/SIDE/MOVE columns with
+   Direction / Confidence / Pred. Move / Key Drivers of the Prediction — clear at a glance.
+
+3. **Source citation improved**: The LLM is now instructed to trace evidence
+   back to original publishers (reuters:, bloomberg:, market:) rather than
+   citing "atlas-briefing" as a root source.
+
+4. **Strike computation fixed**: Previously used `underlying * 0.85` for puts
+   (15% OTM). Now uses `underlying * (1 - delta * 0.02)` — ~0.6% OTM for
+   30-delta, producing strikes that actually exist in the chain
+   (e.g. QQQ PUT @ 691 instead of 591).
+
+### What to watch
+
+- The optional `best_trade` field lets the LLM still suggest an executable
+  trade when the signal is strong. The execution path (risk checks, MCP)
+  still needs Alpaca credentials configured.
+- Deterministic strategies (momentum, mean-reversion, event-driven) often
+  abstain when the LLM fires — may want to reconsider their value.
 
 ---
 

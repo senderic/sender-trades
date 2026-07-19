@@ -28,6 +28,47 @@ def _stock_response(pick: dict[str, Any]) -> str:
     return _ndjson(json.dumps(pick))
 
 
+def _default_predictions() -> dict[str, Any]:
+    """Standard per-asset predictions for use across tests."""
+    return {
+        "SPY": {
+            "direction": "DOWN",
+            "confidence": 0.65,
+            "predicted_move_pct": -1.1,
+            "rationale": "Hawkish Fed comments weigh on broad market.",
+            "sources": ["atlas-briefing:executive_summary"],
+        },
+        "QQQ": {
+            "direction": "DOWN",
+            "confidence": 0.72,
+            "predicted_move_pct": -2.5,
+            "rationale": "Tech selloff led by NVDA and META.",
+            "sources": [
+                "atlas-briefing:executive_summary",
+                "reuters:tech-ai-selloff",
+                "watchlist:NVDA",
+            ],
+        },
+    }
+
+
+def _full_response(
+    predictions: dict[str, Any] | None = None,
+    market_vibe: str = "",
+    best_trade: dict[str, Any] | None = None,
+) -> str:
+    """Build a complete new-format prediction response."""
+    data: dict[str, Any] = {}
+    if predictions is None:
+        predictions = _default_predictions()
+    data["predictions"] = predictions
+    if market_vibe:
+        data["market_vibe"] = market_vibe
+    if best_trade is not None:
+        data["best_trade"] = best_trade
+    return _ndjson(json.dumps(data))
+
+
 @pytest.fixture
 def briefing_with_sentiment() -> BriefingData:
     return BriefingData(
@@ -140,10 +181,10 @@ class TestNormaliseSources:
         assert _normalise_sources([huge, "reuters:ok"]) == ["reuters:ok"]
 
     def test_missing_returns_atlas_briefing_fallback(self) -> None:
-        assert _normalise_sources([]) == ["atlas-briefing"]
-        assert _normalise_sources(None) == ["atlas-briefing"]
-        assert _normalise_sources({}) == ["atlas-briefing"]
-        assert _normalise_sources([None, 1, {"x": "y"}]) == ["atlas-briefing"]
+        assert _normalise_sources([]) == ["news-sentiment"]
+        assert _normalise_sources(None) == ["news-sentiment"]
+        assert _normalise_sources({}) == ["news-sentiment"]
+        assert _normalise_sources([None, 1, {"x": "y"}]) == ["news-sentiment"]
 
 
 class TestLLMTradeStrategy:
@@ -165,11 +206,11 @@ class TestLLMTradeStrategy:
         assert result.debug_trace["skip_reason"] == "opencode_unavailable"
 
     @pytest.mark.asyncio
-    async def test_valid_pick_builds_recommendation(
+    async def test_valid_pick_builds_predictions_and_best_trade(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         strategy = self._strategy()
-        pick = {
+        best_trade = {
             "asset": "QQQ",
             "direction": "PUT",
             "confidence": 0.78,
@@ -184,10 +225,19 @@ class TestLLMTradeStrategy:
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=_completed(_stock_response(pick)),
+                return_value=_completed(_full_response(best_trade=best_trade)),
             ),
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+
+        # Predictions for both assets
+        assert result.predictions is not None
+        assert "SPY" in result.predictions
+        assert "QQQ" in result.predictions
+        assert result.predictions["QQQ"].direction == "DOWN"
+        assert result.predictions["QQQ"].predicted_move_pct == -2.5
+
+        # Best trade recommendation
         assert result.recommendation is not None
         assert result.recommendation.asset == "QQQ"
         assert result.recommendation.direction == Direction.PUT
@@ -195,83 +245,98 @@ class TestLLMTradeStrategy:
         assert result.recommendation.strategy_label == "llm_trade"
         assert result.debug_trace["served_by"] == "opencode/deepseek-v4-flash-free"
         assert result.debug_trace["paid_used"] is False
-        # Rationale preserves the LLM's reasoning.
         assert "tech selloff" in result.recommendation.rationale["llm_rationale"].lower()
-        # Provenance: LLM-cited root sources flow into the rationale dict.
         assert result.recommendation.rationale["llm_sources"] == [
             "atlas-briefing:executive_summary",
             "reuters:tech-ai-selloff",
             "watchlist:NVDA",
         ]
-        # Forecast source labels are LLM-cited, prefixed with "llm:".
-        assert result.forecast_source_labels == [
-            "llm:atlas-briefing:executive_summary",
-            "llm:reuters:tech-ai-selloff",
-            "llm:watchlist:NVDA",
-        ]
+        # Forecast source labels come from all prediction sources
+        assert "llm:atlas-briefing:executive_summary" in result.forecast_source_labels
+        assert "llm:reuters:tech-ai-selloff" in result.forecast_source_labels
 
     @pytest.mark.asyncio
-    async def test_missing_sources_defaults_to_atlas_briefing(
+    async def test_predictions_populated_without_best_trade(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
-        """When the LLM omits `sources`, we fall back to atlas-briefing."""
         strategy = self._strategy()
-        pick = {
-            "asset": "SPY",
-            "direction": "CALL",
-            "confidence": 0.6,
-            "rationale": "broad market strength",
-            # no sources field
-        }
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=_completed(_stock_response(pick)),
+                return_value=_completed(_full_response()),
+            ),
+        ):
+            result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+
+        assert result.predictions is not None
+        assert result.predictions["SPY"].direction == "DOWN"
+        assert result.predictions["SPY"].confidence == 0.65
+        assert result.predictions["SPY"].predicted_move_pct == -1.1
+        assert result.predictions["QQQ"].direction == "DOWN"
+        assert result.predictions["QQQ"].confidence == 0.72
+        assert result.predictions["QQQ"].predicted_move_pct == -2.5
+        assert result.recommendation is None  # no best_trade
+
+    @pytest.mark.asyncio
+    async def test_missing_sources_defaults_to_news_sentiment_in_best_trade(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        strategy = self._strategy()
+        best_trade = {
+            "asset": "SPY",
+            "direction": "CALL",
+            "confidence": 0.6,
+            "rationale": "broad market strength",
+        }
+        resp = _full_response(best_trade=best_trade)
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=_completed(resp),
             ),
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
         assert result.recommendation is not None
-        assert result.forecast_source_labels == ["llm:atlas-briefing"]
-        assert result.recommendation.rationale["llm_sources"] == ["atlas-briefing"]
+        assert result.recommendation.rationale["llm_sources"] == ["news-sentiment"]
 
     @pytest.mark.asyncio
     async def test_sources_clamped_to_three(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
-        """If the LLM over-shares 5 sources, only the first 3 surface."""
         strategy = self._strategy()
-        pick = {
+        best_trade = {
             "asset": "SPY",
             "direction": "CALL",
             "confidence": 0.7,
             "rationale": "x",
             "sources": ["a", "b", "c", "d", "e"],
         }
+        resp = _full_response(best_trade=best_trade)
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=_completed(_stock_response(pick)),
+                return_value=_completed(resp),
             ),
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
         assert result.recommendation is not None
-        assert len(result.forecast_source_labels) == 3
-        assert result.forecast_source_labels == ["llm:a", "llm:b", "llm:c"]
+        assert len(result.recommendation.rationale["llm_sources"]) == 3
 
     @pytest.mark.asyncio
-    async def test_confidence_clamped_to_range(
+    async def test_best_trade_confidence_clamped_to_range(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         strategy = self._strategy()
-        # Confidence above 1.0 -> clamp to 1.0.
-        pick = {"asset": "SPY", "direction": "CALL", "confidence": 1.5, "rationale": "x"}
+        best_trade = {"asset": "SPY", "direction": "CALL", "confidence": 1.5, "rationale": "x"}
+        resp = _full_response(best_trade=best_trade)
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=_completed(_stock_response(pick)),
+                return_value=_completed(resp),
             ),
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
@@ -279,69 +344,76 @@ class TestLLMTradeStrategy:
         assert result.recommendation.confidence == 1.0
 
     @pytest.mark.asyncio
-    async def test_low_confidence_abstains(
+    async def test_low_confidence_best_trade_abstains_trade(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         cfg = Settings()
         cfg.llm.trade_signal_min_confidence = 0.60
         strategy = self._strategy(cfg)
-        pick = {"asset": "SPY", "direction": "CALL", "confidence": 0.42, "rationale": "x"}
+        best_trade = {"asset": "SPY", "direction": "CALL", "confidence": 0.42, "rationale": "x"}
+        resp = _full_response(best_trade=best_trade)
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=_completed(_stock_response(pick)),
+                return_value=_completed(resp),
             ),
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+        # Predictions still present, but no recommendation (best_trade rejected).
+        assert result.predictions is not None
         assert result.recommendation is None
-        assert result.debug_trace["skip_reason"] == "below_min_confidence"
+        assert result.debug_trace["best_trade_skip"] == "below_min_confidence"
 
     @pytest.mark.asyncio
-    async def test_asset_out_of_universe_abstains(
+    async def test_asset_out_of_universe_best_trade_skips(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         strategy = self._strategy()
-        pick = {
-            "asset": "AAPL",  # not in target_assets
+        best_trade = {
+            "asset": "AAPL",
             "direction": "CALL",
             "confidence": 0.8,
             "rationale": "x",
         }
+        resp = _full_response(best_trade=best_trade)
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=_completed(_stock_response(pick)),
+                return_value=_completed(resp),
             ),
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+        # Predictions still present, best_trade skipped.
+        assert result.predictions is not None
         assert result.recommendation is None
-        assert result.debug_trace["skip_reason"] == "llm_asset_out_of_universe"
+        assert result.debug_trace["best_trade_skip"] == "asset_out_of_universe"
 
     @pytest.mark.asyncio
-    async def test_invalid_direction_abstains(
+    async def test_invalid_direction_in_best_trade_skips(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         strategy = self._strategy()
-        pick = {"asset": "SPY", "direction": "HOLD", "confidence": 0.7, "rationale": "x"}
+        best_trade = {"asset": "SPY", "direction": "HOLD", "confidence": 0.7, "rationale": "x"}
+        resp = _full_response(best_trade=best_trade)
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=_completed(_stock_response(pick)),
+                return_value=_completed(resp),
             ),
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+        assert result.predictions is not None
         assert result.recommendation is None
-        assert result.debug_trace["skip_reason"] == "llm_invalid_direction"
+        assert result.debug_trace["best_trade_skip"] == "invalid_direction"
 
     @pytest.mark.asyncio
     async def test_unparseable_response_abstains(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         strategy = self._strategy()
-        # LLM prose with no JSON.
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
@@ -381,32 +453,30 @@ class TestLLMTradeStrategy:
         ):
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
         assert result.recommendation is None
-        # Subprocess failed for every model -> client.invoke returned None
-        # -> strategy hit the no-response branch.
         assert result.debug_trace["skip_reason"] == "llm_no_response"
 
     @pytest.mark.asyncio
     async def test_paid_model_serves_pick_paid_used_flag(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
-        # Force primary Zen to fail so chain falls through to paid glm-5.2.
         cfg = Settings()
         cfg.llm.zen_models = ["opencode/deepseek-v4-flash-free"]
         cfg.llm.paid_go_models = ["opencode-go/glm-5.2"]
         cfg.llm.opencode_path = "opencode"
         strategy = LLMTradeStrategy(cfg)
 
-        pick = {
+        best_trade = {
             "asset": "SPY",
             "direction": "CALL",
             "confidence": 0.66,
             "rationale": "Rotation into defense supports broad market.",
         }
+        resp = _full_response(best_trade=best_trade)
 
         def run_side_effect(cmd, **kwargs):
             if "opencode/deepseek-v4-flash-free" in cmd:
                 return subprocess.CompletedProcess(cmd, 1, "", "fail")
-            return _completed(_stock_response(pick))
+            return _completed(resp)
 
         with (
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
@@ -416,7 +486,6 @@ class TestLLMTradeStrategy:
         assert result.recommendation is not None
         assert result.debug_trace["paid_used"] is True
         assert result.debug_trace["served_by"] == "opencode-go/glm-5.2"
-        assert result.recommendation.rationale["llm_paid_used"] is True
 
 
 if __name__ == "__main__":

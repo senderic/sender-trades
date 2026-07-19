@@ -67,6 +67,7 @@ th {
 .up { color: #1a7f37; font-weight: 600; }
 .down { color: #cf222e; font-weight: 600; }
 .sideways { color: #9a6700; font-weight: 600; }
+.vibe { font-size: 14px; padding: 10px 14px; background: #f0f6ff; border-radius: 6px; border-left: 4px solid #58a6ff; margin: 12px 0; }
 .footer {
   margin-top: 32px;
   padding-top: 16px;
@@ -81,26 +82,31 @@ th {
 def render_forecast_html(forecast: DirectionalForecast) -> str:
     rows = ""
     for f in forecast.forecasts:
-        style = (
-            "up"
-            if f.up_confidence > f.down_confidence
-            else ("down" if f.down_confidence > f.up_confidence else "sideways")
-        )
-        move_str = f"{f.expected_move_pct:+.1f}%"
-        parts = []
-        if f.up_sources:
-            parts.append("↑" + ", ".join(f.up_sources))
-        if f.down_sources:
-            parts.append("↓" + ", ".join(f.down_sources))
-        src_str = "<br>".join(parts) if parts else "—"
+        if f.direction is None:
+            direction_str = "—"
+            style = "sideways"
+            conf_str = "—"
+            move_str = "—"
+        else:
+            direction_str = f.direction
+            style = f.direction.lower()
+            conf_str = f"{f.confidence:.0%}"
+            move_str = f"{f.predicted_move_pct:+.1f}%"
+        drivers = f.rationale or ("<br>".join(f.sources) if f.sources else "—")
+        if f.sources and f.rationale:
+            sources_str = " · ".join(f.sources)
+            drivers += f'<br><span style="font-size:0.78rem;color:#8b949e">{sources_str}</span>'
         rows += f"""<tr>
   <td>{f.asset}</td>
-  <td class="up">{f.up_confidence:.0%}</td>
-  <td class="down">{f.down_confidence:.0%}</td>
-  <td class="sideways">{f.sideways_confidence:.0%}</td>
+  <td class="{style}">{direction_str}</td>
+  <td>{conf_str}</td>
   <td class="{style}">{move_str}</td>
-  <td>{src_str}</td>
+  <td>{drivers}</td>
 </tr>"""
+
+    vibe = ""
+    if forecast.market_vibe:
+        vibe = f'<p class="vibe"><strong>Market Vibe:</strong> {forecast.market_vibe}</p>'
 
     return f"""<!DOCTYPE html>
 <html>
@@ -111,18 +117,20 @@ def render_forecast_html(forecast: DirectionalForecast) -> str:
 </head>
 <body>
 <div class="container">
-<h1>sender-trades — Directional Forecast</h1>
+<h1>sender-trades — Intraday Prediction</h1>
 <p>Generated at {forecast.generated_at.strftime("%Y-%m-%d %H:%M UTC")}</p>
+{vibe}
 <table>
 <thead>
-<tr><th>Asset</th><th>UP</th><th>DOWN</th><th>SIDE</th><th>MOVE</th><th>Sources</th></tr>
+<tr><th>Asset</th><th>Direction</th><th>Confidence</th><th>Pred. Move</th><th>Key Drivers of the Prediction</th></tr>
 </thead>
 <tbody>
 {rows}
 </tbody>
 </table>
 <div class="footer">
-sender-trades &mdash; 0DTE Intraday Options Trading System<br>
+sender-trades &mdash; 0DTE Intraday Prediction Engine<br>
+Powered by opencode LLM + Market Research
 </div>
 </div>
 </body>

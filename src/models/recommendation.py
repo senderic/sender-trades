@@ -105,55 +105,71 @@ class StrategyResult(BaseModel):
     "llm:reuters", "llm:watchlist:NVDA"]``) so the forecast reader can
     see what actually drove the decision rather than just the strategy
     name.
+
+    ``predictions`` is populated by LLM-driven strategies to surface
+    per-asset predictions (direction + expected move %) that feed
+    directly into the :class:`DirectionalForecast` table. When set,
+    the pipeline's ``_compute_forecast`` uses these predictions as
+    the primary forecast for each asset.
     """
 
     label: str
     recommendation: TradeRecommendation | None = None
+    predictions: dict[str, AssetPrediction] | None = None
     confidence: float
     debug_trace: dict[str, Any] = Field(default_factory=dict)
     duration_ms: float = 0.0
     forecast_source_labels: list[str] | None = None
 
 
+class AssetPrediction(BaseModel):
+    """A directional prediction for a single asset produced by a strategy."""
+
+    asset: Literal["SPY", "QQQ"]
+    direction: Literal["UP", "DOWN"]
+    confidence: float
+    predicted_move_pct: float
+    rationale: str = ""
+    sources: list[str] = Field(default_factory=list)
+
+
 class AssetForecast(BaseModel):
     """Directional forecast for a single asset."""
 
     asset: Literal["SPY", "QQQ"]
-    up_confidence: float = 0.0
-    down_confidence: float = 0.0
-    sideways_confidence: float = 0.0
-    expected_move_pct: float = 0.0
-    up_sources: list[str] = Field(default_factory=list)
-    down_sources: list[str] = Field(default_factory=list)
+    direction: Literal["UP", "DOWN"] | None = None
+    confidence: float = 0.0
+    predicted_move_pct: float = 0.0
+    rationale: str = ""
+    sources: list[str] = Field(default_factory=list)
 
 
 class DirectionalForecast(BaseModel):
     """Aggregated directional outlook across all assets."""
 
     forecasts: list[AssetForecast] = Field(default_factory=list)
+    market_vibe: str = ""
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def table(self) -> str:
         """Return a formatted table string for terminal output."""
         lines: list[str] = []
-        header = f"{'Asset':<6} {'UP':>7} {'DOWN':>7} {'SIDE':>7}   {'MOVE':>8}  STRATEGIES"
-        sep = "─" * 65
+        header = f"{'Asset':<6} {'Direction':<10} {'Confidence':>11} {'Pred. Move':>11}   Key Drivers of the Prediction"
+        sep = "─" * 100
         lines.append(sep)
         lines.append(header)
         lines.append(sep)
         for f in self.forecasts:
-            move = f"{f.expected_move_pct:+.1f}%"
-            parts = []
-            if f.up_sources:
-                parts.append("↑" + ",".join(f.up_sources))
-            if f.down_sources:
-                parts.append("↓" + ",".join(f.down_sources))
-            src_str = " · ".join(parts) if parts else "—"
+            direction_str = f.direction if f.direction else "—"
+            conf_str = f"{f.confidence:.0%}" if f.confidence > 0 else "—"
+            move_str = f"{f.predicted_move_pct:+.1f}%" if f.predicted_move_pct != 0.0 else "—"
+            drivers = f.rationale if f.rationale else (" · ".join(f.sources) if f.sources else "—")
             lines.append(
-                f"{f.asset:<6} {f.up_confidence:>6.0%} {f.down_confidence:>6.0%} "
-                f"{f.sideways_confidence:>6.0%}   {move:>8}  {src_str}"
+                f"{f.asset:<6} {direction_str:<10} {conf_str:>11} {move_str:>11}   {drivers}"
             )
         lines.append(sep)
+        if self.market_vibe:
+            lines.append(f"\nMarket Vibe: {self.market_vibe}")
         return "\n".join(lines)
 
 

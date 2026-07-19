@@ -28,4 +28,4 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
       - run: uv sync --all-extras
-      - run: uv run pytest tests/ -v --tb=short
+      - run: uv run pytest tests/ -v --tb=short -q

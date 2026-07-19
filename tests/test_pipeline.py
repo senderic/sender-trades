@@ -170,12 +170,13 @@ async def test_compute_forecast_uses_forecast_source_labels(tmp_path) -> None:
     )
 
     qqq = next(f for f in forecast.forecasts if f.asset == "QQQ")
-    assert qqq.down_sources == ["llm:reuters:kimi-k3", "llm:watchlist:NVDA"]
-    assert qqq.down_confidence == 1.0
-    # SPY has no recommendation -> empty sources, 0 / 0 / 100% sideways.
+    assert qqq.direction == "DOWN"
+    assert "llm:reuters:kimi-k3" in qqq.sources
+    assert "llm:watchlist:NVDA" in qqq.sources
+    # SPY has no recommendation -> no direction, empty sources.
     spy = next(f for f in forecast.forecasts if f.asset == "SPY")
-    assert spy.up_sources == []
-    assert spy.down_sources == []
+    assert spy.direction is None
+    assert spy.sources == []
 
 
 @pytest.mark.asyncio
@@ -223,4 +224,5 @@ async def test_compute_forecast_falls_back_to_strategy_label_when_unset(
         ),
     )
     spy = next(f for f in forecast.forecasts if f.asset == "SPY")
-    assert spy.up_sources == ["momentum"]
+    assert spy.direction == "UP"
+    assert "momentum" in spy.sources

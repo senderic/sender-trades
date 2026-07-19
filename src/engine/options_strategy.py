@@ -18,17 +18,23 @@ def compute_otm_strike(
 ) -> float:
     """Compute an out-of-the-money strike price for a given delta target.
 
+    For 0DTE options, delta changes rapidly with small moneyness moves.
+    This approximates the OTM distance as roughly 2 % per 1.0 delta
+    (e.g. 30-delta → ~0.6 % OTM), which produces strikes that actually
+    exist in the chain.
+
     Args:
         underlying_price: Current price of the underlying asset.
         direction: CALL or PUT direction.
-        delta_target: Target delta for the option.
+        delta_target: Target delta for the option (default 0.30).
 
     Returns:
-        The computed OTM strike price rounded to the nearest strike increment.
+        The computed OTM strike price rounded to the nearest $1.00 increment.
     """
-    multiplier = 1 + delta_target * 0.5 if direction == Direction.CALL else 1 - delta_target * 0.5
+    otm_distance = delta_target * 0.02
+    multiplier = 1 + otm_distance if direction == Direction.CALL else 1 - otm_distance
     raw = underlying_price * multiplier
-    return _round_to_strike(raw)
+    return _round_to_strike(raw, increment=1.0)
 
 
 def _round_to_strike(price: float, increment: float = 1.0) -> float:

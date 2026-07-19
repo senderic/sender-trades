@@ -1,27 +1,28 @@
-"""LLM-driven trade-signal strategy.
+"""LLM-driven directional prediction strategy.
 
 Asks the opencode LLM (with the same Zen-first / paid-Go fallback chain
-as the briefing re-synthesiser) to emit a single structured JSON pick
-for today's 0DTE session:
+as the briefing re-synthesiser) to emit a structured JSON prediction for
+today's session covering all target assets:
 
-    {"asset": "SPY" | "QQQ",
-     "direction": "CALL" | "PUT",
-     "confidence": 0.0-1.0,
-     "rationale": "short one-sentence reason",
-     "sources": [
-        "atlas-briefing:executive_summary",
-        "reuters:<headline>",
-        "watchlist:<TICKER>",
-        ...
-     ]}
+    {"predictions": {
+       "SPY":  {"direction": "UP"|"DOWN", "confidence": 0.0-1.0,
+                "predicted_move_pct": -1.5, "rationale": "...", "sources": [...]},
+       "QQQ":  { ... }
+     },
+     "market_vibe": "overall sentiment string",
+     "best_trade": {  // optional
+        "asset": "SPY"|"QQQ", "direction": "CALL"|"PUT",
+        "confidence": 0.0-1.0, "rationale": "...", "sources": [...]
+     }}
 
-The pick is validated, clamped to the configured asset universe, and
-returned as a :class:`StrategyResult` with label ``"llm_trade"`` so the
-existing :class:`DecisionAggregator` folds it into the final decision
-alongside Momentum / MeanReversion / EventDriven.
+The ``predictions`` dict feeds the :class:`DirectionalForecast` table
+directly, giving the reader a clear per-asset directional view with
+estimated move percentage and cited evidence. The optional
+``best_trade`` can drive a :class:`TradeRecommendation` for execution
+if the signal is strong enough.
 
-The ``sources`` array carries *root provenance* -- the LLM must cite
-which upstream inputs drove its conclusion, using one of:
+Each prediction's ``sources`` array carries *root provenance* -- the LLM
+must cite which upstream inputs drove its conclusion, using one of:
 
 - ``"atlas-briefing:<section>"`` for content originally distilled by
   the upstream atlas-morning-briefing LLM (e.g.
@@ -32,15 +33,9 @@ which upstream inputs drove its conclusion, using one of:
 - ``"market:<TICKER>"`` for live / snapshot quote metrics.
 - ``"news-sentiment"`` for the aggregate-polarity signal.
 
-These citations are surfaced verbatim (prefixed with ``llm:``) as the
-forecast table's ``up_sources`` / ``down_sources`` entries, so the
-reader sees ``↓llm:atlas-briefing+reuters+watchlist:NVDA`` rather than
-the opaque ``↓llm_trade``.
-
-This makes the LLM an explicit participant in the buy/sell decision
-rather than only indirectly influencing it via the re-synthesised
-executive summary's word-counted sentiment, and it preserves the
-provenance of *why* the LLM picked what it picked.
+These citations are surfaced verbatim (prefixed with ``llm:``) in the
+forecast table, so the reader sees the evidence that drove each
+prediction.
 """
 
 from __future__ import annotations
@@ -60,6 +55,7 @@ from src.llm.client import OpencodeLLMClient
 from src.models.briefing import BriefingData
 from src.models.market import MarketSnapshot
 from src.models.recommendation import (
+    AssetPrediction,
     Direction,
     PositionIntent,
     StrategyResult,
@@ -70,40 +66,64 @@ logger = structlog.get_logger()
 
 
 SYSTEM_PROMPT = (
-    "You are the decision layer of an intraday 0DTE options trading "
-    "system. Choose exactly ONE trade for today's session and emit it "
-    "as a single JSON object with these keys: "
-    'asset ("SPY" or "QQQ"), direction ("CALL" or "PUT"), confidence '
-    "(a float in [0.0, 1.0] reflecting how strongly the evidence "
-    "supports the pick), rationale (one short sentence citing the "
-    "specific evidence that drove the choice), and sources (a list "
-    "of 1-3 strings citing the ROOT provenance -- where the evidence "
-    "originally came from, not this LLM. Use these citation forms: "
-    '"atlas-briefing:<section>" for content distilled by the upstream '
-    "atlas-morning-briefing LLM (e.g. "
-    '"atlas-briefing:executive_summary", "atlas-briefing:watchlist"); '
-    '"<publisher>:<short-slug>" for market news feed items (e.g. '
-    '"reuters:kimi-k3-release", "bloomberg:fed-cautious-stance"); '
-    '"watchlist:<TICKER>" for a specific watchlist row that drove '
-    "the call; "
-    '"market:<TICKER>" for raw quote / price-action evidence; '
-    '"news-sentiment" for the aggregate news-polarity reading). '
-    "Do NOT cite this LLM itself or the trade-signal strategy. Cite "
-    "the upstream source that produced the evidence. "
+    "You are the research and prediction engine for an intraday 0DTE "
+    "options trading system. Your job is to analyze the morning briefing, "
+    "market data, and news, then produce a directional prediction for "
+    "each target asset.\n\n"
+    "Emit a single JSON object with these keys:\n"
+    '  - "predictions": a dict keyed by asset symbol. Each value is an '
+    "object with:\n"
+    '    - "direction": "UP" or "DOWN"\n'
+    '    - "confidence": a float in [0.0, 1.0] reflecting how strongly '
+    "the evidence supports this direction\n"
+    '    - "predicted_move_pct": a float estimating the expected move '
+    "percentage for today's session (positive for UP, negative for DOWN)\n"
+    '    - "rationale": one short sentence citing the specific evidence '
+    "that drove the prediction\n"
+    '    - "sources": a list of 1-3 strings citing the ROOT provenance '
+    "— where the evidence originally came from, not this LLM\n"
+    '  - "market_vibe": a short string summarising the overall market '
+    "backdrop / sentiment / key themes\n"
+    '  - "best_trade": (optional) an object with exactly the same shape '
+    'as the old single-trade format — asset, direction ("CALL" or '
+    '"PUT"), confidence, rationale, sources — if the data clearly '
+    "points to a specific executable trade today\n\n"
+    "Cite root provenance using these forms (prefer the MOST PRIMARY "
+    "source available):\n"
+    '  - "<publisher>:<short-slug>" for market news feed items (e.g. '
+    '"reuters:kimi-k3-open-weight", "bloomberg:fed-cautious-stance", '
+    '"seekingalpha:earnings-call", "dowjones:market-wrap"). '
+    "This is your best option — use it whenever possible.\n"
+    '  - "watchlist:<TICKER>" for a specific watchlist ticker that '
+    'drove the call (e.g. "watchlist:NVDA" for NVDA\'s price action)\n'
+    '  - "market:<TICKER>" for raw quote / price-action evidence\n'
+    '  - "news-sentiment" for the aggregate news-polarity reading\n\n'
+    'IMPORTANT: Do NOT cite "atlas-briefing" as a source. The atlas '
+    "briefing is itself a distilled summary. Trace back to the original "
+    "news publisher (reuters, bloomberg, seekingalpha, wsj, etc.) or "
+    "market data point whenever possible. If you must reference the "
+    "briefing's executive summary content, attribute it to the specific "
+    "publisher or ticker that the briefing itself references.\n\n"
+    "Do NOT cite this LLM or the llm_trade strategy. Cite the upstream "
+    "source that produced the evidence.\n"
     "Output ONLY the JSON object. No prose, no code fence, no "
     "explanation outside the JSON."
 )
 
 
 class LLMTradeStrategy(TradingStrategy):
-    """Trading strategy that delegates the buy/sell decision to an LLM.
+    """Trading strategy that delegates directional prediction to an LLM.
 
     Unlike Momentum / MeanReversion / EventDriven, which derive direction
     and confidence from deterministic price/sentiment math, this strategy
-    asks the opencode LLM to emit a structured JSON trade pick given the
-    same briefing + market snapshot inputs. The LLM's pick is validated
-    against the configured asset universe and clamped to a sane
-    confidence range before being wrapped in a :class:`TradeRecommendation`.
+    asks the opencode LLM to emit a structured JSON prediction dict
+    covering all target assets. The predictions feed the
+    :class:`DirectionalForecast` table directly.
+
+    The LLM may also optionally suggest a ``best_trade`` for execution;
+    when present and strong enough, it is wrapped in a
+    :class:`TradeRecommendation` and passed through the existing
+    :class:`DecisionAggregator` / :class:`RiskEngine` pipeline.
 
     The LLM call goes through :class:`OpencodeLLMClient`, which tries
     every free Zen model before any paid Go model (see
@@ -113,16 +133,9 @@ class LLMTradeStrategy(TradingStrategy):
     """
 
     def __init__(self, config: Settings, client: OpencodeLLMClient | None = None):
-        """Initialize LLMTradeStrategy.
-
-        Args:
-            config: Application settings. ``config.llm`` controls the
-                opencode chain; ``config.llm.trade_signal_min_confidence``
-                gates the strategy's confidence floor.
-            client: Optional pre-constructed :class:`OpencodeLLMClient`
-                (useful for tests). A new client is built from
-                ``config.llm`` when omitted.
-        """
+        assert set(config.general.target_assets).issubset({"SPY", "QQQ"}), (
+            f"LLMTradeStrategy only supports SPY/QQQ, got {config.general.target_assets}"
+        )
         super().__init__(label="llm_trade", config=config)
         self._client = client or OpencodeLLMClient(config.llm)
 
@@ -131,17 +144,18 @@ class LLMTradeStrategy(TradingStrategy):
         briefing: BriefingData,
         market: MarketSnapshot,
     ) -> StrategyResult:
-        """Evaluate the LLM trade-signal strategy.
+        """Evaluate the LLM prediction strategy.
 
         Args:
             briefing: Parsed morning briefing data.
             market: Current market snapshot with quotes and news.
 
         Returns:
-            A :class:`StrategyResult` with a :class:`TradeRecommendation`
-            built from the LLM's JSON pick, or ``recommendation=None``
-            when the LLM was unavailable, abstained, or produced an
-            unparseable / invalid response.
+            A :class:`StrategyResult` with:
+            - ``predictions`` populated with per-asset predictions for the
+              forecast table.
+            - ``recommendation`` set when the LLM suggests a best_trade
+              and it passes validation.
         """
         start = time.perf_counter()
         trace: dict[str, Any] = {}
@@ -168,65 +182,139 @@ class LLMTradeStrategy(TradingStrategy):
             trace["skip_reason"] = "llm_no_response"
             return self._abstain(trace, start)
 
-        pick = _parse_pick(response)
-        if pick is None:
+        parsed = _parse_pick(response)
+        if parsed is None:
             trace["skip_reason"] = "llm_unparseable"
             trace["raw_response"] = response[:300]
             return self._abstain(trace, start)
 
-        trace["llm_pick"] = pick
+        trace["llm_raw"] = parsed
 
-        asset = pick.get("asset")
-        direction_raw = pick.get("direction")
-        confidence_raw = pick.get("confidence", 0.0)
-        rationale_text = pick.get("rationale", "")
-        sources_raw = pick.get("sources", [])
+        # --- Parse predictions dict (primary output) ---
+        predictions_raw = parsed.get("predictions")
+        if not isinstance(predictions_raw, dict) or len(predictions_raw) == 0:
+            trace["skip_reason"] = "llm_no_predictions"
+            return self._abstain(trace, start)
+
+        predictions: dict[str, AssetPrediction] = {}
+        target_set = set(self.config.general.target_assets)
+        for asset, pred_raw in predictions_raw.items():
+            if asset not in target_set:
+                continue
+            if not isinstance(pred_raw, dict):
+                continue
+            direction_raw = pred_raw.get("direction")
+            if direction_raw not in ("UP", "DOWN"):
+                continue
+            try:
+                confidence = float(pred_raw.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = max(0.0, min(1.0, confidence))
+            try:
+                predicted_move_pct = float(pred_raw.get("predicted_move_pct", 0.0))
+            except (TypeError, ValueError):
+                predicted_move_pct = 0.0
+
+            rationale = str(pred_raw.get("rationale", ""))
+            sources = _normalise_sources(pred_raw.get("sources", []))
+
+            predictions[asset] = AssetPrediction(
+                asset=asset,  # type: ignore
+                direction=direction_raw,  # type: ignore
+                confidence=round(confidence, 4),
+                predicted_move_pct=round(predicted_move_pct, 2),
+                rationale=rationale,
+                sources=sources,
+            )
+
+        if not predictions:
+            trace["skip_reason"] = "llm_no_valid_predictions"
+            return self._abstain(trace, start)
+
+        trace["predictions"] = {k: v.model_dump() for k, v in predictions.items()}
+
+        # --- Parse optional best_trade ---
+        market_vibe = str(parsed.get("market_vibe", ""))
+        trace["market_vibe"] = market_vibe
+
+        recommendation: TradeRecommendation | None = None
+        best_trade = parsed.get("best_trade")
+        if isinstance(best_trade, dict):
+            recommendation = self._parse_best_trade(best_trade, market, trace)
+
+        # Build forecast_source_labels from all prediction sources
+        all_sources: list[str] = []
+        for p in predictions.values():
+            for s in p.sources:
+                label = f"llm:{s}"
+                if label not in all_sources:
+                    all_sources.append(label)
+
+        return StrategyResult(
+            label=self.label,
+            recommendation=recommendation,
+            predictions=predictions,
+            confidence=recommendation.confidence if recommendation else 0.0,
+            debug_trace=trace,
+            duration_ms=round((time.perf_counter() - start) * 1000, 2),
+            forecast_source_labels=all_sources if all_sources else None,
+        )
+
+    def _parse_best_trade(
+        self,
+        best_trade: dict[str, Any],
+        market: MarketSnapshot,
+        trace: dict[str, Any],
+    ) -> TradeRecommendation | None:
+        """Parse the optional ``best_trade`` into a TradeRecommendation.
+
+        Args:
+            best_trade: Dict from the LLM with asset, direction, etc.
+            market: Current market snapshot (for pricing).
+            trace: Debug trace dict (mutated in-place).
+
+        Returns:
+            A TradeRecommendation or None if invalid / below threshold.
+        """
+        asset = best_trade.get("asset")
+        direction_raw = best_trade.get("direction")
+        confidence_raw = best_trade.get("confidence", 0.0)
+        rationale_text = best_trade.get("rationale", "")
+        sources_raw = best_trade.get("sources", [])
 
         if asset not in self.config.general.target_assets:
-            trace["skip_reason"] = "llm_asset_out_of_universe"
-            return self._abstain(trace, start)
+            trace["best_trade_skip"] = "asset_out_of_universe"
+            return None
         if direction_raw not in ("CALL", "PUT"):
-            trace["skip_reason"] = "llm_invalid_direction"
-            return self._abstain(trace, start)
+            trace["best_trade_skip"] = "invalid_direction"
+            return None
 
         try:
             confidence = float(confidence_raw)
         except (TypeError, ValueError):
-            trace["skip_reason"] = "llm_confidence_not_numeric"
-            return self._abstain(trace, start)
+            trace["best_trade_skip"] = "confidence_not_numeric"
+            return None
         confidence = max(0.0, min(1.0, confidence))
-        trace["llm_confidence_clamped"] = confidence
-
-        # Extract and normalise provenance citations. The LLM is asked
-        # to return 1-3 root-source strings (see SYSTEM_PROMPT). We
-        # defensively default to ["llm:atlas-briefing"] when missing /
-        # malformed so the forecast still surfaces something honest
-        # ("we don't know which upstream input the LLM leaned on")
-        # rather than the opaque "llm_trade" label.
-        sources = _normalise_sources(sources_raw)
-        trace["llm_sources_raw"] = sources_raw
-        trace["llm_sources"] = sources
-        # Forecast-table labels prefix each source with "llm:" so the
-        # reader sees the LLM was the reasoner *and* what it read.
-        forecast_source_labels = [f"llm:{s}" for s in sources]
-
-        direction = Direction(direction_raw)
-        quote = market.quotes.get(asset)
-        if quote is None:
-            trace["skip_reason"] = "no_quote_for_llm_asset"
-            return self._abstain(trace, start)
 
         min_conf = self.config.llm.trade_signal_min_confidence
         if confidence < min_conf:
-            trace["skip_reason"] = "below_min_confidence"
-            trace["min_confidence"] = min_conf
-            return self._abstain(trace, start)
+            trace["best_trade_skip"] = "below_min_confidence"
+            trace["best_trade_min_confidence"] = min_conf
+            return None
 
+        quote = market.quotes.get(asset)
+        if quote is None:
+            trace["best_trade_skip"] = "no_quote"
+            return None
+
+        direction = Direction(direction_raw)
         strike = compute_otm_strike(quote.current_price, direction)
         delta = estimate_delta(quote.current_price, strike, 0, iv=0.20, direction=direction)
+        sources = _normalise_sources(sources_raw)
         today_str = date.today().isoformat()
 
-        recommendation = TradeRecommendation(
+        rec = TradeRecommendation(
             correlation_id="",
             strategy_label=self.label,
             asset=asset,
@@ -237,27 +325,17 @@ class LLMTradeStrategy(TradingStrategy):
             order_type="market",
             position_intent=PositionIntent.BUY_TO_OPEN,
             rationale={
-                "llm_served_by": self._client.last_served_by,
-                "llm_paid_used": self._client.paid_used,
-                "llm_direction": direction.value,
-                "llm_confidence_raw": confidence_raw,
                 "llm_rationale": rationale_text,
                 "llm_sources": sources,
                 "delta": round(delta, 4),
                 "entry_price": quote.current_price,
-                "strategy": "LLM trade signal: opencode JSON pick over briefing+market",
+                "strategy": "LLM best_trade from prediction analysis",
             },
             expires_at=today_str,
             must_close_before=self.config.risk.close_deadline_est,
         )
-        return StrategyResult(
-            label=self.label,
-            recommendation=recommendation,
-            confidence=recommendation.confidence,
-            debug_trace=trace,
-            duration_ms=round((time.perf_counter() - start) * 1000, 2),
-            forecast_source_labels=forecast_source_labels,
-        )
+        trace["best_trade_parsed"] = rec.model_dump()
+        return rec
 
     def _abstain(self, trace: dict, start: float) -> StrategyResult:
         """Build a no-recommendation :class:`StrategyResult` with trace."""
@@ -275,7 +353,7 @@ def _build_prompt(
     market: MarketSnapshot,
     target_assets: list[str],
 ) -> str:
-    """Assemble the LLM trade-signal prompt from briefing + market data.
+    """Assemble the LLM prediction prompt from briefing + market data.
 
     Args:
         briefing: Parsed morning briefing.
@@ -289,8 +367,8 @@ def _build_prompt(
     sections: list[str] = []
 
     sections.append(
-        f"Target asset universe for today's pick: {', '.join(target_assets)}. "
-        "Choose exactly ONE asset from this list."
+        f"Target assets for today's prediction: {', '.join(target_assets)}. "
+        "You must produce a prediction for EACH asset."
     )
 
     if briefing.executive_summary:
@@ -346,7 +424,7 @@ _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*\}", re.MULTILINE)
 
 
 def _parse_pick(response: str) -> dict[str, Any] | None:
-    """Extract the first JSON object from an LLM response and validate keys.
+    """Extract the first JSON object from an LLM response.
 
     The opencode CLI may wrap the JSON in prose or code fences despite
     the system prompt asking for bare JSON, so we regex for the first
@@ -357,12 +435,9 @@ def _parse_pick(response: str) -> dict[str, Any] | None:
         response: Raw LLM response text.
 
     Returns:
-        Parsed dict with at least ``asset`` / ``direction`` / ``confidence``
-        / ``rationale`` keys, or ``None`` when the response cannot be
-        parsed into a valid pick.
+        Parsed dict or ``None`` when the response cannot be parsed.
     """
     text = response.strip()
-    # Strip markdown code fences if present.
     if text.startswith("```"):
         fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*\})\s*```", text)
         if fenced:
@@ -385,17 +460,13 @@ def _normalise_sources(sources_raw: Any) -> list[str]:
     Accepts either a list of strings or a single string. Drops empty /
     overlong entries, clamps the list to 1-3 items (keeping order), and
     falls back to ``["atlas-briefing"]`` when the LLM omitted the field
-    entirely or returned something unparseable. The fallback is honest:
-    it tells the reader "the LLM was fed the atlas-briefing and may have
-    leaned on it, but it did not specify which upstream source" -- far
-    better than the opaque ``"llm_trade"`` strategy name.
+    entirely or returned something unparseable.
 
     Args:
         sources_raw: Whatever the LLM put under the ``sources`` key.
 
     Returns:
-        A list of 1-3 short citation strings ready to be prefixed with
-        ``"llm:"`` for the forecast table.
+        A list of 1-3 short citation strings.
     """
     if isinstance(sources_raw, str):
         candidates = [sources_raw]
@@ -407,7 +478,6 @@ def _normalise_sources(sources_raw: Any) -> list[str]:
     cleaned: list[str] = []
     for s in candidates:
         s = s.strip()
-        # Reject empty / whitespace-only / absurdly long citations.
         if not s or len(s) > 120:
             continue
         cleaned.append(s)
@@ -415,5 +485,5 @@ def _normalise_sources(sources_raw: Any) -> list[str]:
             break
 
     if not cleaned:
-        return ["atlas-briefing"]
+        return ["news-sentiment"]
     return cleaned

@@ -107,11 +107,11 @@ async def main(argv: list[str] | None = None) -> int:
 
     if result.decision and result.decision.recommendation:
         rec = result.decision.recommendation
-        print(f"\n  Selected trade: {rec.asset} {rec.direction.value} @ {rec.target_strike}")
+        print(f"\n  Best trade: {rec.asset} {rec.direction.value} @ {rec.target_strike}")
         print(f"  Confidence: {rec.confidence:.2f}  Contracts: {rec.contracts}")
         print(f"  Strategy: {rec.strategy_label}")
     else:
-        print("\n  Trade: NONE — no recommendation passed all gates")
+        print("\n  Best trade: none suggested")
     print("=" * 60)
 
     should_email = (

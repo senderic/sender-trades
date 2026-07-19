@@ -9,11 +9,12 @@ timeout or failure the fallback chain is walked in order.
 This mirrors the upstream ``scripts/opencode_client.py`` invocation
 pattern (``opencode run -m <model> --format json --auto --dir /tmp
 --pure <prompt>``) and NDJSON stream parser, but is intentionally
-smaller â no tier accounting, no cost tracking, just the fallback
+smaller Ã¢ no tier accounting, no cost tracking, just the fallback
 behaviour needed by this project.
 """
 
 from src.llm.client import OpencodeLLMClient
 from src.llm.resynthesizer import resynthesize_briefing
+from src.llm.trade_signal import LLMTradeStrategy
 
-__all__ = ["OpencodeLLMClient", "resynthesize_briefing"]
+__all__ = ["LLMTradeStrategy", "OpencodeLLMClient", "resynthesize_briefing"]

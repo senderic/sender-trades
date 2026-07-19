@@ -19,6 +19,7 @@ from src.ingestion.snapshot_loader import SnapshotLoader
 from src.ingestion.status import read_briefing_status
 from src.llm.client import OpencodeLLMClient
 from src.llm.resynthesizer import resynthesize_briefing
+from src.llm.trade_signal import LLMTradeStrategy
 from src.logging_setup import JSONFileLogger
 from src.mcp.client import MCPBrokerClient
 from src.models.briefing import BriefingData, BriefingQuality
@@ -307,6 +308,8 @@ class Pipeline:
             strategies.append(MeanReversionStrategy(self.config))
         if self.config.strategies.event_driven.enabled:
             strategies.append(EventDrivenStrategy(self.config))
+        if self.config.llm.enabled and self.config.llm.trade_signal_enabled:
+            strategies.append(LLMTradeStrategy(self.config))
 
         results = await asyncio.gather(
             *[s.evaluate(briefing, market) for s in strategies],

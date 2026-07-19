@@ -216,6 +216,15 @@ class LLMConfig(BaseModel):
     )
     timeout_sec: int = 60
     max_calls_per_run: int = 5
+    # LLM-driven trade-signal strategy. When enabled, an
+    # ``LLMTradeStrategy`` runs alongside Momentum / MeanReversion /
+    # EventDriven and asks the LLM to emit a structured
+    # {asset, direction, confidence, rationale} JSON pick which is then
+    # folded into the DecisionAggregator like any other strategy
+    # result. The LLM re-synthesis of degraded briefings is independent
+    # of this flag.
+    trade_signal_enabled: bool = True
+    trade_signal_min_confidence: float = 0.45
 
 
 class Settings(BaseSettings):

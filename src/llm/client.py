@@ -70,6 +70,13 @@ class OpencodeLLMClient:
         self.last_fallback_hit: bool = False
         self.paid_used: bool = False  # True iff last successful response came from opencode-go/*
         self.last_error: str = ""
+        # Cumulative usage tracking (across all invocations).
+        self.total_calls = 0
+        self.total_failures = 0
+        self.total_input_chars = 0
+        self.total_output_chars = 0
+        self.total_elapsed = 0.0
+        self.fallback_hits = 0
 
     @property
     def available(self) -> bool:
@@ -167,6 +174,7 @@ class OpencodeLLMClient:
                 )
                 elapsed = time.monotonic() - t0
 
+                input_chars = len(full_prompt)
                 if result.returncode != 0:
                     last_error = (result.stderr or "")[:300]
                     logger.debug(
@@ -176,6 +184,7 @@ class OpencodeLLMClient:
                         rc=result.returncode,
                         error=last_error,
                     )
+                    self.total_failures += 1
                     continue
 
                 response = _parse_ndjson_response(result.stdout)
@@ -187,9 +196,16 @@ class OpencodeLLMClient:
                         paid=is_paid,
                         elapsed=round(elapsed, 2),
                     )
+                    self.total_failures += 1
                     continue
 
                 self._call_count += 1
+                self.total_calls += 1
+                self.total_input_chars += input_chars
+                self.total_output_chars += len(response)
+                self.total_elapsed += elapsed
+                if is_fallback:
+                    self.fallback_hits += 1
                 # A call counts as a "fallback hit" if it was not the
                 # very first model in the (zen+paid) chain.
                 last_fallback_hit = is_fallback
@@ -214,6 +230,7 @@ class OpencodeLLMClient:
                 return response
 
             except subprocess.TimeoutExpired:
+                self.total_failures += 1
                 last_error = f"timeout after {self.config.timeout_sec}s"
                 logger.warning(
                     "opencode_run_timed_out",
@@ -223,6 +240,7 @@ class OpencodeLLMClient:
                 )
                 continue
             except Exception as e:
+                self.total_failures += 1
                 last_error = f"{type(e).__name__}: {e}"
                 logger.debug("opencode_run_exception", model=model, error=str(e))
                 continue
@@ -238,6 +256,73 @@ class OpencodeLLMClient:
             last_error=last_error,
         )
         return None
+
+
+    def get_usage_summary_html(self) -> str:
+        """Return an HTML snippet summarizing LLM usage for this run.
+
+        Returns:
+            An empty string if no LLM calls were made, otherwise an HTML
+            <div> with a usage table that mirrors the atlas-briefing style.
+        """
+        if self.total_calls == 0 and self.total_failures == 0:
+            return ""
+
+        in_rate = 0.14
+        out_rate = 0.28
+        in_tok = int(self.total_input_chars / 4) if self.total_input_chars else 0
+        out_tok = int(self.total_output_chars / 4) if self.total_output_chars else 0
+        cost = (in_tok * in_rate + out_tok * out_rate) / 1_000_000
+        total = self.total_calls + self.total_failures
+
+        model_str = self.last_served_by or "—"
+        if self.fallback_hits:
+            model_str += f" (<strong>{self.fallback_hits}</strong> fallback hit(s))"
+        paid_note = (
+            "<strong>paid</strong> model was used — actual cost may apply"
+            if self.paid_used
+            else "free tier — actual cost was $0.00"
+        )
+
+        return f"""<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e1e4e8;font-size:12px;color:#57606a;">
+<table style="border-collapse:collapse;width:100%;margin:8px 0;font-size:12px;">
+<tr><td style="padding:4px 8px;font-weight:600;">LLM Calls</td><td style="padding:4px 8px;">{self.total_calls}</td>
+    <td style="padding:4px 8px;font-weight:600;">Failed</td><td style="padding:4px 8px;">{self.total_failures}</td></tr>
+<tr><td style="padding:4px 8px;font-weight:600;">Input (est.)</td><td style="padding:4px 8px;">{in_tok:,} tokens</td>
+    <td style="padding:4px 8px;font-weight:600;">Output (est.)</td><td style="padding:4px 8px;">{out_tok:,} tokens</td></tr>
+<tr><td style="padding:4px 8px;font-weight:600;">Elapsed</td><td style="padding:4px 8px;">{self.total_elapsed:.1f}s</td>
+    <td style="padding:4px 8px;font-weight:600;">Est. Cost</td><td style="padding:4px 8px;">${cost:.6f}</td></tr>
+<tr><td style="padding:4px 8px;font-weight:600;">Model</td><td colspan="3" style="padding:4px 8px;"><code>{model_str}</code></td></tr>
+</table>
+<p style="margin:4px 0;font-size:11px;color:#8b949e;">
+Costs estimated at ${in_rate:.2f}/1M input and ${out_rate:.2f}/1M output (DeepSeek V4 Flash paid-tier rates).
+Tokens estimated at ~4 bytes per token. This run used the {paid_note}.
+</p>
+</div>"""
+
+    def get_usage_summary_text(self) -> str:
+        """Return a plain-text usage summary suitable for the email body."""
+        if self.total_calls == 0 and self.total_failures == 0:
+            return ""
+
+        in_rate = 0.14
+        out_rate = 0.28
+        in_tok = int(self.total_input_chars / 4) if self.total_input_chars else 0
+        out_tok = int(self.total_output_chars / 4) if self.total_output_chars else 0
+        cost = (in_tok * in_rate + out_tok * out_rate) / 1_000_000
+        model_str = self.last_served_by or "—"
+        paid_note = "paid model" if self.paid_used else "free tier"
+
+        return (
+            f"\n---\nOpencode Usage Summary\n"
+            f"Calls: {self.total_calls}  Failures: {self.total_failures}  "
+            f"Fallback hits: {self.fallback_hits}\n"
+            f"Input (est.): {in_tok:,} tokens  Output (est.): {out_tok:,} tokens  "
+            f"Elapsed: {self.total_elapsed:.1f}s\n"
+            f"Est. Cost: ${cost:.6f}  Model: {model_str} ({paid_note})\n"
+            f"Costs estimated at ${in_rate:.2f}/1M input, ${out_rate:.2f}/1M output. "
+            f"Tokens estimated at ~4 bytes per token."
+        )
 
 
 def _dedupe(models: list[str]) -> list[str]:

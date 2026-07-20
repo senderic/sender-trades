@@ -59,6 +59,8 @@ class PipelineResult:
         self.start_time: datetime = now_local()
         self.end_time: datetime | None = None
         self.yesterday_outcomes: list[PredictionOutcome] = []
+        self.model_usage_html: str = ""
+        self.model_usage_text: str = ""
 
     @property
     def duration_seconds(self) -> float:
@@ -84,6 +86,10 @@ class PipelineResult:
             "strategies_evaluated": [r.label for r in self.strategy_results],
             "decision": self.decision.model_dump() if self.decision else None,
             "execution": self.execution_result,
+            "model_usage": {
+                "calls": 0,
+                "failures": 0,
+            } if not self.model_usage_html else {},
         }
 
 
@@ -112,11 +118,17 @@ class Pipeline:
         """
         logger.info("pipeline_start", correlation_id=self.correlation_id)
 
-        briefing = await self._phase_ingest_briefing()
+        llm_client = OpencodeLLMClient(self.config.llm) if self.config.llm.enabled else None
+
+        briefing = await self._phase_ingest_briefing(llm_client=llm_client)
         market = await self._phase_ingest_market()
-        strategy_results = await self._phase_analyze(briefing, market)
+        strategy_results = await self._phase_analyze(briefing, market, llm_client=llm_client)
         decision = self._phase_decide(strategy_results)
         decision.forecast = self._compute_forecast(strategy_results, decision)
+
+        if llm_client:
+            self.result.model_usage_html = llm_client.get_usage_summary_html()
+            self.result.model_usage_text = llm_client.get_usage_summary_text()
 
         execution = None
         if decision.recommendation is not None:
@@ -141,7 +153,9 @@ class Pipeline:
 
         return self.result
 
-    async def _phase_ingest_briefing(self) -> BriefingData | None:
+    async def _phase_ingest_briefing(
+        self, llm_client: OpencodeLLMClient | None = None
+    ) -> BriefingData | None:
         """Phase 1: Find and parse today's morning briefing.
 
         Also reads the upstream ``status.json`` to fold
@@ -183,14 +197,13 @@ class Pipeline:
             resynth_paid_used = False
             resynth_error = ""
 
-            if briefing.briefing_quality != BriefingQuality.FULL and self.config.llm.enabled:
+            if briefing.briefing_quality != BriefingQuality.FULL and llm_client is not None:
                 resynth_attempted = True
-                client = OpencodeLLMClient(self.config.llm)
-                briefing = resynthesize_briefing(briefing, client)
-                resynth_served_by = client.last_served_by
-                resynth_fallback_hit = client.last_fallback_hit
-                resynth_paid_used = client.paid_used
-                resynth_error = client.last_error
+                briefing = resynthesize_briefing(briefing, llm_client)
+                resynth_served_by = llm_client.last_served_by
+                resynth_fallback_hit = llm_client.last_fallback_hit
+                resynth_paid_used = llm_client.paid_used
+                resynth_error = llm_client.last_error
 
             self.result.briefing = briefing
             self.file_logger.write_entry(
@@ -301,6 +314,7 @@ class Pipeline:
         self,
         briefing: BriefingData | None,
         market: MarketSnapshot,
+        llm_client: OpencodeLLMClient | None = None,
     ) -> list[StrategyResult]:
         """Phase 3: Run all enabled trading strategies.
 
@@ -322,7 +336,7 @@ class Pipeline:
         if self.config.strategies.event_driven.enabled:
             strategies.append(EventDrivenStrategy(self.config))
         if self.config.llm.enabled and self.config.llm.trade_signal_enabled:
-            strategies.append(LLMTradeStrategy(self.config))
+            strategies.append(LLMTradeStrategy(self.config, client=llm_client))
 
         results = await asyncio.gather(
             *[s.evaluate(briefing, market) for s in strategies],

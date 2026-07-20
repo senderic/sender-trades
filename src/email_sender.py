@@ -90,6 +90,7 @@ th {
 def render_forecast_html(
     forecast: DirectionalForecast,
     yesterday_outcomes: list[PredictionOutcome] | None = None,
+    model_usage_html: str = "",
 ) -> str:
     rows = ""
     for f in forecast.forecasts:
@@ -121,6 +122,8 @@ def render_forecast_html(
 
     yesterday_html = _render_yesterday_section(yesterday_outcomes)
 
+    model_html = f"\n{model_usage_html}\n" if model_usage_html else ""
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -142,6 +145,7 @@ def render_forecast_html(
 </tbody>
 </table>
 {yesterday_html}
+{model_html}
 <div class="footer">
 sender-trades &mdash; 0DTE Intraday Prediction Engine<br>
 Powered by opencode LLM + Market Research
@@ -188,6 +192,8 @@ def send_email(
     correlation_id: str = "",
     log_dir: str | Path | None = None,
     yesterday_outcomes: list[PredictionOutcome] | None = None,
+    model_usage_html: str = "",
+    model_usage_text: str = "",
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -208,7 +214,9 @@ def send_email(
         logger.info("Dry-run — would send email to %s", to)
         return dict.fromkeys(to, True)
 
-    html = render_forecast_html(forecast, yesterday_outcomes=yesterday_outcomes)
+    html = render_forecast_html(
+        forecast, yesterday_outcomes=yesterday_outcomes, model_usage_html=model_usage_html
+    )
 
     plain_parts = [f"sender-trades Directional Forecast\n\n{forecast.table()}"]
     if yesterday_outcomes:
@@ -221,6 +229,8 @@ def send_email(
                 f"  {o.asset}: {o.predicted_direction} ({o.confidence:.0%}) — {result_label}"
             )
             plain_parts.append(f"  {o.details}")
+    if model_usage_text:
+        plain_parts.append(model_usage_text)
     plain_parts.append("\n---\nsender-trades")
     plain = "\n".join(plain_parts)
 

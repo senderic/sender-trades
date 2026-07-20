@@ -85,11 +85,14 @@ async def test_pipeline_resynthesizes_degraded_briefing(tmp_path) -> None:
     completed = subprocess.CompletedProcess(
         ["opencode"], 0, _ndjson("Markets lean bullish on AI earnings beats."), ""
     )
+    from src.llm.client import OpencodeLLMClient
+
+    client = OpencodeLLMClient(config.llm)
     with (
         patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
         patch("src.llm.client.subprocess.run", return_value=completed),
     ):
-        briefing = await pipeline._phase_ingest_briefing()
+        briefing = await pipeline._phase_ingest_briefing(llm_client=client)
 
     assert briefing is not None
     assert briefing.briefing_quality.value == "full"

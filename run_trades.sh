@@ -7,8 +7,8 @@ set -u
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# cron ships a minimal PATH — make sure uv / uvx are reachable
-export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# cron ships a minimal PATH — make sure uv / uvx / opencode are reachable
+export PATH="$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # Reuse the market-data + Gmail secrets already configured for the morning briefing
 # (FINNHUB_API_KEY, BRAVE_API_KEY, GMAIL_USER, GMAIL_APP_PASSWORD, RECIPIENT_EMAIL, ...).

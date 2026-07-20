@@ -52,6 +52,12 @@ class MomentumStrategy(TradingStrategy):
                 logger.warning("momentum_no_quote", asset=asset)
                 continue
 
+            if quote.current_price <= 0 or quote.previous_close <= 0:
+                trace[f"{asset}_skip_reason"] = "no_valid_price"
+                trace[f"{asset}_current"] = quote.current_price
+                trace[f"{asset}_previous_close"] = quote.previous_close
+                continue
+
             gap_pct = (
                 (quote.open_price - quote.previous_close) / quote.previous_close * 100
                 if quote.previous_close > 0

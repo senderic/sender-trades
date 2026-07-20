@@ -31,6 +31,8 @@ def compute_otm_strike(
     Returns:
         The computed OTM strike price rounded to the nearest $1.00 increment.
     """
+    if underlying_price <= 0:
+        return 0.0
     otm_distance = delta_target * 0.02
     multiplier = 1 + otm_distance if direction == Direction.CALL else 1 - otm_distance
     raw = underlying_price * multiplier
@@ -74,6 +76,8 @@ def estimate_delta(
     sigma = iv * math.sqrt(days_to_expiry / 365.0)
     if sigma < 1e-6:
         sigma = 1e-6
+    if underlying_price <= 0:
+        return 0.0
     moneyness = (underlying_price - strike) / (underlying_price * sigma)
     try:
         delta_est = 0.5 * (1.0 + math.erf(moneyness / math.sqrt(2.0)))

@@ -195,10 +195,17 @@ class SnapshotLoader:
             symbol = row.get("symbol", "")
             if not symbol:
                 continue
+            if "error" in row:
+                logger.warning("snapshot_quote_error", symbol=symbol, error=row["error"])
+                continue
+            current_price = row.get("current_price")
+            if current_price is None:
+                logger.warning("snapshot_quote_missing_price", symbol=symbol)
+                continue
             try:
                 quotes[symbol] = Quote(
                     symbol=symbol,
-                    current_price=float(row.get("current_price", 0)),
+                    current_price=float(current_price),
                     open_price=float(row.get("open", 0)),
                     high_price=float(row.get("high", 0)),
                     low_price=float(row.get("low", 0)),

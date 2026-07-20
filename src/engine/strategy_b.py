@@ -64,7 +64,7 @@ class MeanReversionStrategy(TradingStrategy):
 
             prior_close = quote.previous_close
             current = quote.current_price
-            if prior_close <= 0:
+            if prior_close <= 0 or current <= 0:
                 trace[f"{asset}_skip_reason"] = "no_prior_close"
                 continue
 

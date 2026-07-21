@@ -14,6 +14,7 @@ from src.engine.risk import RiskEngine
 from src.engine.strategy_a import MomentumStrategy
 from src.engine.strategy_b import MeanReversionStrategy
 from src.engine.strategy_c import EventDrivenStrategy
+from src.ingestion.candle_providers import build_candle_chain
 from src.ingestion.fetcher import FinnhubFetcher, fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
 from src.ingestion.snapshot_loader import SnapshotLoader
@@ -558,17 +559,14 @@ class Pipeline:
             return {"error": msg}
 
     async def _check_yesterday_prediction(self) -> None:
-        if not self.config.finnhub.api_key:
-            logger.info("yesterday_check_skipped", reason="no_finnhub_api_key")
-            return
-
-        fetcher = FinnhubFetcher(
-            self.config.finnhub.api_key,
+        provider = build_candle_chain(
+            finnhub_api_key=self.config.finnhub.api_key,
+            alpha_vantage_api_key=self.config.alpha_vantage.api_key,
             timeout=self.config.finnhub.request_timeout_sec,
         )
         log_dir = self.config.logging.json_dir
 
-        biz_date = await find_previous_business_day(log_dir, fetcher)
+        biz_date = await find_previous_business_day(log_dir, provider)
         if biz_date is None:
             logger.info("yesterday_check_skipped", reason="no_business_day_found")
             return
@@ -584,9 +582,9 @@ class Pipeline:
 
         outcomes: list[PredictionOutcome] = []
         for pred in forecasts:
-            daily = await fetcher.fetch_daily_candle(pred["asset"], biz_date)
-            hourly = await fetcher.fetch_intraday_candles(pred["asset"], biz_date)
-            outcome = check_outcome(pred, daily, hourly)
+            daily = await provider.fetch_daily_candle(pred["asset"], biz_date)
+            hourly = await provider.fetch_intraday_candles(pred["asset"], biz_date)
+            outcome = check_outcome(pred, daily, hourly, biz_date=biz_date)
             outcomes.append(outcome)
             logger.info(
                 "yesterday_outcome",

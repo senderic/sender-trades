@@ -61,6 +61,13 @@ class FinnhubConfig(BaseModel):
     request_timeout_sec: int = 10
 
 
+class AlphaVantageConfig(BaseModel):
+    """Configuration for Alpha Vantage API access (free tier)."""
+
+    api_key: str = ""
+    request_timeout_sec: int = 10
+
+
 class BraveConfig(BaseModel):
     """Configuration for Brave Search API access."""
 
@@ -233,6 +240,7 @@ class Settings(BaseSettings):
     general: GeneralConfig = GeneralConfig()
     atlas_briefing: AtlasBriefingConfig = AtlasBriefingConfig()
     finnhub: FinnhubConfig = FinnhubConfig()
+    alpha_vantage: AlphaVantageConfig = AlphaVantageConfig()
     brave: BraveConfig = BraveConfig()
     reddit: RedditConfig = RedditConfig()
     unusual_whales: UnusualWhalesConfig = UnusualWhalesConfig()

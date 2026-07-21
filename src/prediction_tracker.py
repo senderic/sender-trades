@@ -6,7 +6,7 @@ from pathlib import Path
 
 import structlog
 
-from src.ingestion.fetcher import FinnhubFetcher
+from src.ingestion.candle_providers import CandleProvider
 from src.models.recommendation import PredictionOutcome
 from src.timezone import LA_TZ, today_local
 
@@ -17,7 +17,7 @@ HISTORY_FILENAME = "prediction-history.json"
 
 async def find_previous_business_day(
     log_dir: str | Path,
-    fetcher: FinnhubFetcher,
+    provider: CandleProvider,
     max_skip: int = 7,
 ) -> date | None:
     cand = today_local() - timedelta(days=1)
@@ -26,7 +26,7 @@ async def find_previous_business_day(
             cand -= timedelta(days=1)
             continue
         try:
-            candle = await fetcher.fetch_daily_candle("SPY", cand)
+            candle = await provider.fetch_daily_candle("SPY", cand)
         except Exception:
             candle = None
         if candle is not None:
@@ -102,13 +102,14 @@ def check_outcome(
     pred: dict,
     daily_candle: dict | None,
     hourly_candles: list[dict] | None,
+    biz_date: date | None = None,
 ) -> PredictionOutcome:
     asset = pred["asset"]
     direction = pred["direction"]
     confidence = pred["confidence"]
     rationale = pred.get("rationale", "")
     cid = pred.get("correlation_id", "")
-    pred_date = today_local().isoformat()
+    pred_date = (biz_date or today_local()).isoformat()
 
     if daily_candle is None:
         return PredictionOutcome(

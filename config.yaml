@@ -14,6 +14,10 @@ finnhub:
   api_key: ${FINNHUB_API_KEY}
   request_timeout_sec: 10
 
+alpha_vantage:
+  api_key: ${ALPHA_VANTAGE_API_KEY}
+  request_timeout_sec: 10
+
 brave:
   api_key: ${BRAVE_API_KEY}
   news_query: "SPY QQQ stock market intraday trading"

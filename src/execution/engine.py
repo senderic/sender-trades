@@ -1,0 +1,404 @@
+"""Trade execution engine — orchestrates the full lifecycle of a 0DTE trade."""
+
+from __future__ import annotations
+
+import asyncio
+import uuid
+from datetime import datetime
+from typing import Any
+
+import structlog
+
+from src.execution.client import AlpacaBrokerClient
+from src.execution.context import TradeContext
+from src.execution.exit_manager import ExitManager
+from src.execution.lifecycle import InvalidTransitionError, TradeLifecycle
+from src.execution.models import ExecutionConfig, OrderResult, TradeState
+from src.mcp.schemas import occ_option_symbol
+from src.models.recommendation import TradeRecommendation
+from src.timezone import ET_TZ
+
+logger = structlog.get_logger()
+
+
+class ExecutionEngineError(Exception):
+    """Non-recoverable error during trade execution."""
+
+    def __init__(self, message: str, trade_id: str = "") -> None:
+        super().__init__(message)
+        self.trade_id = trade_id
+
+
+class ExecutionEngine:
+    """Orchestrates the full lifecycle of a 0DTE options trade.
+
+    From entry submission through exit management to final close,
+    every state transition and API action is retried (via Tenacity)
+    and logged to the structured audit trail.
+    """
+
+    def __init__(
+        self,
+        client: AlpacaBrokerClient,
+        exec_config: ExecutionConfig,
+        log_dir: str | None = None,
+    ):
+        """Initialize the execution engine.
+
+        Args:
+            client: Configured AlpacaBrokerClient.
+            exec_config: Execution configuration (entry, exit, retry params).
+            log_dir: Root directory for audit logs (defaults to ``logs/``).
+        """
+        self.client = client
+        self.exec_config = exec_config
+        self.log_dir = log_dir or "logs"
+        self._monitor_interval: float = 30.0
+
+    async def execute(self, rec: TradeRecommendation, correlation_id: str) -> dict[str, Any]:
+        """Execute a trade recommendation through the full lifecycle.
+
+        Args:
+            rec: The trade recommendation to execute.
+            correlation_id: Pipeline correlation ID for traceability.
+
+        Returns:
+            Dict with trade summary (trade_id, result, pnl, etc.).
+        """
+        trade_id = uuid.uuid4().hex[:12]
+        lifecycle = TradeLifecycle(trade_id)
+        ctx = TradeContext(trade_id, correlation_id, rec, log_dir=self.log_dir)
+
+        try:
+            lifecycle.transition(
+                TradeState.VALIDATING, {"asset": rec.asset, "direction": rec.direction.value}
+            )
+            lifecycle.transition(TradeState.SUBMITTED)
+
+            option_type = "C" if rec.direction.value == "CALL" else "P"
+            expiry = rec.expires_at
+            occ_sym = occ_option_symbol(rec.asset, expiry, rec.target_strike, option_type)
+            order_data = self.client.build_entry_order(rec, occ_symbol=occ_sym)
+
+            ctx.record_entry(
+                "entry_submitted",
+                occ_symbol=occ_sym,
+                contracts=rec.contracts,
+                order_type=order_data["type"],
+            )
+
+            entry_result = await self.client.submit_order(order_data)
+            ctx.record_entry(
+                "entry_order_response",
+                order_id=entry_result.order_id,
+                status=entry_result.status,
+            )
+
+            if entry_result.status == "rejected":
+                lifecycle.transition(TradeState.REJECTED, {"order_id": entry_result.order_id})
+                return ctx.finalize(
+                    exit_reason="rejected",
+                    exit_price=0.0,
+                    final_pnl=0.0,
+                    final_pnl_pct=0.0,
+                    lifecycle_events=lifecycle.event_summary(),
+                )
+            if entry_result.status == "expired":
+                lifecycle.transition(TradeState.EXPIRED, {"order_id": entry_result.order_id})
+                return ctx.finalize(
+                    exit_reason="expired",
+                    exit_price=0.0,
+                    final_pnl=0.0,
+                    final_pnl_pct=0.0,
+                    lifecycle_events=lifecycle.event_summary(),
+                )
+
+            lifecycle.transition(TradeState.ACKNOWLEDGED, {"order_id": entry_result.order_id})
+
+            fill_result = await self._wait_for_fill(
+                entry_result.order_id,
+                timeout_minutes=self.exec_config.entry.entry_window_minutes,
+            )
+
+            if fill_result is None:
+                await self.client.cancel_order(entry_result.order_id)
+                lifecycle.transition(TradeState.EXPIRED, {"order_id": entry_result.order_id})
+                return ctx.finalize(
+                    exit_reason="expired",
+                    exit_price=0.0,
+                    final_pnl=0.0,
+                    final_pnl_pct=0.0,
+                    lifecycle_events=lifecycle.event_summary(),
+                )
+
+            filled_qty = int(fill_result.filled_qty) if fill_result.filled_qty else 0
+            if filled_qty < rec.contracts:
+                lifecycle.transition(
+                    TradeState.PARTIALLY_FILLED,
+                    {"filled_qty": filled_qty, "ordered_qty": rec.contracts},
+                )
+
+            entry_price = (
+                float(fill_result.filled_avg_price) if fill_result.filled_avg_price else 0.0
+            )
+            lifecycle.transition(
+                TradeState.FILLED,
+                {"filled_qty": filled_qty, "avg_price": entry_price},
+            )
+            ctx.record_entry(
+                "entry_filled",
+                order_id=fill_result.order_id,
+                filled_qty=filled_qty,
+                avg_price=entry_price,
+            )
+
+            exit_mgr = ExitManager(self.exec_config.exit_strategy)
+            exit_mgr.on_entry_filled(entry_price)
+
+            tp_spec = exit_mgr.build_tp_order(occ_sym, filled_qty)
+            sl_spec = exit_mgr.build_sl_order(occ_sym, filled_qty)
+
+            tp_result = await self.client.submit_order(tp_spec)
+            sl_result = await self.client.submit_order(sl_spec)
+            lifecycle.transition(
+                TradeState.EXITS_PLACED,
+                {"tp_order_id": tp_result.order_id, "sl_order_id": sl_result.order_id},
+            )
+            ctx.record_entry(
+                "exits_placed",
+                tp_order_id=tp_result.order_id,
+                tp_level=exit_mgr.tp_level,
+                sl_order_id=sl_result.order_id,
+                sl_level=exit_mgr.sl_level,
+            )
+
+            close_result = await self._monitor_exits(
+                exit_mgr,
+                tp_result.order_id,
+                sl_result.order_id,
+                occ_sym,
+                filled_qty,
+                lifecycle,
+                ctx,
+            )
+
+            return close_result
+
+        except InvalidTransitionError as e:
+            logger.error("execution_invalid_transition", trade_id=trade_id, error=str(e))
+            lifecycle._state = TradeState.FAILED
+            return ctx.finalize(
+                exit_reason="error",
+                exit_price=0.0,
+                final_pnl=0.0,
+                final_pnl_pct=0.0,
+                lifecycle_events=lifecycle.event_summary(),
+            )
+        except Exception as e:
+            logger.error("execution_error", trade_id=trade_id, error=str(e))
+            lifecycle._state = TradeState.FAILED
+            ctx.record_entry("execution_error", error=str(e))
+            return ctx.finalize(
+                exit_reason="error",
+                exit_price=0.0,
+                final_pnl=0.0,
+                final_pnl_pct=0.0,
+                lifecycle_events=lifecycle.event_summary(),
+            )
+
+    async def _wait_for_fill(self, order_id: str, timeout_minutes: int = 5) -> OrderResult | None:
+        """Poll an order until it fills, rejects, expires, or times out.
+
+        Args:
+            order_id: Alpaca order ID to poll.
+            timeout_minutes: Maximum time to wait for a fill.
+
+        Returns:
+            The filled :class:`OrderResult`, or None if expired/timeout.
+        """
+        deadline = datetime.now(ET_TZ).timestamp() + timeout_minutes * 60
+        terminal_states = {"filled", "partially_filled", "rejected", "canceled", "expired"}
+        sleep_sec = 2.0
+
+        while datetime.now(ET_TZ).timestamp() < deadline:
+            result = await self.client.get_order(order_id)
+            if result.status in terminal_states:
+                if result.status in ("filled", "partially_filled"):
+                    return result
+                return None
+            await asyncio.sleep(sleep_sec)
+            sleep_sec = min(sleep_sec * 1.5, 10.0)
+
+        return None
+
+    async def _monitor_exits(
+        self,
+        exit_mgr: ExitManager,
+        tp_order_id: str,
+        sl_order_id: str,
+        occ_symbol: str,
+        contracts: int,
+        lifecycle: TradeLifecycle,
+        ctx: TradeContext,
+    ) -> dict[str, Any]:
+        """Monitor exit orders until one fills or time expires.
+
+        Polls quote data and evaluates exit conditions, adjusting
+        trailing stops as needed.
+
+        Args:
+            exit_mgr: Configured exit manager.
+            tp_order_id: Take-profit order ID.
+            sl_order_id: Stop-loss order ID.
+            occ_symbol: OCC option symbol.
+            contracts: Number of contracts.
+            lifecycle: Trade lifecycle tracker.
+            ctx: Trade audit context.
+
+        Returns:
+            Finalized trade summary dict.
+        """
+        while not lifecycle.is_terminal:
+            quote = await self.client.get_option_quote(occ_symbol)
+            current_price: float | None = None
+
+            if quote:
+                bid = quote.get("bid") or 0
+                ask = quote.get("ask") or 0
+                if bid > 0 and ask > 0:
+                    current_price = (bid + ask) / 2.0
+                elif ask > 0:
+                    current_price = ask
+
+            if current_price is None:
+                tp_order = await self.client.get_order(tp_order_id)
+                sl_order = await self.client.get_order(sl_order_id)
+                if tp_order.status in (
+                    "filled",
+                    "canceled",
+                    "expired",
+                    "rejected",
+                ) or sl_order.status in ("filled", "canceled", "expired", "rejected"):
+                    return await self._resolve_exit(
+                        tp_order_id, sl_order_id, exit_mgr, lifecycle, ctx
+                    )
+                await asyncio.sleep(self._monitor_interval)
+                continue
+
+            evaluation = exit_mgr.evaluate(current_price)
+            ctx.record_monitoring_snapshot(
+                current_price=current_price,
+                current_pnl_pct=evaluation["current_pnl_pct"],
+                tp_level=evaluation["tp_level"] or 0,
+                sl_level=evaluation["sl_level"] or 0,
+                trailing_active=evaluation["trailing_active"],
+                trail_level=evaluation.get("trail_level"),
+            )
+
+            if evaluation["triggered"]:
+                trigger = evaluation["trigger_type"]
+                await self.client.cancel_order(tp_order_id)
+                await self.client.cancel_order(sl_order_id)
+
+                if trigger == "time_deadline":
+                    from uuid import uuid4
+
+                    close_spec = exit_mgr.build_market_close_order(
+                        occ_symbol, contracts, client_order_id=uuid4().hex[:12]
+                    )
+                    close_result = await self.client.submit_order(close_spec)
+                    lifecycle.transition(
+                        TradeState.FORCE_CLOSED,
+                        {"close_order_id": close_result.order_id},
+                    )
+                    lifecycle.transition(TradeState.CLOSED)
+                    return ctx.finalize(
+                        exit_reason="force_close",
+                        exit_price=current_price,
+                        final_pnl=(current_price - (exit_mgr.entry_price or 0)) * contracts * 100,
+                        final_pnl_pct=evaluation["current_pnl_pct"],
+                        lifecycle_events=lifecycle.event_summary(),
+                    )
+
+                if trigger == "take_profit":
+                    lifecycle.transition(TradeState.TP_FILLED)
+                elif trigger in ("stop_loss", "trailing_stop"):
+                    lifecycle.transition(TradeState.SL_FILLED)
+
+                lifecycle.transition(TradeState.CLOSED)
+                return ctx.finalize(
+                    exit_reason="take_profit" if trigger == "take_profit" else "stop_loss",
+                    exit_price=current_price,
+                    final_pnl=(current_price - (exit_mgr.entry_price or 0)) * contracts * 100,
+                    final_pnl_pct=evaluation["current_pnl_pct"],
+                    lifecycle_events=lifecycle.event_summary(),
+                )
+
+            if exit_mgr.trailing_active:
+                ctx.record_adjustment(
+                    "trailing_check",
+                    trail_level=exit_mgr.trail_level,
+                    peak_pnl_pct=evaluation["current_pnl_pct"],
+                )
+
+            await asyncio.sleep(self._monitor_interval)
+
+        return ctx.finalize(
+            exit_reason="error",
+            exit_price=0.0,
+            final_pnl=0.0,
+            final_pnl_pct=0.0,
+            lifecycle_events=lifecycle.event_summary(),
+        )
+
+    async def _resolve_exit(
+        self,
+        tp_order_id: str,
+        sl_order_id: str,
+        exit_mgr: ExitManager,
+        lifecycle: TradeLifecycle,
+        ctx: TradeContext,
+    ) -> dict[str, Any]:
+        tp = await self.client.get_order(tp_order_id)
+        sl = await self.client.get_order(sl_order_id)
+
+        if tp.status == "filled":
+            lifecycle.transition(TradeState.TP_FILLED)
+            lifecycle.transition(TradeState.CLOSED)
+            fill_price = float(tp.filled_avg_price or 0)
+            return ctx.finalize(
+                exit_reason="take_profit",
+                exit_price=fill_price,
+                final_pnl=(fill_price - (exit_mgr.entry_price or 0))
+                * (int(tp.filled_qty) if tp.filled_qty else 0)
+                * 100,
+                final_pnl_pct=(
+                    (fill_price - (exit_mgr.entry_price or 0)) / (exit_mgr.entry_price or 1) * 100
+                ),
+                lifecycle_events=lifecycle.event_summary(),
+            )
+
+        if sl.status == "filled":
+            lifecycle.transition(TradeState.SL_FILLED)
+            lifecycle.transition(TradeState.CLOSED)
+            fill_price = float(sl.filled_avg_price or 0)
+            return ctx.finalize(
+                exit_reason="stop_loss",
+                exit_price=fill_price,
+                final_pnl=(fill_price - (exit_mgr.entry_price or 0))
+                * (int(sl.filled_qty) if sl.filled_qty else 0)
+                * 100,
+                final_pnl_pct=(
+                    (fill_price - (exit_mgr.entry_price or 0)) / (exit_mgr.entry_price or 1) * 100
+                ),
+                lifecycle_events=lifecycle.event_summary(),
+            )
+
+        lifecycle.transition(TradeState.FAILED)
+        return ctx.finalize(
+            exit_reason="error",
+            exit_price=0.0,
+            final_pnl=0.0,
+            final_pnl_pct=0.0,
+            lifecycle_events=lifecycle.event_summary(),
+        )

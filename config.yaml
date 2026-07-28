@@ -77,7 +77,31 @@ mcp:
       username: ${ROBINHOOD_USERNAME}
       password: ${ROBINHOOD_PASSWORD}
       mfa_code: ${ROBINHOOD_MFA_CODE}
+  options_chain:
+    command: npx
+    args: ["-y", "@blake365/options-chain"]
+    timeout_sec: 15
 
 logging:
   level: DEBUG
   json_dir: logs
+
+execution:
+  entry:
+    order_type: limit
+    limit_offset_pct: 5
+    entry_window_minutes: 5
+  exit_strategy:
+    take_profit_pct: 100
+    stop_loss_pct: -50
+    trailing:
+      enabled: true
+      activate_after_pct: 30
+      trail_pct: 15
+    time_deadline_est: "15:25"
+  tenacity:
+    max_attempts: 3
+    min_wait_sec: 1
+    max_wait_sec: 30
+    backoff_multiplier: 2
+  max_concurrent_trades: 1

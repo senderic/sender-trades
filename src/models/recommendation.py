@@ -142,6 +142,7 @@ class AssetForecast(BaseModel):
     direction: Literal["UP", "DOWN"] | None = None
     confidence: float = 0.0
     predicted_move_pct: float = 0.0
+    target_strike: float | None = None
     rationale: str = ""
     sources: list[str] = Field(default_factory=list)
 
@@ -156,8 +157,8 @@ class DirectionalForecast(BaseModel):
     def table(self) -> str:
         """Return a formatted table string for terminal output."""
         lines: list[str] = []
-        header = f"{'Asset':<6} {'Direction':<10} {'Confidence':>11} {'Pred. Move':>11}   Key Drivers of the Prediction"
-        sep = "─" * 100
+        header = f"{'Asset':<6} {'Direction':<10} {'Confidence':>11} {'Pred. Move':>11} {'Target Strike':>14}   Key Drivers of the Prediction"
+        sep = "─" * 120
         lines.append(sep)
         lines.append(header)
         lines.append(sep)
@@ -165,9 +166,10 @@ class DirectionalForecast(BaseModel):
             direction_str = f.direction if f.direction else "—"
             conf_str = f"{f.confidence:.0%}" if f.confidence > 0 else "—"
             move_str = f"{f.predicted_move_pct:+.1f}%" if f.predicted_move_pct != 0.0 else "—"
+            strike_str = f"${f.target_strike:.2f}" if f.target_strike else "—"
             drivers = f.rationale if f.rationale else (" · ".join(f.sources) if f.sources else "—")
             lines.append(
-                f"{f.asset:<6} {direction_str:<10} {conf_str:>11} {move_str:>11}   {drivers}"
+                f"{f.asset:<6} {direction_str:<10} {conf_str:>11} {move_str:>11} {strike_str:>14}   {drivers}"
             )
         lines.append(sep)
         if self.market_vibe:
@@ -183,6 +185,7 @@ class PredictionOutcome(BaseModel):
     confidence: float = 0.0
     rationale: str = ""
     result: Literal["success", "fail", "unknown"] = "unknown"
+    target_strike: float | None = None
     details: str = ""
     open_price: float | None = None
     high_price: float | None = None

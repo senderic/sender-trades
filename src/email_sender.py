@@ -6,12 +6,13 @@ import logging
 import os
 import smtplib
 from collections.abc import Sequence
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
 from src.models.recommendation import DirectionalForecast, PredictionOutcome
-from src.timezone import format_la, today_local
+from src.timezone import LA_TZ, format_la, today_local
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +88,26 @@ th {
 """
 
 
+def format_duration(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes}m {secs:02d}s"
+
+
+def render_runtime_html(start: datetime, end: datetime) -> str:
+    duration = (end - start).total_seconds()
+    duration_str = format_duration(duration)
+    start_str = start.astimezone(LA_TZ).strftime("%I:%M:%S %p")
+    end_str = end.astimezone(LA_TZ).strftime("%I:%M:%S %p")
+    return f'<p style="font-size:12px;color:#8b949e;margin:12px 0 0;text-align:center;">Pipeline run took <strong>{duration_str}</strong> (Started: {start_str}, Finished: {end_str})</p>'
+
+
 def render_forecast_html(
     forecast: DirectionalForecast,
     yesterday_outcomes: list[PredictionOutcome] | None = None,
     model_usage_html: str = "",
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
 ) -> str:
     rows = ""
     for f in forecast.forecasts:
@@ -99,11 +116,13 @@ def render_forecast_html(
             style = "sideways"
             conf_str = "—"
             move_str = "—"
+            strike_str = "—"
         else:
             direction_str = f.direction
             style = f.direction.lower()
             conf_str = f"{f.confidence:.0%}"
             move_str = f"{f.predicted_move_pct:+.1f}%"
+            strike_str = f"${f.target_strike:.2f}" if f.target_strike else "—"
         drivers = f.rationale or ("<br>".join(f.sources) if f.sources else "—")
         if f.sources and f.rationale:
             sources_str = " · ".join(f.sources)
@@ -113,6 +132,7 @@ def render_forecast_html(
   <td class="{style}">{direction_str}</td>
   <td>{conf_str}</td>
   <td class="{style}">{move_str}</td>
+  <td>{strike_str}</td>
   <td>{drivers}</td>
 </tr>"""
 
@@ -123,6 +143,10 @@ def render_forecast_html(
     yesterday_html = _render_yesterday_section(yesterday_outcomes)
 
     model_html = f"\n{model_usage_html}\n" if model_usage_html else ""
+
+    runtime_html = ""
+    if start_time and end_time:
+        runtime_html = render_runtime_html(start_time, end_time)
 
     return f"""<!DOCTYPE html>
 <html>
@@ -138,7 +162,7 @@ def render_forecast_html(
 {vibe}
 <table>
 <thead>
-<tr><th>Asset</th><th>Direction</th><th>Confidence</th><th>Pred. Move</th><th>Key Drivers of the Prediction</th></tr>
+<tr><th>Asset</th><th>Direction</th><th>Confidence</th><th>Pred. Move</th><th>Target Strike</th><th>Key Drivers of the Prediction</th></tr>
 </thead>
 <tbody>
 {rows}
@@ -146,6 +170,7 @@ def render_forecast_html(
 </table>
 {yesterday_html}
 {model_html}
+{runtime_html}
 <div class="footer">
 sender-trades &mdash; 0DTE Intraday Prediction Engine<br>
 Powered by opencode LLM + Market Research
@@ -175,8 +200,9 @@ def _render_yesterday_section(
 
         details_html = o.details.replace(" | ", "<br>")
         pred_move = f"{o.confidence:.0%} confidence"
+        strike_str = f" · Target: ${o.target_strike:.2f}" if o.target_strike else ""
         cards += f"""<div class="outcome-card {card_class}">
-  <p><span class="outcome-asset">{o.asset}</span> — Predicted <strong>{o.predicted_direction}</strong> ({pred_move}) {badge}</p>
+  <p><span class="outcome-asset">{o.asset}</span> — Predicted <strong>{o.predicted_direction}</strong> ({pred_move}){strike_str} {badge}</p>
   <p>{details_html}</p>
 </div>"""
 
@@ -194,6 +220,8 @@ def send_email(
     yesterday_outcomes: list[PredictionOutcome] | None = None,
     model_usage_html: str = "",
     model_usage_text: str = "",
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -215,7 +243,11 @@ def send_email(
         return dict.fromkeys(to, True)
 
     html = render_forecast_html(
-        forecast, yesterday_outcomes=yesterday_outcomes, model_usage_html=model_usage_html
+        forecast,
+        yesterday_outcomes=yesterday_outcomes,
+        model_usage_html=model_usage_html,
+        start_time=start_time,
+        end_time=end_time,
     )
 
     plain_parts = [f"sender-trades Directional Forecast\n\n{forecast.table()}"]

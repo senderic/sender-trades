@@ -453,6 +453,14 @@ class Pipeline:
             for asset in assets:
                 pred = llm_result.predictions.get(asset)
                 if pred is not None:
+                    open_price = (
+                        self.result.market.quotes.get(asset).open_price
+                        if self.result.market and asset in self.result.market.quotes
+                        else None
+                    )
+                    target_strike: float | None = None
+                    if open_price and open_price > 0 and abs(pred.predicted_move_pct) >= 0.1:
+                        target_strike = round(open_price * (1 + pred.predicted_move_pct / 100), 2)
                     llm_sources = [f"llm:{s}" for s in pred.sources]
                     forecasts.append(
                         AssetForecast(
@@ -460,6 +468,7 @@ class Pipeline:
                             direction=pred.direction,
                             confidence=pred.confidence,
                             predicted_move_pct=pred.predicted_move_pct,
+                            target_strike=target_strike,
                             rationale=pred.rationale,
                             sources=llm_sources,
                         )
@@ -512,12 +521,22 @@ class Pipeline:
                 "UP" if up_conf > down_conf else ("DOWN" if down_conf > up_conf else None)
             )
             pct = round((weighted_magnitude / mag_count) * 100 if mag_count > 0 else 0.0, 2)
+            target_strike: float | None = None
+            if direction and abs(pct) >= 0.1:
+                open_price = (
+                    self.result.market.quotes.get(asset).open_price
+                    if self.result.market and asset in self.result.market.quotes
+                    else None
+                )
+                if open_price and open_price > 0:
+                    target_strike = round(open_price * (1 + pct / 100), 2)
             forecasts.append(
                 AssetForecast(
                     asset=asset,
                     direction=direction,
                     confidence=max(up_conf, down_conf),
                     predicted_move_pct=pct if direction else 0.0,
+                    target_strike=target_strike,
                     sources=up_sources + down_sources,
                 )
             )

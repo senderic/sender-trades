@@ -128,6 +128,8 @@ async def main(argv: list[str] | None = None) -> int:
             yesterday_outcomes=result.yesterday_outcomes or None,
             model_usage_html=result.model_usage_html,
             model_usage_text=result.model_usage_text,
+            start_time=result.start_time,
+            end_time=result.end_time,
         )
 
     return 0 if len(result.errors) == 0 else 1

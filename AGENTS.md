@@ -6,7 +6,7 @@ An intraday directional prediction engine for SPY and QQQ. Ingests the Atlas Mor
 
 ## Schedule
 
-Cron (America/Los_Angeles): `30 6 * * 1-5` — 6:30 AM Mon-Fri.
+Cron (America/Los_Angeles): `15 6 * * 1-5` — 6:15 AM Mon-Fri.
 Runs ~42 min after upstream `~/atlas-morning-briefing/` (5:30 AM).
 
 ## Key Commands

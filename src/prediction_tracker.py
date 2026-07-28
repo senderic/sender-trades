@@ -109,6 +109,7 @@ def check_outcome(
     confidence = pred["confidence"]
     rationale = pred.get("rationale", "")
     cid = pred.get("correlation_id", "")
+    move_pct = pred.get("predicted_move_pct", 0.0) or 0.0
     pred_date = (biz_date or today_local()).isoformat()
 
     if daily_candle is None:
@@ -128,20 +129,30 @@ def check_outcome(
     lo = float(daily_candle["l"][0])
     c_val = float(daily_candle["c"][0])
 
+    target_strike: float | None = None
+    if abs(move_pct) >= 0.1:
+        target_strike = round(o * (1 + move_pct / 100), 2)
+
     triggered_at_str = ""
     duration_h: float | None = None
 
-    price_moved = h > o if direction == "UP" else lo < o
+    if target_strike is not None:
+        price_moved = h >= target_strike if direction == "UP" else lo <= target_strike
+        threshold_label = f"target strike ${target_strike:.2f}"
+    else:
+        price_moved = h > o if direction == "UP" else lo < o
+        threshold_label = f"the open of ${o:.2f}"
 
     if hourly_candles and price_moved:
+        threshold = target_strike if target_strike is not None else o
         if direction == "UP":
             for i, candle in enumerate(hourly_candles):
-                if candle["high"] > o:
+                if candle["high"] >= threshold:
                     ts = datetime.fromtimestamp(candle["timestamp"], tz=LA_TZ)
                     triggered_at_str = ts.strftime("%I:%M %p %Z")
                     count = 1
                     for j in range(i + 1, len(hourly_candles)):
-                        if hourly_candles[j]["high"] > o:
+                        if hourly_candles[j]["high"] >= threshold:
                             count += 1
                         else:
                             break
@@ -149,12 +160,12 @@ def check_outcome(
                     break
         else:
             for i, candle in enumerate(hourly_candles):
-                if candle["low"] < o:
+                if candle["low"] <= threshold:
                     ts = datetime.fromtimestamp(candle["timestamp"], tz=LA_TZ)
                     triggered_at_str = ts.strftime("%I:%M %p %Z")
                     count = 1
                     for j in range(i + 1, len(hourly_candles)):
-                        if hourly_candles[j]["low"] < o:
+                        if hourly_candles[j]["low"] <= threshold:
                             count += 1
                         else:
                             break
@@ -167,21 +178,20 @@ def check_outcome(
     if not price_moved:
         result = "fail"
         details_parts.append(
-            f"{asset} opened at ${o:.2f} and never {'rose above' if direction == 'UP' else 'fell below'} "
-            f"that level. Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}"
+            f"{asset} opened at ${o:.2f} and never hit {threshold_label}. "
+            f"Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}"
         )
     else:
         result = "success"
         if triggered_at_str:
-            parts = [f"Triggered at {triggered_at_str}"]
+            parts = [f"Hit {threshold_label} at {triggered_at_str}"]
             if duration_h is not None and duration_h > 1:
-                parts.append(f"held for ~{duration_h} hours")
+                parts.append(f"held above for ~{duration_h} hours" if direction == "UP" else f"held below for ~{duration_h} hours")
             parts.append(f"Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}")
             details_parts.append(" | ".join(parts))
         else:
             details_parts.append(
-                f"{asset} {'rose above' if direction == 'UP' else 'fell below'} "
-                f"the open of ${o:.2f}. "
+                f"{asset} hit {threshold_label}. "
                 f"Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}"
             )
 
@@ -193,6 +203,7 @@ def check_outcome(
         confidence=confidence,
         rationale=rationale,
         result=result,
+        target_strike=target_strike,
         details="".join(details_parts),
         open_price=o,
         high_price=h,

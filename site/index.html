@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>sender-trades — 0DTE Intraday Prediction Engine</title>
+  <title>sender-trades — 0DTE Intraday Prediction &amp; Execution Engine</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -255,13 +255,15 @@
 
   <section class="hero">
     <h1>sender-<span>trades</span></h1>
-    <p>LLM-powered intraday directional prediction engine for SPY and QQQ. Ingest the Atlas Morning Briefing, run LLM research, and get a clear % direction prediction with cited evidence — all on your own infrastructure.</p>
+    <p>LLM-powered intraday directional prediction engine with optional 0DTE options execution for SPY and QQQ. Ingest the Atlas Morning Briefing, run LLM research, get a clear % direction prediction, and automatically execute paper/live trades via Alpaca with automatic exit management.</p>
     <div class="hero-badges">
-      <span class="badge green">● 127 tests</span>
+      <span class="badge green">● 135 tests</span>
       <span class="badge blue">● LLM-driven predictions</span>
       <span class="badge orange">● Per-asset % forecasts</span>
-      <span class="badge green">● Snapshot-aware</span>
-      <span class="badge orange">● Prediction history &amp; learning</span>
+      <span class="badge green">● Paper trading</span>
+      <span class="badge blue">● Tenacity retries</span>
+      <span class="badge orange">● Automatic exits</span>
+      <span class="badge green">● Full audit trail</span>
     </div>
     <div class="hero-buttons">
       <a href="#quickstart" class="btn primary">Get started</a>
@@ -292,6 +294,26 @@
           <div class="icon">📈</div>
           <h3>Momentum + MeanReversion + EventDriven</h3>
           <p>Three deterministic strategies run alongside the LLM for cross-reference: gap-based momentum, RSI-based mean-reversion, and catalyst-aware event-driven logic from macro data and news polarity.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🚀</div>
+          <h3>Paper-trading execution</h3>
+          <p>Optional execution module submits 0DTE option orders to Alpaca paper trading at 9:15 AM ET (queued for 9:30 AM open). Automatic exit management with take-profit limit orders, in-app stop-loss, trailing stops, and time-deadline force-close. All trades visible at <a href="https://app.alpaca.markets/paper/dashboard" style="color: var(--accent);">Alpaca Paper Dashboard</a>.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🔄</div>
+          <h3>Auto exit management</h3>
+          <p>When a trade fills, the engine immediately places a take-profit limit order at Alpaca. Stop-loss and trailing stops are managed in-app via a monitoring loop that polls quote data and triggers market sells when thresholds are hit. Close deadline enforced at 3:25 PM ET.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🛡️</div>
+          <h3>Resilient — Tenacity retries</h3>
+          <p>Every Alpaca API call is wrapped with <code>tenacity</code> exponential backoff (3 attempts, 1s→30s). Retries on 5xx server errors and network failures; skips 4xx client errors. ExecutionConfig read from <code>config.yaml</code> at call time.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📋</div>
+          <h3>Full audit trail</h3>
+          <p>Every trade lifecycle event written to structured JSON at <code>logs/&lt;date&gt;/trade-&lt;id&gt;.json</code>. Links <code>correlation_id → trade_id → order_ids</code>. Includes execution config snapshot, monitoring snapshots, lifecycle state machine events, and full recommendation payload.</p>
         </div>
         <div class="feature">
           <div class="icon">🎯</div>
@@ -357,9 +379,9 @@
           <div class="arch-arrow">→</div>
           <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Forecast</div><div class="tag">Per-asset table</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 5</div><div class="val">Yesterday check</div><div class="tag">finhub candles</div></div>
+          <div class="arch-box"><div class="tag">Phase 6</div><div class="val">Decide</div><div class="tag">Aggregate + risk</div></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box"><div class="tag">Phase 6</div><div class="val">Optional execute</div><div class="tag">MCP (or dry-run)</div></div>
+          <div class="arch-box"><div class="tag">Phase 7</div><div class="val">Execute</div><div class="tag">Alpaca + exits</div></div>
         </div>
       </div>
 
@@ -367,9 +389,11 @@
       <table class="pill-table">
         <tr><th>Source</th><th>Data</th><th>Snapshot cached</th></tr>
         <tr><td>Finnhub</td><td>Real-time stock quotes (SPY, QQQ)</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>Yahoo Finance</td><td>Quote fallback when Finnhub 502s</td><td><span class="pill blue">Live</span></td></tr>
         <tr><td>Brave Search</td><td>Financial news headlines</td><td><span class="pill green">Yes</span></td></tr>
         <tr><td>RSS Feeds (4)</td><td>Market news from Reuters, Dow Jones, Seeking Alpha, Investing.com</td><td><span class="pill green">Yes</span></td></tr>
         <tr><td>Atlas Briefing</td><td>Macro summary, ticker table, news, blogs, papers</td><td><span class="pill blue">N/A</span></td></tr>
+        <tr><td>Alpaca Paper</td><td>Option chain, orders, positions, quotes</td><td><span class="pill green">N/A</span></td></tr>
       </table>
 
       <h4 style="margin-top: 32px;">Snapshot flow</h4>
@@ -407,11 +431,13 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
         <div class="flow-arrow">→</div>
         <div class="flow-step"><div class="label">4</div><div class="value">Check yesterday</div><div class="label">finhub 1h candles</div></div>
         <div class="flow-arrow">→</div>
-        <div class="flow-step"><div class="label">5</div><div class="value">Email</div><div class="label">forecast + recap</div></div>
+        <div class="flow-step"><div class="label">5</div><div class="value">Execute</div><div class="label">submit + monitor + close</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">6</div><div class="value">Email</div><div class="label">forecast + recap</div></div>
       </div>
       <p style="text-align:center; color:var(--muted); margin-top: 24px; font-size:0.95rem;">
-        Predictions are always free. Set <code style="color:var(--accent)">llm.trade_signal_enabled: true</code> and
-        <code style="color:var(--accent)">execute: true</code> to also produce a best-trade recommendation.
+        Predictions are always free. Set <code style="color:var(--accent)">execute: true</code> in
+        <code style="color:var(--accent)">config.yaml</code> to enable Alpaca paper/live execution with automatic exit management.
       </p>
     </div>
   </section>
@@ -622,8 +648,8 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
           <div class="desc">Or run via Docker</div>
         </div>
         <div class="cmd-item">
-          <code>uv run pytest</code>
-          <div class="desc">Run all 127 tests</div>
+          <code>uv run pytest -m "not integration"</code>
+          <div class="desc">Run all 135 tests (skip integration)</div>
         </div>
         <div class="cmd-item">
           <code>uv run ruff check &amp;&amp; uv run ruff format --check</code>
@@ -690,6 +716,17 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
         </tr>
       </table>
 
+      <h4 style="margin-top: 32px;">Trade lifecycle (when execution is enabled)</h4>
+      <div class="diagram">
+<pre>CREATED → VALIDATING → SUBMITTED → ACKNOWLEDGED → FILLED → EXITS_PLACED → CLOSED
+    ↓         ↓            ↓              ↓          ↓            ↓
+                                        REJECTED   PARTIALLY   TP_FILLED
+                                         EXPIRED    FILLED     SL_FILLED
+                                                              FORCE_CLOSED
+
+Terminal: CLOSED, REJECTED, EXPIRED, FAILED</pre>
+      </div>
+
       <h4 style="margin-top: 32px;">Risk guardrails (for best_trade execution)</h4>
       <ul class="compact">
         <li>Realistic 0DTE strikes — ~0.6% OTM for 30-delta, strikes that actually exist in the chain</li>
@@ -697,6 +734,8 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
         <li>Bid/ask spread ≤20% of mid-price</li>
         <li>OCC chain existence verification</li>
         <li>Time check — no entries after 2PM ET</li>
+        <li>Tenacity retries — 3 attempts with exponential backoff on all Alpaca API calls</li>
+        <li>Time-deadline guard — monitoring loop force-closes at 15:25 ET</li>
       </ul>
     </div>
   </section>
@@ -713,7 +752,7 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
   </section>
 
   <footer>
-    sender-trades &mdash; 0DTE Intraday Prediction Engine · Powered by opencode LLM
+    sender-trades &mdash; 0DTE Intraday Prediction &amp; Execution Engine · Powered by opencode LLM + Alpaca
   </footer>
 </body>
 </html>

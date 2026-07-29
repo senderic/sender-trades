@@ -10,6 +10,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings
 
+from src.execution.models import ExecutionConfig
+
 
 class AtlasBriefingConfig(BaseModel):
     """Configuration for the Atlas morning briefing directory.
@@ -160,6 +162,7 @@ class MCPConfig(BaseModel):
     robinhood: MCPDaemonConfig = MCPDaemonConfig(
         args=["robinhood-mcp-server"],
     )
+    options_chain: MCPDaemonConfig | None = None
 
 
 class LoggingConfig(BaseModel):
@@ -250,6 +253,7 @@ class Settings(BaseSettings):
     mcp: MCPConfig = MCPConfig()
     logging: LoggingConfig = LoggingConfig()
     llm: LLMConfig = LLMConfig()
+    execution: ExecutionConfig = ExecutionConfig()
 
     model_config = ConfigDict(env_nested_delimiter="__")
 

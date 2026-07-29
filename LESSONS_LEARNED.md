@@ -6,6 +6,30 @@ Newest entries at the top.
 
 ---
 
+## 2026-07-29 — Post-market analysis
+
+### Prediction accuracy
+- :x: MISS **SPY UP** | 45% conf | predicted 0.3% | actual -0.80%
+  _SPY is recovering +0.24% intraday from the $735.87 low with defense-prime spending (GD +1.04%, NOC +0.30%) and slightly positive aggregate news sentiment (+0.054) providing support._
+- :white_check_mark: HIT **QQQ DOWN** | 70% conf | predicted -1.5% | actual -1.30%
+  _QQQ gapped down -0.87% and continues to -0.97% as the OpenAI agent-safety breach burdens sentiment while routs in opticals (LITE -8.43%), space (LUNR -7.06%), and defense AI (PLTR -6.08%) drive broad _
+
+**Best trade**: QQQ PUT, strategy=llm_trade
+
+### Trade execution
+**6** orders submitted, **1** filled
+**1** positions were not closed by the engine (engine exit error). These were closed manually or by safety-close.
+  SPY PUT @ $1.60/contract → not closed by engine (error)
+
+### System issues
+- Engine failed to close 1 filled positions (exit monitoring died with pipeline)
+
+### Daily market
+  SPY: O=$739.97 H=$740.39 L=$731.74 C=$734.03 (-0.80%)
+  QQQ: O=$675.46 H=$677.46 L=$663.30 C=$666.71 (-1.30%)
+
+**Cumulative prediction record**: 7/13 (54%)
+
 ## 2026-07-29 — First paper-trading day: wins, failures, and live debugging
 
 ### What happened

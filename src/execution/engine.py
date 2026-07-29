@@ -176,27 +176,24 @@ class ExecutionEngine:
             tp_result = await self.client.submit_order(tp_spec)
             lifecycle.transition(
                 TradeState.EXITS_PLACED,
-                {"tp_order_id": tp_result.order_id, "sl_managed_in_app": True},
+                {"tp_order_id": tp_result.order_id, "exit_via_cron": True},
             )
             ctx.record_entry(
                 "exits_placed",
                 tp_order_id=tp_result.order_id,
                 tp_level=exit_mgr.tp_level,
                 sl_level=exit_mgr.sl_level,
-                sl_managed_in_app=True,
-                note="SL order not placed — Alpaca prohibits two simultaneous sell orders for same contract. SL managed via monitoring loop.",
+                note="TP placed at Alpaca. SL and time-deadline force-close handled by separate safety-close cron at 3:20 PM ET.",
             )
 
-            close_result = await self._monitor_exits(
-                exit_mgr,
-                tp_result.order_id,
-                occ_sym,
-                filled_qty,
-                lifecycle,
-                ctx,
+            lifecycle.transition(TradeState.CLOSED)
+            return ctx.finalize(
+                exit_reason="pending",
+                exit_price=0.0,
+                final_pnl=0.0,
+                final_pnl_pct=0.0,
+                lifecycle_events=lifecycle.event_summary(),
             )
-
-            return close_result
 
         except InvalidTransitionError as e:
             logger.error("execution_invalid_transition", trade_id=trade_id, error=str(e))

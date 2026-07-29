@@ -68,6 +68,7 @@ VALID_TRANSITIONS: dict[TradeState, set[TradeState]] = {
         TradeState.TP_FILLED,
         TradeState.SL_FILLED,
         TradeState.FORCE_CLOSED,
+        TradeState.CLOSED,
         TradeState.FAILED,
     },
     TradeState.TP_FILLED: {TradeState.CLOSED, TradeState.FAILED},

@@ -72,8 +72,7 @@ def _legacy_outcome_label(forecast: dict, daily_ohlc: dict | None) -> str:
 
 def fetch_daily_ohlc(symbol: str, *, target_date: date | None = None) -> dict | None:
     try:
-        from datetime import datetime as dt
-
+        import pandas as pd
         import yfinance as yf
 
         ticker = yf.Ticker(symbol)
@@ -81,9 +80,14 @@ def fetch_daily_ohlc(symbol: str, *, target_date: date | None = None) -> dict | 
         if h.empty:
             return None
         want = target_date or _today_pacific()
-        want_ts = dt(want.year, want.month, want.day)
-        mask = h.index.normalize() == want_ts
-        row = h[mask].iloc[0] if mask.any() else h.iloc[-1]
+        want_ts = pd.Timestamp(want.year, want.month, want.day, tz=h.index.tz)
+        norm = h.index.normalize()
+        mask = norm == want_ts
+        if mask.any():
+            row = h[mask].iloc[0]
+        else:
+            diffs = (norm - want_ts).to_series().abs()
+            row = h.iloc[diffs.argmin()]
         return {
             "o": float(row["Open"]),
             "h": float(row["High"]),
@@ -107,6 +111,10 @@ def format_pnl(num: float | int) -> str:
 def _format_move_pct(f: dict) -> str:
     val = f.get("predicted_move_pct") or f.get("expected_move_pct") or 0
     return f"{float(val):.1f}%"
+
+
+def _format_pct(val: float) -> str:
+    return f"{val:+.2f}%"
 
 
 def _forecast_for_asset(forecast_list: list[dict], asset: str) -> dict | None:
@@ -139,6 +147,154 @@ def _trade_closed(trade: dict) -> bool:
     return trade.get("exit_reason", "") not in ("", "error")
 
 
+def _extract_sources_from_summary(summary: dict) -> dict[str, list[str]]:
+    """Extract per-asset sources from all strategy predictions."""
+    results: dict[str, list[str]] = {}
+    for r in summary.get("decision", {}).get("all_results", []):
+        predictions = r.get("predictions") or {}
+        if isinstance(predictions, dict):
+            for asset, pred in predictions.items():
+                if isinstance(pred, dict) and asset in ASSETS:
+                    sources = pred.get("sources", [])
+                    if asset not in results:
+                        results[asset] = []
+                    for s in sources:
+                        if s not in results[asset]:
+                            results[asset].append(s)
+    return results
+
+
+def _strategy_accuracy_summary(summary: dict, market_data: dict[str, dict | None]) -> str:
+    """Build a per-strategy accuracy breakdown."""
+    lines: list[str] = []
+    all_r = summary.get("decision", {}).get("all_results", [])
+
+    for r in all_r:
+        label = r.get("label", "unknown")
+        predictions = r.get("predictions") or {}
+        if not isinstance(predictions, dict) or not predictions:
+            lines.append(f"- **{label}**: no per-asset predictions available")
+            continue
+
+        asset_results: list[str] = []
+        for asset in ASSETS:
+            pred = predictions.get(asset)
+            if not isinstance(pred, dict):
+                continue
+            direction = pred.get("direction", "?").upper()
+            ohlc = market_data.get(asset)
+            outcome = _legacy_outcome_label(pred, ohlc)
+            mark = "HIT" if outcome == "success" else "MISS"
+            asset_results.append(f"{asset} {direction}: {mark}")
+
+        if asset_results:
+            lines.append(f"- **{label}**: {' | '.join(asset_results)}")
+        else:
+            lines.append(f"- **{label}**: no SPY/QQQ prediction")
+
+    return "\n".join(lines)
+
+
+def _source_effectiveness(summary: dict, market_data: dict[str, dict | None]) -> str:
+    """Tally which input sources appear in winning vs losing predictions."""
+    win_sources: set[str] = set()
+    loss_sources: set[str] = set()
+
+    for r in summary.get("decision", {}).get("all_results", []):
+        predictions = r.get("predictions") or {}
+        if not isinstance(predictions, dict):
+            continue
+        for asset, pred in predictions.items():
+            if not isinstance(pred, dict) or asset not in ASSETS:
+                continue
+            sources = pred.get("sources", [])
+            outcome = _legacy_outcome_label(pred, market_data.get(asset))
+            if outcome == "success":
+                win_sources.update(sources)
+            else:
+                loss_sources.update(sources)
+
+    if not win_sources and not loss_sources:
+        return "no source data available"
+
+    lines: list[str] = []
+
+    win_only = win_sources - loss_sources
+    loss_only = loss_sources - win_sources
+    both = win_sources & loss_sources
+
+    if both:
+        lines.append(f"  Sources in both wins & losses: {', '.join(sorted(both))}")
+    if win_only:
+        lines.append(f"  Sources only in winning predictions: {', '.join(sorted(win_only))}")
+    if loss_only:
+        lines.append(f"  Sources only in losing predictions: {', '.join(sorted(loss_only))}")
+
+    if not lines:
+        return "no distinct source patterns"
+
+    return "\n".join(lines)
+
+
+def _catalyst_extract(summary: dict) -> str:
+    """Extract key catalysts/themes mentioned in the LLM rationale."""
+    r = summary.get("decision", {}).get("recommendation") or {}
+    rationale = r.get("rationale", {})
+    text = rationale.get("llm_rationale", "") if isinstance(rationale, dict) else ""
+    if not text:
+        return "no catalyst data"
+
+    keywords = [
+        "regulation",
+        "FOMC",
+        "earnings",
+        "CPI",
+        "jobs",
+        "China",
+        "AI",
+        "tech",
+        "recession",
+        "selloff",
+        "rally",
+        "gap",
+        "breach",
+        "sanction",
+        "defense",
+        "spending",
+        "tariff",
+        "recalibration",
+        "open source",
+        "agent",
+        "rotation",
+    ]
+    found = [kw for kw in keywords if kw.lower() in text.lower()]
+    if found:
+        return f"  Key catalysts cited: {', '.join(found)}"
+    return "  No standard catalyst keywords detected"
+
+
+def _vibe_context(summary: dict) -> str:
+    """Capture the pre-market context visible to the LLM."""
+    forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
+    forecast = summary.get("decision", {}).get("forecast", {})
+    market_vibe = forecast.get("market_vibe", "")
+    lines: list[str] = []
+
+    if market_vibe:
+        lines.append(f"  Market vibe: {market_vibe[:300]}")
+
+    for f in forecast_list:
+        asset = f.get("asset", "?")
+        direction = f.get("direction", "?").upper()
+        move_pct = _format_move_pct(f)
+        rationale = f.get("rationale", "")
+        lines.append(f"  **{asset}**: predicted {direction} {move_pct}")
+        if rationale:
+            lines.append(f"    _{rationale[:250]}_")
+
+    return "\n".join(lines) if lines else "no context data"
+
+
 def build_lessons_md(
     *,
     target_date: date | None = None,
@@ -148,19 +304,27 @@ def build_lessons_md(
 ) -> str:
     dt = target_date or _today_pacific()
     header = f"## {dt.isoformat()} — Post-market analysis"
-
     parts = [header]
 
+    summary = summaries[0] if summaries else None
+
+    # --- Vibe context: what the LLM saw ---
+    if summary:
+        parts.append("")
+        parts.append("### Pre-market context (what the model saw)")
+        parts.append(_vibe_context(summary))
+        parts.append("")
+        parts.append("### Key catalysts")
+        parts.append(_catalyst_extract(summary))
+
     # --- Prediction accuracy ---
-    if summaries:
-        summary = summaries[0]
+    if summary:
         forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
         recommendation = summary.get("decision", {}).get("recommendation") or {}
         selected_label = summary.get("decision", {}).get("selected_label", "")
 
         parts.append("")
-        parts.append("### Prediction accuracy")
-
+        parts.append("### Prediction outcomes")
         for asset in ASSETS:
             f = _forecast_for_asset(forecast_list, asset)
             if not f:
@@ -174,33 +338,41 @@ def build_lessons_md(
             outcome = _legacy_outcome_label(f, ohlc)
             actual = _actual_move(ohlc)
 
-            outcome_label = ":white_check_mark: HIT" if outcome == "success" else ":x: MISS"
+            outcome_label = "HIT" if outcome == "success" else "MISS"
+            emoji = ":white_check_mark:" if outcome == "success" else ":x:"
             parts.append(
-                f"- {outcome_label} **{asset} {direction}** | {confidence:.0%} conf | predicted {move_pct} | actual {actual:+.2f}%"
+                f"- {emoji} **{asset} {direction}** | {confidence:.0%} conf | "
+                f"predicted {move_pct} | actual {_format_pct(actual)} ({outcome_label})"
             )
-            rationale = f.get("rationale", "")
-            if rationale:
-                parts.append(f"  _{rationale[:200]}_")
 
         if recommendation and recommendation.get("asset"):
             parts.append(
-                f"\n**Best trade**: {recommendation['asset']} {recommendation['direction']}, strategy={selected_label}"
+                f"\n**Best trade**: {recommendation['asset']} {recommendation['direction']}, "
+                f"strategy={selected_label}"
             )
 
-    # --- Trade execution results ---
+        # --- Strategy-level accuracy breakdown ---
+        parts.append("")
+        parts.append("### Strategy accuracy breakdown")
+        parts.append(_strategy_accuracy_summary(summary, market_data))
+
+        # --- Source effectiveness ---
+        parts.append("")
+        parts.append("### Source effectiveness (which signals helped)")
+        parts.append(_source_effectiveness(summary, market_data))
+
+    # --- Trade execution ---
     parts.append("")
     parts.append("### Trade execution")
-
     if audits:
         filled = [t for t in audits if _trade_filled(t)]
         orphaned = [t for t in filled if not _trade_closed(t)]
-
         parts.append(f"**{len(audits)}** orders submitted, **{len(filled)}** filled")
 
         if orphaned:
             parts.append(
-                f"**{len(orphaned)}** positions were not closed by the engine "
-                f"(engine exit error). These were closed manually or by safety-close."
+                f"**{len(orphaned)}** positions were not closed by the engine. "
+                f"Closed manually or by safety-close."
             )
 
         for tr in filled:
@@ -211,9 +383,9 @@ def build_lessons_md(
             reason = tr.get("exit_reason", "?")
             line = f"  {asset} {direction} @ ${fill_price:.2f}/contract"
             if pnl:
-                line += f" → {format_pnl(pnl)} ({reason})"
+                line += f" -> {format_pnl(pnl)} ({reason})"
             else:
-                line += f" → not closed by engine ({reason})"
+                line += f" -> not closed by engine ({reason})"
             parts.append(line)
 
         engine_pnl = sum(float(t.get("final_pnl", 0) or 0) for t in filled)
@@ -223,20 +395,17 @@ def build_lessons_md(
         parts.append("No trades executed today.")
 
     # --- System issues ---
-    issues: list[str] = []
-    error_trades = [t for t in audits if t.get("exit_reason") == "error" and _trade_filled(t)]
-    if error_trades:
-        issues.append(
-            f"Engine failed to close {len(error_trades)} filled positions (exit monitoring died with pipeline)"
-        )
+    if audits:
+        error_trades = [t for t in audits if t.get("exit_reason") == "error" and _trade_filled(t)]
+        if error_trades:
+            parts.append("")
+            parts.append("### System issues")
+            parts.append(
+                f"- Engine failed to close {len(error_trades)} filled positions "
+                f"(exit monitoring died with pipeline)"
+            )
 
-    if issues:
-        parts.append("")
-        parts.append("### System issues")
-        for issue in issues:
-            parts.append(f"- {issue}")
-
-    # --- Market context ---
+    # --- Daily market summary ---
     parts.append("")
     parts.append("### Daily market")
     for asset in ASSETS:
@@ -244,7 +413,8 @@ def build_lessons_md(
         if ohlc:
             pct = _actual_move(ohlc)
             parts.append(
-                f"  {asset}: O=${ohlc['o']:.2f} H=${ohlc['h']:.2f} L=${ohlc['l']:.2f} C=${ohlc['c']:.2f} ({pct:+.2f}%)"
+                f"  {asset}: O=${ohlc['o']:.2f} H=${ohlc['h']:.2f} L=${ohlc['l']:.2f} "
+                f"C=${ohlc['c']:.2f} ({_format_pct(pct)})"
             )
         else:
             parts.append(f"  {asset}: no data")

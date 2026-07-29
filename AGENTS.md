@@ -112,6 +112,19 @@ When atlas LLM layer fails, the briefing markdown contains `"Synthesis unavailab
 | MCP subprocess too slow for execution | `src/mcp/client.py` | Direct `alpaca-py` used instead; MCP kept for chain/quote queries |
 | `pytest_httpx` incompatible with `alpaca-py` | `tests/test_execution_client.py` | Mocks at SDK level with `MagicMock/AsyncMock` instead |
 
+## Live-Test Gotchas (2026-07-29)
+
+Discovered during paper-trading verification. Do NOT repeat.
+
+| Gotcha | Root Cause | Fix Location |
+|--------|-----------|-------------|
+| OCC symbol 422 "not found" | `occ_option_symbol()` used 8-digit date (`20260729`); Alpaca requires 6-digit (`260729`) | `src/mcp/schemas.py` — strips century if 8-char date part |
+| SDK returns `datetime`, not `str` | `alpaca-py` Order model has `datetime` fields; our `OrderResult` uses `str` — Pydantic crash | `src/execution/client.py:_order_to_result()` — `datetime.isoformat()` |
+| Two simultaneous sell orders rejected | Alpaca prohibits selling same contract twice; TP fill "held" the position | Engine places only TP at Alpaca; SL managed in-app |
+| Monitor loop hangs forever | No time-based exit in `_monitor_exits` when quotes unavailable | Time-deadline check at top of loop → force-close |
+| Finnhub 502 → no market data → no trade | Atlas snapshots can have Finnhub errors for all symbols | Yahoo Finance fallback in `src/ingestion/snapshot_loader.py` |
+| Paper chain truncates contracts | Default chain endpoint returns only calls (100 limit); puts exist separately | Always pass `type: put` filter when looking for puts |
+
 ## Key Architecture Notes
 
 - **Prediction engine + optional executor** — redesigned 2026-07-18, extended 2026-07-28 with execution module. Outputs per-asset directional forecasts. The `best_trade` field feeds the execution engine when `execute: true`.

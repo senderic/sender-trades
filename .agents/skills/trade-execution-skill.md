@@ -123,6 +123,22 @@ execution:
     max_wait_sec: 30
 ```
 
+## Common Mistakes (Do NOT repeat)
+
+These were discovered during 2026-07-29 paper-trading verification.
+
+1. **OCC symbol wrong date format**: `occ_option_symbol()` produces `SPY20260729C00750000` (8-digit year) but Alpaca requires `SPY260729C00750000` (6-digit). Already fixed — function strips century prefix.
+
+2. **Datetime serialization**: `alpaca-py` returns `datetime` objects for `created_at`/`updated_at`. Pydantic `OrderResult` expects `str`. Fixed — `_order_to_result()` converts with `.isoformat()`.
+
+3. **Cannot place two sell orders**: Alpaca rejects a second sell order for the same contract. Engine now places only the TP limit order at Alpaca. Stop-loss and trailing stops are managed in-app by the monitoring loop.
+
+4. **Monitor loop must have time guard**: `_monitor_exits` runs `while not is_terminal`. Without a time-deadline escape, it hangs forever if quotes are unavailable (paper accounts lack market data subscriptions). Fixed — deadline check at top of each iteration.
+
+5. **Paper chain missing puts**: Default `GET /v2/options/contracts` returns only calls. Always pass `type=put` filter to find put contracts. Individual contracts DO exist even when the unfiltered chain doesn't show them.
+
+6. **Finnhub snapshots unreliable**: Upstream snapshots can have 502 errors for every symbol. Pipeline now falls back to Yahoo Finance via `snapshot_loader._fetch_yahoo_quote()` for any symbol with errors.
+
 ## Guardrails
 - Never set `execute: true` unless explicitly asked by a human
 - Never trade live without first verifying paper fills

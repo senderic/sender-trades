@@ -1,0 +1,527 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Engine &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Models" href="models.html" />
+    <link rel="prev" title="Ingestion" href="ingestion.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="ingestion.html">Ingestion</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Engine</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-engine.base">Submodules</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#engine.base.TradingStrategy"><code class="docutils literal notranslate"><span class="pre">TradingStrategy</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#engine.base.TradingStrategy.evaluate"><code class="docutils literal notranslate"><span class="pre">TradingStrategy.evaluate()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.decision.DecisionAggregator"><code class="docutils literal notranslate"><span class="pre">DecisionAggregator</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#engine.decision.DecisionAggregator.__init__"><code class="docutils literal notranslate"><span class="pre">DecisionAggregator.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#engine.decision.DecisionAggregator.aggregate"><code class="docutils literal notranslate"><span class="pre">DecisionAggregator.aggregate()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.options_strategy.compute_otm_strike"><code class="docutils literal notranslate"><span class="pre">compute_otm_strike()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.options_strategy.compute_premium_bounds"><code class="docutils literal notranslate"><span class="pre">compute_premium_bounds()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.options_strategy.estimate_delta"><code class="docutils literal notranslate"><span class="pre">estimate_delta()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.risk.RiskEngine"><code class="docutils literal notranslate"><span class="pre">RiskEngine</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#engine.risk.RiskEngine.__init__"><code class="docutils literal notranslate"><span class="pre">RiskEngine.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#engine.risk.RiskEngine.check_consensus"><code class="docutils literal notranslate"><span class="pre">RiskEngine.check_consensus()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#engine.risk.RiskEngine.validate"><code class="docutils literal notranslate"><span class="pre">RiskEngine.validate()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.risk.RiskError"><code class="docutils literal notranslate"><span class="pre">RiskError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.strategy_a.MomentumStrategy"><code class="docutils literal notranslate"><span class="pre">MomentumStrategy</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#engine.strategy_a.MomentumStrategy.__init__"><code class="docutils literal notranslate"><span class="pre">MomentumStrategy.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#engine.strategy_a.MomentumStrategy.evaluate"><code class="docutils literal notranslate"><span class="pre">MomentumStrategy.evaluate()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.strategy_b.MeanReversionStrategy"><code class="docutils literal notranslate"><span class="pre">MeanReversionStrategy</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#engine.strategy_b.MeanReversionStrategy.__init__"><code class="docutils literal notranslate"><span class="pre">MeanReversionStrategy.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#engine.strategy_b.MeanReversionStrategy.evaluate"><code class="docutils literal notranslate"><span class="pre">MeanReversionStrategy.evaluate()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#engine.strategy_c.EventDrivenStrategy"><code class="docutils literal notranslate"><span class="pre">EventDrivenStrategy</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#engine.strategy_c.EventDrivenStrategy.__init__"><code class="docutils literal notranslate"><span class="pre">EventDrivenStrategy.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#engine.strategy_c.EventDrivenStrategy.evaluate"><code class="docutils literal notranslate"><span class="pre">EventDrivenStrategy.evaluate()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="models.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mcp.html">MCP</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Engine</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/engine.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-engine">
+<span id="engine"></span><h1>Engine<a class="headerlink" href="#module-engine" title="Link to this heading"></a></h1>
+<section id="module-engine.base">
+<span id="submodules"></span><h2>Submodules<a class="headerlink" href="#module-engine.base" title="Link to this heading"></a></h2>
+<p>Abstract base class and shared types for trading strategies.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="engine.base.TradingStrategy">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">engine.base.</span></span><span class="sig-name descname"><span class="pre">TradingStrategy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">label</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/base.html#TradingStrategy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.base.TradingStrategy" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">ABC</span></code></p>
+<p>Abstract base class for all trading strategies.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>label</strong> (<em>str</em>)</p></li>
+<li><p><strong>config</strong> (<em>Settings</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.base.TradingStrategy.evaluate">
+<span class="property"><span class="k"><span class="pre">abstractmethod</span></span><span class="w"> </span><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">evaluate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">briefing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">market</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/base.html#TradingStrategy.evaluate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.base.TradingStrategy.evaluate" title="Link to this definition"></a></dt>
+<dd><p>Evaluate the strategy against current briefing and market data.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>briefing</strong> (<a class="reference internal" href="models.html#models.BriefingData" title="src.models.briefing.BriefingData"><em>BriefingData</em></a>) – Parsed morning briefing data.</p></li>
+<li><p><strong>market</strong> (<a class="reference internal" href="models.html#models.MarketSnapshot" title="src.models.market.MarketSnapshot"><em>MarketSnapshot</em></a>) – Current market snapshot including quotes and news.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A StrategyResult with an optional trade recommendation.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.StrategyResult" title="src.models.recommendation.StrategyResult"><em>StrategyResult</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<p id="module-engine.decision">Strategy result aggregation and final trade decision logic.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="engine.decision.DecisionAggregator">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">engine.decision.</span></span><span class="sig-name descname"><span class="pre">DecisionAggregator</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/decision.html#DecisionAggregator"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.decision.DecisionAggregator" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Aggregates results from multiple strategies and selects the best trade recommendation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.decision.DecisionAggregator.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/decision.html#DecisionAggregator.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.decision.DecisionAggregator.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize DecisionAggregator with application settings.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>) – Application settings.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.decision.DecisionAggregator.aggregate">
+<span class="sig-name descname"><span class="pre">aggregate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">results</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/decision.html#DecisionAggregator.aggregate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.decision.DecisionAggregator.aggregate" title="Link to this definition"></a></dt>
+<dd><p>Aggregate strategy results, select the best, and optionally merge top candidates.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>results</strong> (<em>list</em><em>[</em><a class="reference internal" href="models.html#models.StrategyResult" title="src.models.recommendation.StrategyResult"><em>StrategyResult</em></a><em>]</em>) – List of StrategyResult from all enabled strategies.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>DecisionOutput with the selected recommendation and rationale.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.DecisionOutput" title="src.models.recommendation.DecisionOutput"><em>DecisionOutput</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<p id="module-engine.options_strategy">Options pricing and strategy evaluation utilities.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="engine.options_strategy.compute_otm_strike">
+<span class="sig-prename descclassname"><span class="pre">engine.options_strategy.</span></span><span class="sig-name descname"><span class="pre">compute_otm_strike</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">underlying_price</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">direction</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">delta_target</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/options_strategy.html#compute_otm_strike"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.options_strategy.compute_otm_strike" title="Link to this definition"></a></dt>
+<dd><p>Compute an out-of-the-money strike price for a given delta target.</p>
+<p>For 0DTE options, delta changes rapidly with small moneyness moves.
+This approximates the OTM distance as roughly 2 % per 1.0 delta
+(e.g. 30-delta → ~0.6 % OTM), which produces strikes that actually
+exist in the chain.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>underlying_price</strong> (<em>float</em>) – Current price of the underlying asset.</p></li>
+<li><p><strong>direction</strong> (<a class="reference internal" href="models.html#models.Direction" title="src.models.recommendation.Direction"><em>Direction</em></a>) – CALL or PUT direction.</p></li>
+<li><p><strong>delta_target</strong> (<em>float</em>) – Target delta for the option (default 0.30).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The computed OTM strike price rounded to the nearest $1.00 increment.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="engine.options_strategy.compute_premium_bounds">
+<span class="sig-prename descclassname"><span class="pre">engine.options_strategy.</span></span><span class="sig-name descname"><span class="pre">compute_premium_bounds</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">underlying_price</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strike</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">direction</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">iv</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/options_strategy.html#compute_premium_bounds"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.options_strategy.compute_premium_bounds" title="Link to this definition"></a></dt>
+<dd><p>Compute estimated bid/ask bounds for an option premium.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>underlying_price</strong> (<em>float</em>) – Current price of the underlying.</p></li>
+<li><p><strong>strike</strong> (<em>float</em>) – Strike price of the option.</p></li>
+<li><p><strong>direction</strong> (<a class="reference internal" href="models.html#models.Direction" title="src.models.recommendation.Direction"><em>Direction</em></a>) – CALL or PUT direction.</p></li>
+<li><p><strong>iv</strong> (<em>float</em>) – Implied volatility (default 0.20).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Tuple of (low_estimate, high_estimate) premium.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple[float, float]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="engine.options_strategy.estimate_delta">
+<span class="sig-prename descclassname"><span class="pre">engine.options_strategy.</span></span><span class="sig-name descname"><span class="pre">estimate_delta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">underlying_price</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strike</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">days_to_expiry</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">iv</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">direction</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">Direction.CALL</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/options_strategy.html#estimate_delta"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.options_strategy.estimate_delta" title="Link to this definition"></a></dt>
+<dd><p>Estimate the Black-Scholes delta of an option using a normal approximation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>underlying_price</strong> (<em>float</em>) – Current price of the underlying.</p></li>
+<li><p><strong>strike</strong> (<em>float</em>) – Strike price of the option.</p></li>
+<li><p><strong>days_to_expiry</strong> (<em>int</em>) – Days until option expiration.</p></li>
+<li><p><strong>iv</strong> (<em>float</em>) – Implied volatility (default 0.20).</p></li>
+<li><p><strong>direction</strong> (<a class="reference internal" href="models.html#models.Direction" title="src.models.recommendation.Direction"><em>Direction</em></a>) – CALL or PUT direction.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Estimated delta between -1.0 and 1.0.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p id="module-engine.risk">Risk validation engine for trade recommendations.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="engine.risk.RiskEngine">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">engine.risk.</span></span><span class="sig-name descname"><span class="pre">RiskEngine</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/risk.html#RiskEngine"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.risk.RiskEngine" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Validates trade recommendations against configured risk guardrails.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.risk.RiskEngine.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/risk.html#RiskEngine.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.risk.RiskEngine.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize RiskEngine with application settings.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>) – Application settings.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.risk.RiskEngine.check_consensus">
+<span class="property"><span class="k"><span class="pre">static</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">check_consensus</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">briefing_direction</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">market_news_polarity</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_sources</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/risk.html#RiskEngine.check_consensus"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.risk.RiskEngine.check_consensus" title="Link to this definition"></a></dt>
+<dd><p>Check whether multiple data sources agree on market direction.</p>
+<p><code class="docutils literal notranslate"><span class="pre">None</span></code> values are treated as “this source is unavailable” —
+e.g. a degraded Atlas briefing yields <code class="docutils literal notranslate"><span class="pre">None</span></code> for
+<code class="docutils literal notranslate"><span class="pre">macro_sentiment</span></code> and must not count toward consensus.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>briefing_direction</strong> (<em>float</em><em> | </em><em>None</em>) – Sentiment polarity from the briefing,
+or <code class="docutils literal notranslate"><span class="pre">None</span></code> when briefing quality is not FULL.</p></li>
+<li><p><strong>market_news_polarity</strong> (<em>float</em><em> | </em><em>None</em>) – Average polarity from market news, or
+<code class="docutils literal notranslate"><span class="pre">None</span></code> when no news was fetched.</p></li>
+<li><p><strong>min_sources</strong> (<em>int</em>) – Minimum number of sources with non-trivial signal.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Tuple of (consensus_reached, average_direction).</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple[bool, float]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.risk.RiskEngine.validate">
+<span class="sig-name descname"><span class="pre">validate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">market</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">_now</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/risk.html#RiskEngine.validate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.risk.RiskEngine.validate" title="Link to this definition"></a></dt>
+<dd><p>Run all risk checks against a trade recommendation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rec</strong> (<a class="reference internal" href="models.html#models.TradeRecommendation" title="src.models.recommendation.TradeRecommendation"><em>TradeRecommendation</em></a>) – The trade recommendation to validate.</p></li>
+<li><p><strong>market</strong> (<a class="reference internal" href="models.html#models.MarketSnapshot" title="src.models.market.MarketSnapshot"><em>MarketSnapshot</em></a>) – Current market snapshot for sanity checks.</p></li>
+<li><p><strong>_now</strong> (<em>datetime</em><em> | </em><em>None</em>) – Override current time (used in tests). Defaults to now.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The validated (possibly modified) recommendation.</p>
+</dd>
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#engine.risk.RiskError" title="engine.risk.RiskError"><strong>RiskError</strong></a> – If any guardrail is breached.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="models.html#models.TradeRecommendation" title="src.models.recommendation.TradeRecommendation"><em>TradeRecommendation</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="engine.risk.RiskError">
+<span class="property"><span class="k"><span class="pre">exception</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">engine.risk.</span></span><span class="sig-name descname"><span class="pre">RiskError</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">message</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">guardrail</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/risk.html#RiskError"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.risk.RiskError" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Raised when a trade fails a risk guardrail check.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>message</strong> (<em>str</em>)</p></li>
+<li><p><strong>guardrail</strong> (<em>str</em>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<p id="module-engine.strategy_a">Momentum-based trading strategy implementation.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="engine.strategy_a.MomentumStrategy">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">engine.strategy_a.</span></span><span class="sig-name descname"><span class="pre">MomentumStrategy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_a.html#MomentumStrategy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_a.MomentumStrategy" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">TradingStrategy</span></code></p>
+<p>Momentum trading strategy — enters trades on gap moves with sentiment confirmation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.strategy_a.MomentumStrategy.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_a.html#MomentumStrategy.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_a.MomentumStrategy.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize MomentumStrategy with application settings.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>) – Application settings.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.strategy_a.MomentumStrategy.evaluate">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">evaluate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">briefing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">market</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_a.html#MomentumStrategy.evaluate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_a.MomentumStrategy.evaluate" title="Link to this definition"></a></dt>
+<dd><p>Evaluate momentum signals for each target asset.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>briefing</strong> (<a class="reference internal" href="models.html#models.BriefingData" title="src.models.briefing.BriefingData"><em>BriefingData</em></a>) – Parsed morning briefing data.</p></li>
+<li><p><strong>market</strong> (<a class="reference internal" href="models.html#models.MarketSnapshot" title="src.models.market.MarketSnapshot"><em>MarketSnapshot</em></a>) – Current market snapshot.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>StrategyResult containing an optional trade recommendation.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.StrategyResult" title="src.models.recommendation.StrategyResult"><em>StrategyResult</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<p id="module-engine.strategy_b">Mean-reversion trading strategy implementation.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="engine.strategy_b.MeanReversionStrategy">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">engine.strategy_b.</span></span><span class="sig-name descname"><span class="pre">MeanReversionStrategy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_b.html#MeanReversionStrategy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_b.MeanReversionStrategy" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">TradingStrategy</span></code></p>
+<p>Mean-reversion trading strategy — trades against extreme RSI moves with sentiment filtering.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.strategy_b.MeanReversionStrategy.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_b.html#MeanReversionStrategy.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_b.MeanReversionStrategy.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize MeanReversionStrategy with application settings.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>) – Application settings.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.strategy_b.MeanReversionStrategy.evaluate">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">evaluate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">briefing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">market</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_b.html#MeanReversionStrategy.evaluate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_b.MeanReversionStrategy.evaluate" title="Link to this definition"></a></dt>
+<dd><p>Evaluate mean-reversion signals for each target asset.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>briefing</strong> (<a class="reference internal" href="models.html#models.BriefingData" title="src.models.briefing.BriefingData"><em>BriefingData</em></a>) – Parsed morning briefing data.</p></li>
+<li><p><strong>market</strong> (<a class="reference internal" href="models.html#models.MarketSnapshot" title="src.models.market.MarketSnapshot"><em>MarketSnapshot</em></a>) – Current market snapshot.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>StrategyResult containing an optional trade recommendation.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.StrategyResult" title="src.models.recommendation.StrategyResult"><em>StrategyResult</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<p id="module-engine.strategy_c">Event-driven trading strategy implementation.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="engine.strategy_c.EventDrivenStrategy">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">engine.strategy_c.</span></span><span class="sig-name descname"><span class="pre">EventDrivenStrategy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_c.html#EventDrivenStrategy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_c.EventDrivenStrategy" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">TradingStrategy</span></code></p>
+<p>Event-driven trading strategy — detects catalysts from briefing/news and trades on pre-market reaction.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.strategy_c.EventDrivenStrategy.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_c.html#EventDrivenStrategy.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_c.EventDrivenStrategy.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize EventDrivenStrategy with application settings.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>) – Application settings.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="engine.strategy_c.EventDrivenStrategy.evaluate">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">evaluate</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">briefing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">market</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/engine/strategy_c.html#EventDrivenStrategy.evaluate"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#engine.strategy_c.EventDrivenStrategy.evaluate" title="Link to this definition"></a></dt>
+<dd><p>Evaluate event-driven signals by detecting catalysts and pre-market moves.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>briefing</strong> (<a class="reference internal" href="models.html#models.BriefingData" title="src.models.briefing.BriefingData"><em>BriefingData</em></a>) – Parsed morning briefing data.</p></li>
+<li><p><strong>market</strong> (<a class="reference internal" href="models.html#models.MarketSnapshot" title="src.models.market.MarketSnapshot"><em>MarketSnapshot</em></a>) – Current market snapshot.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>StrategyResult containing an optional trade recommendation.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.StrategyResult" title="src.models.recommendation.StrategyResult"><em>StrategyResult</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="ingestion.html" class="btn btn-neutral float-left" title="Ingestion" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="models.html" class="btn btn-neutral float-right" title="Models" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

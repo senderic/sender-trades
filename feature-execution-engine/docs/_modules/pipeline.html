@@ -1,0 +1,766 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pipeline &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../engine.html">Engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../models.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../mcp.html">MCP</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="index.html">Module code</a></li>
+      <li class="breadcrumb-item active">pipeline</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for pipeline</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Orchestrates the end-to-end trading pipeline: ingest, analyse, decide, execute.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Literal</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">structlog</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">Settings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.engine.decision</span><span class="w"> </span><span class="kn">import</span> <span class="n">DecisionAggregator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.engine.risk</span><span class="w"> </span><span class="kn">import</span> <span class="n">RiskEngine</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.engine.strategy_a</span><span class="w"> </span><span class="kn">import</span> <span class="n">MomentumStrategy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.engine.strategy_b</span><span class="w"> </span><span class="kn">import</span> <span class="n">MeanReversionStrategy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.engine.strategy_c</span><span class="w"> </span><span class="kn">import</span> <span class="n">EventDrivenStrategy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.execution.client</span><span class="w"> </span><span class="kn">import</span> <span class="n">AlpacaBrokerClient</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.execution.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionEngine</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.execution.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">ExecutionConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.ingestion.candle_providers</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_candle_chain</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.ingestion.fetcher</span><span class="w"> </span><span class="kn">import</span> <span class="n">fetch_market_data</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.ingestion.parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">find_todays_briefing</span><span class="p">,</span> <span class="n">read_briefing</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.ingestion.snapshot_loader</span><span class="w"> </span><span class="kn">import</span> <span class="n">SnapshotLoader</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.ingestion.status</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_briefing_status</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.llm.client</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpencodeLLMClient</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.llm.resynthesizer</span><span class="w"> </span><span class="kn">import</span> <span class="n">resynthesize_briefing</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.llm.trade_signal</span><span class="w"> </span><span class="kn">import</span> <span class="n">LLMTradeStrategy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.logging_setup</span><span class="w"> </span><span class="kn">import</span> <span class="n">JSONFileLogger</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.briefing</span><span class="w"> </span><span class="kn">import</span> <span class="n">BriefingData</span><span class="p">,</span> <span class="n">BriefingQuality</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.market</span><span class="w"> </span><span class="kn">import</span> <span class="n">MarketSnapshot</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.recommendation</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">AssetForecast</span><span class="p">,</span>
+    <span class="n">DecisionOutput</span><span class="p">,</span>
+    <span class="n">Direction</span><span class="p">,</span>
+    <span class="n">DirectionalForecast</span><span class="p">,</span>
+    <span class="n">PredictionOutcome</span><span class="p">,</span>
+    <span class="n">StrategyResult</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.prediction_tracker</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">append_outcomes</span><span class="p">,</span>
+    <span class="n">check_outcome</span><span class="p">,</span>
+    <span class="n">find_previous_business_day</span><span class="p">,</span>
+    <span class="n">read_previous_forecasts</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.timezone</span><span class="w"> </span><span class="kn">import</span> <span class="n">now_local</span><span class="p">,</span> <span class="n">today_local</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">structlog</span><span class="o">.</span><span class="n">get_logger</span><span class="p">()</span>
+
+
+<div class="viewcode-block" id="PipelineResult">
+<a class="viewcode-back" href="../api.html#pipeline.PipelineResult">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">PipelineResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Container for the full pipeline execution result.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="PipelineResult.__init__">
+<a class="viewcode-back" href="../api.html#pipeline.PipelineResult.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize an empty pipeline result container.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">correlation_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">briefing</span><span class="p">:</span> <span class="n">BriefingData</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">market</span><span class="p">:</span> <span class="n">MarketSnapshot</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">strategy_results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrategyResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">decision</span><span class="p">:</span> <span class="n">DecisionOutput</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">execution_result</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">errors</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start_time</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">=</span> <span class="n">now_local</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">end_time</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">yesterday_outcomes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">PredictionOutcome</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model_usage_html</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">model_usage_text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">duration_seconds</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Total wall-clock duration of the pipeline run in seconds.&quot;&quot;&quot;</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">end_time</span> <span class="ow">or</span> <span class="n">now_local</span><span class="p">()</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_time</span><span class="p">)</span><span class="o">.</span><span class="n">total_seconds</span><span class="p">()</span>
+
+<div class="viewcode-block" id="PipelineResult.to_summary">
+<a class="viewcode-back" href="../api.html#pipeline.PipelineResult.to_summary">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_summary</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Summarise the pipeline result as a serialisable dictionary.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Dict with correlation_id, timings, error count, and decision data.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;correlation_id&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">correlation_id</span><span class="p">,</span>
+            <span class="s2">&quot;duration_seconds&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">duration_seconds</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+            <span class="s2">&quot;start_time&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_time</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+            <span class="s2">&quot;end_time&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">end_time</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">end_time</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;error_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">errors</span><span class="p">),</span>
+            <span class="s2">&quot;errors&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">errors</span><span class="p">[:</span><span class="mi">5</span><span class="p">],</span>
+            <span class="s2">&quot;briefing_found&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">briefing</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="s2">&quot;market_data_symbols&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">market</span> <span class="k">else</span> <span class="p">[],</span>
+            <span class="s2">&quot;strategies_evaluated&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">r</span><span class="o">.</span><span class="n">label</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">strategy_results</span><span class="p">],</span>
+            <span class="s2">&quot;decision&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">decision</span><span class="o">.</span><span class="n">model_dump</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">decision</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="s2">&quot;execution&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">execution_result</span><span class="p">,</span>
+            <span class="s2">&quot;model_usage&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;calls&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                <span class="s2">&quot;failures&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">model_usage_html</span>
+            <span class="k">else</span> <span class="p">{},</span>
+        <span class="p">}</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="Pipeline">
+<a class="viewcode-back" href="../api.html#pipeline.Pipeline">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Pipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Orchestrates the full trading pipeline: ingest, analyse, decide, execute.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="Pipeline.__init__">
+<a class="viewcode-back" href="../api.html#pipeline.Pipeline.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Settings</span><span class="p">,</span> <span class="n">correlation_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">file_logger</span><span class="p">:</span> <span class="n">JSONFileLogger</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize Pipeline with configuration and logging.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            config: Application settings.</span>
+<span class="sd">            correlation_id: Unique identifier for this pipeline run.</span>
+<span class="sd">            file_logger: JSON file logger instance.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">correlation_id</span> <span class="o">=</span> <span class="n">correlation_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span> <span class="o">=</span> <span class="n">file_logger</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">result</span> <span class="o">=</span> <span class="n">PipelineResult</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">correlation_id</span> <span class="o">=</span> <span class="n">correlation_id</span></div>
+
+
+<div class="viewcode-block" id="Pipeline.run">
+<a class="viewcode-back" href="../api.html#pipeline.Pipeline.run">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">PipelineResult</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Execute the full pipeline: ingest, analyse, decide, and execute.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A PipelineResult with all phase outputs.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;pipeline_start&quot;</span><span class="p">,</span> <span class="n">correlation_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">correlation_id</span><span class="p">)</span>
+
+        <span class="n">llm_client</span> <span class="o">=</span> <span class="n">OpencodeLLMClient</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">llm</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">enabled</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="n">briefing</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_phase_ingest_briefing</span><span class="p">(</span><span class="n">llm_client</span><span class="o">=</span><span class="n">llm_client</span><span class="p">)</span>
+        <span class="n">market</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_phase_ingest_market</span><span class="p">()</span>
+        <span class="n">strategy_results</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_phase_analyze</span><span class="p">(</span><span class="n">briefing</span><span class="p">,</span> <span class="n">market</span><span class="p">,</span> <span class="n">llm_client</span><span class="o">=</span><span class="n">llm_client</span><span class="p">)</span>
+        <span class="n">decision</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_phase_decide</span><span class="p">(</span><span class="n">strategy_results</span><span class="p">)</span>
+        <span class="n">decision</span><span class="o">.</span><span class="n">forecast</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_compute_forecast</span><span class="p">(</span><span class="n">strategy_results</span><span class="p">,</span> <span class="n">decision</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">llm_client</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">model_usage_html</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">get_usage_summary_html</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">model_usage_text</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">get_usage_summary_text</span><span class="p">()</span>
+
+        <span class="n">execution</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">execution</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_phase_execute</span><span class="p">(</span><span class="n">decision</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;pipeline_no_trade&quot;</span><span class="p">,</span> <span class="n">rationale</span><span class="o">=</span><span class="n">decision</span><span class="o">.</span><span class="n">rationale</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">decision</span> <span class="o">=</span> <span class="n">decision</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">execution_result</span> <span class="o">=</span> <span class="n">execution</span>
+
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_yesterday_prediction</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">end_time</span> <span class="o">=</span> <span class="n">now_local</span><span class="p">()</span>
+
+        <span class="n">summary</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">to_summary</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span><span class="o">.</span><span class="n">write_summary</span><span class="p">(</span><span class="n">summary</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+            <span class="s2">&quot;pipeline_complete&quot;</span><span class="p">,</span>
+            <span class="n">duration_seconds</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">duration_seconds</span><span class="p">,</span>
+            <span class="n">trade_selected</span><span class="o">=</span><span class="n">decision</span><span class="o">.</span><span class="n">selected_label</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span></div>
+
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_phase_ingest_briefing</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">llm_client</span><span class="p">:</span> <span class="n">OpencodeLLMClient</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BriefingData</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Phase 1: Find and parse today&#39;s morning briefing.</span>
+
+<span class="sd">        Also reads the upstream ``status.json`` to fold</span>
+<span class="sd">        ``intelligence_enabled`` into :attr:`BriefingData.briefing_quality`,</span>
+<span class="sd">        and locally re-synthesises the executive summary via an LLM</span>
+<span class="sd">        when the briefing comes back degraded (upstream LLM layer</span>
+<span class="sd">        failed). See ``LESSONS_LEARNED.md`` (2026-07-18 incident).</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Parsed BriefingData, or None if no briefing is found.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">briefing_path</span> <span class="o">=</span> <span class="n">find_todays_briefing</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">atlas_briefing</span><span class="o">.</span><span class="n">directory</span><span class="p">,</span>
+                <span class="n">briefings_subdir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">atlas_briefing</span><span class="o">.</span><span class="n">briefings_subdir</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="n">briefing_path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">&quot;briefing_not_found&quot;</span><span class="p">,</span>
+                    <span class="n">directory</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">atlas_briefing</span><span class="o">.</span><span class="n">directory</span><span class="p">,</span>
+                    <span class="n">briefings_subdir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">atlas_briefing</span><span class="o">.</span><span class="n">briefings_subdir</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">return</span> <span class="kc">None</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;briefing_found&quot;</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">briefing_path</span><span class="p">))</span>
+            <span class="n">briefing</span> <span class="o">=</span> <span class="n">read_briefing</span><span class="p">(</span><span class="n">briefing_path</span><span class="p">)</span>
+
+            <span class="n">status</span> <span class="o">=</span> <span class="n">read_briefing_status</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">atlas_briefing</span><span class="o">.</span><span class="n">directory</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">status</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">status</span><span class="o">.</span><span class="n">intelligence_enabled</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="s2">&quot;upstream_intelligence_disabled&quot;</span><span class="p">,</span>
+                    <span class="n">timestamp</span><span class="o">=</span><span class="n">status</span><span class="o">.</span><span class="n">timestamp</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">briefing</span><span class="o">.</span><span class="n">briefing_quality</span> <span class="o">=</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">DEGRADED</span>
+
+            <span class="n">pre_resynth_quality</span> <span class="o">=</span> <span class="n">briefing</span><span class="o">.</span><span class="n">briefing_quality</span>
+            <span class="n">resynth_attempted</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="n">resynth_served_by</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="n">resynth_fallback_hit</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="n">resynth_paid_used</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="n">resynth_error</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+            <span class="k">if</span> <span class="n">briefing</span><span class="o">.</span><span class="n">briefing_quality</span> <span class="o">!=</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">FULL</span> <span class="ow">and</span> <span class="n">llm_client</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">resynth_attempted</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">briefing</span> <span class="o">=</span> <span class="n">resynthesize_briefing</span><span class="p">(</span><span class="n">briefing</span><span class="p">,</span> <span class="n">llm_client</span><span class="p">)</span>
+                <span class="n">resynth_served_by</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">last_served_by</span>
+                <span class="n">resynth_fallback_hit</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">last_fallback_hit</span>
+                <span class="n">resynth_paid_used</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">paid_used</span>
+                <span class="n">resynth_error</span> <span class="o">=</span> <span class="n">llm_client</span><span class="o">.</span><span class="n">last_error</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">briefing</span> <span class="o">=</span> <span class="n">briefing</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span><span class="o">.</span><span class="n">write_entry</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="s2">&quot;phase&quot;</span><span class="p">:</span> <span class="s2">&quot;ingest_briefing&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;success&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">briefing_path</span><span class="p">),</span>
+                    <span class="s2">&quot;ticker_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">briefing</span><span class="o">.</span><span class="n">tickers</span><span class="p">),</span>
+                    <span class="s2">&quot;news_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">briefing</span><span class="o">.</span><span class="n">news_items</span><span class="p">),</span>
+                    <span class="s2">&quot;blog_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">briefing</span><span class="o">.</span><span class="n">blog_items</span><span class="p">),</span>
+                    <span class="s2">&quot;briefing_quality&quot;</span><span class="p">:</span> <span class="n">briefing</span><span class="o">.</span><span class="n">briefing_quality</span><span class="o">.</span><span class="n">value</span><span class="p">,</span>
+                    <span class="s2">&quot;upstream_intelligence_enabled&quot;</span><span class="p">:</span> <span class="p">(</span>
+                        <span class="n">status</span><span class="o">.</span><span class="n">intelligence_enabled</span> <span class="k">if</span> <span class="n">status</span> <span class="k">else</span> <span class="kc">None</span>
+                    <span class="p">),</span>
+                    <span class="s2">&quot;macro_sentiment&quot;</span><span class="p">:</span> <span class="n">briefing</span><span class="o">.</span><span class="n">macro_sentiment</span><span class="p">,</span>
+                    <span class="s2">&quot;resynth_attempted&quot;</span><span class="p">:</span> <span class="n">resynth_attempted</span><span class="p">,</span>
+                    <span class="s2">&quot;resynth_served_by&quot;</span><span class="p">:</span> <span class="n">resynth_served_by</span><span class="p">,</span>
+                    <span class="s2">&quot;resynth_fallback_hit&quot;</span><span class="p">:</span> <span class="n">resynth_fallback_hit</span><span class="p">,</span>
+                    <span class="s2">&quot;resynth_paid_used&quot;</span><span class="p">:</span> <span class="n">resynth_paid_used</span><span class="p">,</span>
+                    <span class="s2">&quot;resynth_error&quot;</span><span class="p">:</span> <span class="n">resynth_error</span><span class="p">,</span>
+                    <span class="s2">&quot;pre_resynth_quality&quot;</span><span class="p">:</span> <span class="n">pre_resynth_quality</span><span class="o">.</span><span class="n">value</span><span class="p">,</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">briefing</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Briefing ingestion failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;briefing_ingest_error&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_phase_ingest_market</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">MarketSnapshot</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Phase 2: Ingest market data from snapshots or live API.</span>
+
+<span class="sd">        Tries to load from atlas-morning-briefing snapshots first.</span>
+<span class="sd">        Falls back to live API calls (Finnhub, Brave, RSS, Reddit, UW)</span>
+<span class="sd">        when snapshot data is missing or incomplete.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            MarketSnapshot with quotes, news, and RSS data.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># --- Try snapshot first ---</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">atlas_briefing</span><span class="o">.</span><span class="n">snapshot_enabled</span><span class="p">:</span>
+                <span class="n">loader</span> <span class="o">=</span> <span class="n">SnapshotLoader</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">atlas_briefing</span><span class="o">.</span><span class="n">directory</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">loader</span><span class="o">.</span><span class="n">is_complete</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">target_assets</span><span class="p">):</span>
+                    <span class="n">market</span> <span class="o">=</span> <span class="n">loader</span><span class="o">.</span><span class="n">load</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">market</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                            <span class="s2">&quot;market_data_from_snapshots&quot;</span><span class="p">,</span>
+                            <span class="n">quotes</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span><span class="o">.</span><span class="n">keys</span><span class="p">()),</span>
+                            <span class="n">news_count</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">market</span><span class="o">.</span><span class="n">news</span><span class="p">),</span>
+                        <span class="p">)</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span> <span class="o">=</span> <span class="n">market</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span><span class="o">.</span><span class="n">write_entry</span><span class="p">(</span>
+                            <span class="p">{</span>
+                                <span class="s2">&quot;phase&quot;</span><span class="p">:</span> <span class="s2">&quot;ingest_market&quot;</span><span class="p">,</span>
+                                <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="s2">&quot;snapshot&quot;</span><span class="p">,</span>
+                                <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;success&quot;</span><span class="p">,</span>
+                                <span class="s2">&quot;quotes&quot;</span><span class="p">:</span> <span class="p">{</span><span class="n">s</span><span class="p">:</span> <span class="n">q</span><span class="o">.</span><span class="n">current_price</span> <span class="k">for</span> <span class="n">s</span><span class="p">,</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">market</span><span class="o">.</span><span class="n">quotes</span><span class="o">.</span><span class="n">items</span><span class="p">()},</span>
+                                <span class="s2">&quot;news_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">market</span><span class="o">.</span><span class="n">news</span><span class="p">),</span>
+                                <span class="s2">&quot;rss_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">market</span><span class="o">.</span><span class="n">rss_items</span><span class="p">),</span>
+                                <span class="s2">&quot;avg_news_polarity&quot;</span><span class="p">:</span> <span class="n">market</span><span class="o">.</span><span class="n">avg_sentiment_polarity</span><span class="p">(),</span>
+                            <span class="p">}</span>
+                        <span class="p">)</span>
+                        <span class="k">return</span> <span class="n">market</span>
+                <span class="k">elif</span> <span class="n">loader</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                        <span class="s2">&quot;snapshot_incomplete&quot;</span><span class="p">,</span>
+                        <span class="n">target_assets</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">target_assets</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+            <span class="c1"># --- Fall back to live API ---</span>
+            <span class="n">market</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_market_data</span><span class="p">(</span>
+                <span class="n">symbols</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">target_assets</span><span class="p">,</span>
+                <span class="n">finnhub_key</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">finnhub</span><span class="o">.</span><span class="n">api_key</span><span class="p">,</span>
+                <span class="n">brave_key</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">brave</span><span class="o">.</span><span class="n">api_key</span><span class="p">,</span>
+                <span class="n">brave_query</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">brave</span><span class="o">.</span><span class="n">news_query</span><span class="p">,</span>
+                <span class="n">rss_urls</span><span class="o">=</span><span class="p">[</span><span class="n">f</span><span class="o">.</span><span class="n">url</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">rss_feeds</span><span class="p">],</span>
+                <span class="n">reddit_subreddits</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">reddit</span><span class="o">.</span><span class="n">subreddits</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">reddit</span><span class="o">.</span><span class="n">enabled</span>
+                <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">reddit_post_limit</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">reddit</span><span class="o">.</span><span class="n">post_limit</span><span class="p">,</span>
+                <span class="n">unusual_whales_key</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">unusual_whales</span><span class="o">.</span><span class="n">api_key</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">unusual_whales</span><span class="o">.</span><span class="n">enabled</span>
+                <span class="k">else</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+                <span class="n">timeout</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">finnhub</span><span class="o">.</span><span class="n">request_timeout_sec</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span> <span class="o">=</span> <span class="n">market</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span><span class="o">.</span><span class="n">write_entry</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="s2">&quot;phase&quot;</span><span class="p">:</span> <span class="s2">&quot;ingest_market&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="s2">&quot;live_api&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;success&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;quotes&quot;</span><span class="p">:</span> <span class="p">{</span><span class="n">s</span><span class="p">:</span> <span class="n">q</span><span class="o">.</span><span class="n">current_price</span> <span class="k">for</span> <span class="n">s</span><span class="p">,</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">market</span><span class="o">.</span><span class="n">quotes</span><span class="o">.</span><span class="n">items</span><span class="p">()},</span>
+                    <span class="s2">&quot;news_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">market</span><span class="o">.</span><span class="n">news</span><span class="p">),</span>
+                    <span class="s2">&quot;rss_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">market</span><span class="o">.</span><span class="n">rss_items</span><span class="p">),</span>
+                    <span class="s2">&quot;avg_news_polarity&quot;</span><span class="p">:</span> <span class="n">market</span><span class="o">.</span><span class="n">avg_sentiment_polarity</span><span class="p">(),</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">market</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Market data ingestion failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;market_ingest_error&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">MarketSnapshot</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_phase_analyze</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">briefing</span><span class="p">:</span> <span class="n">BriefingData</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">market</span><span class="p">:</span> <span class="n">MarketSnapshot</span><span class="p">,</span>
+        <span class="n">llm_client</span><span class="p">:</span> <span class="n">OpencodeLLMClient</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrategyResult</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Phase 3: Run all enabled trading strategies.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            briefing: Parsed briefing (may be None).</span>
+<span class="sd">            market: Market snapshot with quotes and news.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            List of StrategyResult from each enabled strategy.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">briefing</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">briefing</span> <span class="o">=</span> <span class="n">BriefingData</span><span class="p">(</span><span class="n">briefing_date</span><span class="o">=</span><span class="n">today_local</span><span class="p">())</span>
+
+        <span class="n">strategies</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">strategies</span><span class="o">.</span><span class="n">momentum</span><span class="o">.</span><span class="n">enabled</span><span class="p">:</span>
+            <span class="n">strategies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">MomentumStrategy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">))</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">strategies</span><span class="o">.</span><span class="n">mean_reversion</span><span class="o">.</span><span class="n">enabled</span><span class="p">:</span>
+            <span class="n">strategies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">MeanReversionStrategy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">))</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">strategies</span><span class="o">.</span><span class="n">event_driven</span><span class="o">.</span><span class="n">enabled</span><span class="p">:</span>
+            <span class="n">strategies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">EventDrivenStrategy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">))</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">enabled</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">llm</span><span class="o">.</span><span class="n">trade_signal_enabled</span><span class="p">:</span>
+            <span class="n">strategies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">LLMTradeStrategy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">client</span><span class="o">=</span><span class="n">llm_client</span><span class="p">))</span>
+
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+            <span class="o">*</span><span class="p">[</span><span class="n">s</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">briefing</span><span class="p">,</span> <span class="n">market</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">strategies</span><span class="p">],</span>
+            <span class="n">return_exceptions</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">strategy_results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrategyResult</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">StrategyResult</span><span class="p">):</span>
+                <span class="n">strategy_results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span><span class="o">.</span><span class="n">write_entry</span><span class="p">(</span>
+                    <span class="p">{</span>
+                        <span class="s2">&quot;phase&quot;</span><span class="p">:</span> <span class="s2">&quot;analyze&quot;</span><span class="p">,</span>
+                        <span class="s2">&quot;strategy&quot;</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="p">,</span>
+                        <span class="s2">&quot;confidence&quot;</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span>
+                        <span class="s2">&quot;has_recommendation&quot;</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">recommendation</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="s2">&quot;duration_ms&quot;</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">duration_ms</span><span class="p">,</span>
+                        <span class="s2">&quot;debug_trace&quot;</span><span class="p">:</span> <span class="n">r</span><span class="o">.</span><span class="n">debug_trace</span><span class="p">,</span>
+                    <span class="p">}</span>
+                <span class="p">)</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">):</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;strategy_error&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">r</span><span class="p">))</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Strategy error: </span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">strategy_results</span> <span class="o">=</span> <span class="n">strategy_results</span>
+        <span class="k">return</span> <span class="n">strategy_results</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_phase_decide</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">strategy_results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrategyResult</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">DecisionOutput</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Phase 4: Aggregate strategy results, apply risk checks, and reach a decision.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            strategy_results: Results from all strategies.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            DecisionOutput with the selected recommendation or None.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">aggregator</span> <span class="o">=</span> <span class="n">DecisionAggregator</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
+        <span class="n">decision</span> <span class="o">=</span> <span class="n">aggregator</span><span class="o">.</span><span class="n">aggregate</span><span class="p">(</span><span class="n">strategy_results</span><span class="p">)</span>
+        <span class="n">risk_engine</span> <span class="o">=</span> <span class="n">RiskEngine</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">risk_engine</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span>
+                    <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span> <span class="ow">or</span> <span class="n">MarketSnapshot</span><span class="p">(),</span>
+                <span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;risk_checks_passed&quot;</span><span class="p">,</span> <span class="n">confidence</span><span class="o">=</span><span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span><span class="o">.</span><span class="n">confidence</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;risk_check_failed&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+                <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="n">decision</span><span class="o">.</span><span class="n">selected_label</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="n">decision</span><span class="o">.</span><span class="n">rationale</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Risk check failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+
+                <span class="n">consensus_ok</span><span class="p">,</span> <span class="n">_consensus_dir</span> <span class="o">=</span> <span class="n">RiskEngine</span><span class="o">.</span><span class="n">check_consensus</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">briefing</span><span class="o">.</span><span class="n">macro_sentiment</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">briefing</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">avg_sentiment_polarity</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                    <span class="n">min_sources</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">risk</span><span class="o">.</span><span class="n">min_data_sources_for_direction</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">consensus_ok</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                        <span class="s2">&quot;consensus_check_failed&quot;</span><span class="p">,</span>
+                        <span class="n">briefing_sent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">briefing</span><span class="o">.</span><span class="n">macro_sentiment</span>
+                        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">briefing</span>
+                        <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                        <span class="n">news_polarity</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">avg_sentiment_polarity</span><span class="p">()</span>
+                        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span>
+                        <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="n">decision</span><span class="o">.</span><span class="n">rationale</span> <span class="o">+=</span> <span class="s2">&quot; Insufficient data source consensus.&quot;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span><span class="o">.</span><span class="n">write_entry</span><span class="p">(</span>
+            <span class="p">{</span>
+                <span class="s2">&quot;phase&quot;</span><span class="p">:</span> <span class="s2">&quot;decide&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;selected_strategy&quot;</span><span class="p">:</span> <span class="n">decision</span><span class="o">.</span><span class="n">selected_label</span><span class="p">,</span>
+                <span class="s2">&quot;confidence&quot;</span><span class="p">:</span> <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span><span class="o">.</span><span class="n">confidence</span>
+                <span class="k">if</span> <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span>
+                <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                <span class="s2">&quot;direction&quot;</span><span class="p">:</span> <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span><span class="o">.</span><span class="n">direction</span><span class="o">.</span><span class="n">value</span>
+                <span class="k">if</span> <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span>
+                <span class="k">else</span> <span class="s2">&quot;none&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;rationale&quot;</span><span class="p">:</span> <span class="n">decision</span><span class="o">.</span><span class="n">rationale</span><span class="p">,</span>
+            <span class="p">}</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">decision</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_compute_forecast</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrategyResult</span><span class="p">],</span>
+        <span class="n">decision</span><span class="p">:</span> <span class="n">DecisionOutput</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DirectionalForecast</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Build a directional forecast table from strategy results.</span>
+
+<span class="sd">        Uses the LLM strategy&#39;s per-asset predictions (when available)</span>
+<span class="sd">        as the primary forecast data, falling back to the legacy</span>
+<span class="sd">        CALL/PUT aggregation for deterministic strategies.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            results: Raw strategy results (pre-risk).</span>
+<span class="sd">            decision: The final decision (for rationale / selected trade).</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A DirectionalForecast with per-asset predictions.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">assets</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">target_assets</span>
+        <span class="n">llm_result</span> <span class="o">=</span> <span class="nb">next</span><span class="p">((</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">predictions</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="n">market_vibe</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+        <span class="k">if</span> <span class="n">llm_result</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Primary path: use LLM predictions directly.</span>
+            <span class="n">trace</span> <span class="o">=</span> <span class="n">llm_result</span><span class="o">.</span><span class="n">debug_trace</span>
+            <span class="n">market_vibe</span> <span class="o">=</span> <span class="n">trace</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;market_vibe&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+            <span class="n">forecasts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">AssetForecast</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">asset</span> <span class="ow">in</span> <span class="n">assets</span><span class="p">:</span>
+                <span class="n">pred</span> <span class="o">=</span> <span class="n">llm_result</span><span class="o">.</span><span class="n">predictions</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">asset</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">pred</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">open_price</span> <span class="o">=</span> <span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">asset</span><span class="p">)</span><span class="o">.</span><span class="n">open_price</span>
+                        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span> <span class="ow">and</span> <span class="n">asset</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span>
+                        <span class="k">else</span> <span class="kc">None</span>
+                    <span class="p">)</span>
+                    <span class="n">target_strike</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+                    <span class="k">if</span> <span class="n">open_price</span> <span class="ow">and</span> <span class="n">open_price</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="nb">abs</span><span class="p">(</span><span class="n">pred</span><span class="o">.</span><span class="n">predicted_move_pct</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mf">0.1</span><span class="p">:</span>
+                        <span class="n">target_strike</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">open_price</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">pred</span><span class="o">.</span><span class="n">predicted_move_pct</span> <span class="o">/</span> <span class="mi">100</span><span class="p">),</span> <span class="mi">2</span><span class="p">)</span>
+                    <span class="n">llm_sources</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;llm:</span><span class="si">{</span><span class="n">s</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">pred</span><span class="o">.</span><span class="n">sources</span><span class="p">]</span>
+                    <span class="n">forecasts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                        <span class="n">AssetForecast</span><span class="p">(</span>
+                            <span class="n">asset</span><span class="o">=</span><span class="n">pred</span><span class="o">.</span><span class="n">asset</span><span class="p">,</span>
+                            <span class="n">direction</span><span class="o">=</span><span class="n">pred</span><span class="o">.</span><span class="n">direction</span><span class="p">,</span>
+                            <span class="n">confidence</span><span class="o">=</span><span class="n">pred</span><span class="o">.</span><span class="n">confidence</span><span class="p">,</span>
+                            <span class="n">predicted_move_pct</span><span class="o">=</span><span class="n">pred</span><span class="o">.</span><span class="n">predicted_move_pct</span><span class="p">,</span>
+                            <span class="n">target_strike</span><span class="o">=</span><span class="n">target_strike</span><span class="p">,</span>
+                            <span class="n">rationale</span><span class="o">=</span><span class="n">pred</span><span class="o">.</span><span class="n">rationale</span><span class="p">,</span>
+                            <span class="n">sources</span><span class="o">=</span><span class="n">llm_sources</span><span class="p">,</span>
+                        <span class="p">)</span>
+                    <span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">forecasts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">AssetForecast</span><span class="p">(</span><span class="n">asset</span><span class="o">=</span><span class="n">asset</span><span class="p">))</span>  <span class="c1"># type: ignore</span>
+            <span class="k">return</span> <span class="n">DirectionalForecast</span><span class="p">(</span><span class="n">forecasts</span><span class="o">=</span><span class="n">forecasts</span><span class="p">,</span> <span class="n">market_vibe</span><span class="o">=</span><span class="n">market_vibe</span><span class="p">)</span>
+
+        <span class="c1"># Fallback: legacy aggregation from deterministic strategies.</span>
+        <span class="n">forecasts</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">asset</span> <span class="ow">in</span> <span class="n">assets</span><span class="p">:</span>
+            <span class="n">up_sum</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="n">down_sum</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="n">weighted_magnitude</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="n">mag_count</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="n">up_sources</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">down_sources</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+            <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+                <span class="n">rec</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">recommendation</span>
+                <span class="k">if</span> <span class="n">rec</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">rec</span><span class="o">.</span><span class="n">asset</span> <span class="o">!=</span> <span class="n">asset</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">src_labels</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">forecast_source_labels</span> <span class="ow">or</span> <span class="p">[</span><span class="n">r</span><span class="o">.</span><span class="n">label</span><span class="p">]</span>
+                <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">direction</span> <span class="o">==</span> <span class="n">Direction</span><span class="o">.</span><span class="n">CALL</span><span class="p">:</span>
+                    <span class="n">up_sum</span> <span class="o">+=</span> <span class="n">r</span><span class="o">.</span><span class="n">confidence</span>
+                    <span class="n">up_sources</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">src_labels</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">down_sum</span> <span class="o">+=</span> <span class="n">r</span><span class="o">.</span><span class="n">confidence</span>
+                    <span class="n">down_sources</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">src_labels</span><span class="p">)</span>
+
+                <span class="n">current</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">asset</span><span class="p">)</span><span class="o">.</span><span class="n">current_price</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span> <span class="ow">and</span> <span class="n">asset</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span>
+                    <span class="k">else</span> <span class="kc">None</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="n">current</span> <span class="ow">and</span> <span class="n">current</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">expected_move</span> <span class="o">=</span> <span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">target_strike</span> <span class="o">-</span> <span class="n">current</span><span class="p">)</span> <span class="o">/</span> <span class="n">current</span>
+                    <span class="n">weighted_magnitude</span> <span class="o">+=</span> <span class="n">expected_move</span> <span class="o">*</span> <span class="n">r</span><span class="o">.</span><span class="n">confidence</span>
+                    <span class="n">mag_count</span> <span class="o">+=</span> <span class="mi">1</span>
+
+            <span class="n">total</span> <span class="o">=</span> <span class="n">up_sum</span> <span class="o">+</span> <span class="n">down_sum</span>
+            <span class="k">if</span> <span class="n">total</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">up_conf</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">up_sum</span> <span class="o">/</span> <span class="n">total</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+                <span class="n">down_conf</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">down_sum</span> <span class="o">/</span> <span class="n">total</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">up_conf</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="n">down_conf</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+            <span class="n">direction</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;UP&quot;</span><span class="p">,</span> <span class="s2">&quot;DOWN&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="s2">&quot;UP&quot;</span> <span class="k">if</span> <span class="n">up_conf</span> <span class="o">&gt;</span> <span class="n">down_conf</span> <span class="k">else</span> <span class="p">(</span><span class="s2">&quot;DOWN&quot;</span> <span class="k">if</span> <span class="n">down_conf</span> <span class="o">&gt;</span> <span class="n">up_conf</span> <span class="k">else</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="n">pct</span> <span class="o">=</span> <span class="nb">round</span><span class="p">((</span><span class="n">weighted_magnitude</span> <span class="o">/</span> <span class="n">mag_count</span><span class="p">)</span> <span class="o">*</span> <span class="mi">100</span> <span class="k">if</span> <span class="n">mag_count</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+            <span class="n">target_strike</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="k">if</span> <span class="n">direction</span> <span class="ow">and</span> <span class="nb">abs</span><span class="p">(</span><span class="n">pct</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mf">0.1</span><span class="p">:</span>
+                <span class="n">open_price</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">asset</span><span class="p">)</span><span class="o">.</span><span class="n">open_price</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span> <span class="ow">and</span> <span class="n">asset</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">market</span><span class="o">.</span><span class="n">quotes</span>
+                    <span class="k">else</span> <span class="kc">None</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="n">open_price</span> <span class="ow">and</span> <span class="n">open_price</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">target_strike</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">open_price</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">pct</span> <span class="o">/</span> <span class="mi">100</span><span class="p">),</span> <span class="mi">2</span><span class="p">)</span>
+            <span class="n">forecasts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">AssetForecast</span><span class="p">(</span>
+                    <span class="n">asset</span><span class="o">=</span><span class="n">asset</span><span class="p">,</span>
+                    <span class="n">direction</span><span class="o">=</span><span class="n">direction</span><span class="p">,</span>
+                    <span class="n">confidence</span><span class="o">=</span><span class="nb">max</span><span class="p">(</span><span class="n">up_conf</span><span class="p">,</span> <span class="n">down_conf</span><span class="p">),</span>
+                    <span class="n">predicted_move_pct</span><span class="o">=</span><span class="n">pct</span> <span class="k">if</span> <span class="n">direction</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">,</span>
+                    <span class="n">target_strike</span><span class="o">=</span><span class="n">target_strike</span><span class="p">,</span>
+                    <span class="n">sources</span><span class="o">=</span><span class="n">up_sources</span> <span class="o">+</span> <span class="n">down_sources</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">DirectionalForecast</span><span class="p">(</span><span class="n">forecasts</span><span class="o">=</span><span class="n">forecasts</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_phase_execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">decision</span><span class="p">:</span> <span class="n">DecisionOutput</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Phase 5: Execute the selected trade through the Alpaca broker.</span>
+
+<span class="sd">        Uses the :class:`ExecutionEngine` with direct ``alpaca-py``</span>
+<span class="sd">        API calls and automatic exit management.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            decision: The final decision output with a recommendation.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Dict with execution result, or None if no recommendation.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">rec</span> <span class="o">=</span> <span class="n">decision</span><span class="o">.</span><span class="n">recommendation</span>
+        <span class="k">if</span> <span class="n">rec</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+        <span class="n">rec</span><span class="o">.</span><span class="n">correlation_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">correlation_id</span>
+        <span class="n">api_key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;APCA_API_KEY_ID&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="n">api_secret</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;APCA_API_SECRET_KEY&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">api_key</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">api_secret</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="s2">&quot;Alpaca API keys not set — skipping execution&quot;</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;execution_skipped&quot;</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="s2">&quot;no_api_keys&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="p">}</span>
+
+        <span class="n">paper</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">env_mode</span> <span class="o">==</span> <span class="s2">&quot;PAPER_ALPACA&quot;</span>
+        <span class="n">exec_config</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">execution</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s2">&quot;execution&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="n">ExecutionConfig</span><span class="p">()</span>
+        <span class="p">)</span>
+
+        <span class="n">client</span> <span class="o">=</span> <span class="n">AlpacaBrokerClient</span><span class="p">(</span><span class="n">api_key</span><span class="p">,</span> <span class="n">api_secret</span><span class="p">,</span> <span class="n">paper</span><span class="o">=</span><span class="n">paper</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">exec_config</span><span class="p">)</span>
+        <span class="n">engine</span> <span class="o">=</span> <span class="n">ExecutionEngine</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">exec_config</span><span class="p">,</span> <span class="n">log_dir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">logging</span><span class="o">.</span><span class="n">json_dir</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">engine</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">rec</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">correlation_id</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">file_logger</span><span class="o">.</span><span class="n">write_entry</span><span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="s2">&quot;phase&quot;</span><span class="p">:</span> <span class="s2">&quot;execute&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;trade_id&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;trade_id&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+                    <span class="s2">&quot;exit_reason&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;exit_reason&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+                    <span class="s2">&quot;final_pnl&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;final_pnl&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>
+                    <span class="s2">&quot;final_pnl_pct&quot;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;final_pnl_pct&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>
+                <span class="p">}</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">result</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Execution failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;execution_error&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="p">}</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_check_yesterday_prediction</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">provider</span> <span class="o">=</span> <span class="n">build_candle_chain</span><span class="p">(</span>
+            <span class="n">finnhub_api_key</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">finnhub</span><span class="o">.</span><span class="n">api_key</span><span class="p">,</span>
+            <span class="n">alpha_vantage_api_key</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">alpha_vantage</span><span class="o">.</span><span class="n">api_key</span><span class="p">,</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">finnhub</span><span class="o">.</span><span class="n">request_timeout_sec</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">log_dir</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">logging</span><span class="o">.</span><span class="n">json_dir</span>
+
+        <span class="n">biz_date</span> <span class="o">=</span> <span class="k">await</span> <span class="n">find_previous_business_day</span><span class="p">(</span><span class="n">log_dir</span><span class="p">,</span> <span class="n">provider</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">biz_date</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;yesterday_check_skipped&quot;</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="s2">&quot;no_business_day_found&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="n">forecasts</span> <span class="o">=</span> <span class="n">read_previous_forecasts</span><span class="p">(</span><span class="n">log_dir</span><span class="p">,</span> <span class="n">biz_date</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">forecasts</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="s2">&quot;yesterday_check_skipped&quot;</span><span class="p">,</span>
+                <span class="n">reason</span><span class="o">=</span><span class="s2">&quot;no_forecasts_found&quot;</span><span class="p">,</span>
+                <span class="n">biz_date</span><span class="o">=</span><span class="n">biz_date</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+            <span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="n">outcomes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">PredictionOutcome</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">pred</span> <span class="ow">in</span> <span class="n">forecasts</span><span class="p">:</span>
+            <span class="n">daily</span> <span class="o">=</span> <span class="k">await</span> <span class="n">provider</span><span class="o">.</span><span class="n">fetch_daily_candle</span><span class="p">(</span><span class="n">pred</span><span class="p">[</span><span class="s2">&quot;asset&quot;</span><span class="p">],</span> <span class="n">biz_date</span><span class="p">)</span>
+            <span class="n">hourly</span> <span class="o">=</span> <span class="k">await</span> <span class="n">provider</span><span class="o">.</span><span class="n">fetch_intraday_candles</span><span class="p">(</span><span class="n">pred</span><span class="p">[</span><span class="s2">&quot;asset&quot;</span><span class="p">],</span> <span class="n">biz_date</span><span class="p">)</span>
+            <span class="n">outcome</span> <span class="o">=</span> <span class="n">check_outcome</span><span class="p">(</span><span class="n">pred</span><span class="p">,</span> <span class="n">daily</span><span class="p">,</span> <span class="n">hourly</span><span class="p">,</span> <span class="n">biz_date</span><span class="o">=</span><span class="n">biz_date</span><span class="p">)</span>
+            <span class="n">outcomes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">outcome</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="s2">&quot;yesterday_outcome&quot;</span><span class="p">,</span>
+                <span class="n">asset</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">asset</span><span class="p">,</span>
+                <span class="n">predicted</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">predicted_direction</span><span class="p">,</span>
+                <span class="n">result</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">result</span><span class="p">,</span>
+                <span class="n">details</span><span class="o">=</span><span class="n">outcome</span><span class="o">.</span><span class="n">details</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">yesterday_outcomes</span> <span class="o">=</span> <span class="n">outcomes</span>
+        <span class="n">append_outcomes</span><span class="p">(</span><span class="n">log_dir</span><span class="p">,</span> <span class="n">outcomes</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

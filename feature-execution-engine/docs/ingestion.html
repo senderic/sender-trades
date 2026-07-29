@@ -1,0 +1,554 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ingestion &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Engine" href="engine.html" />
+    <link rel="prev" title="Welcome to sender-trades’s documentation!" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Ingestion</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-ingestion.fetcher">Submodules</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.fetcher.BraveFetcher"><code class="docutils literal notranslate"><span class="pre">BraveFetcher</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.BraveFetcher.__init__"><code class="docutils literal notranslate"><span class="pre">BraveFetcher.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.BraveFetcher.fetch_news"><code class="docutils literal notranslate"><span class="pre">BraveFetcher.fetch_news()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.fetcher.FinnhubFetcher"><code class="docutils literal notranslate"><span class="pre">FinnhubFetcher</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.FinnhubFetcher.__init__"><code class="docutils literal notranslate"><span class="pre">FinnhubFetcher.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.FinnhubFetcher.fetch_daily_candle"><code class="docutils literal notranslate"><span class="pre">FinnhubFetcher.fetch_daily_candle()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.FinnhubFetcher.fetch_intraday_candles"><code class="docutils literal notranslate"><span class="pre">FinnhubFetcher.fetch_intraday_candles()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.FinnhubFetcher.fetch_quote"><code class="docutils literal notranslate"><span class="pre">FinnhubFetcher.fetch_quote()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.fetcher.RSSFetcher"><code class="docutils literal notranslate"><span class="pre">RSSFetcher</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.RSSFetcher.__init__"><code class="docutils literal notranslate"><span class="pre">RSSFetcher.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.RSSFetcher.fetch_all"><code class="docutils literal notranslate"><span class="pre">RSSFetcher.fetch_all()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.fetcher.RedditFetcher"><code class="docutils literal notranslate"><span class="pre">RedditFetcher</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.RedditFetcher.fetch_posts"><code class="docutils literal notranslate"><span class="pre">RedditFetcher.fetch_posts()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.fetcher.UnusualWhalesFetcher"><code class="docutils literal notranslate"><span class="pre">UnusualWhalesFetcher</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.UnusualWhalesFetcher.BASE_URL"><code class="docutils literal notranslate"><span class="pre">UnusualWhalesFetcher.BASE_URL</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.fetcher.UnusualWhalesFetcher.fetch_flow_news"><code class="docutils literal notranslate"><span class="pre">UnusualWhalesFetcher.fetch_flow_news()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.fetcher.fetch_market_data"><code class="docutils literal notranslate"><span class="pre">fetch_market_data()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.parser.find_todays_briefing"><code class="docutils literal notranslate"><span class="pre">find_todays_briefing()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.parser.parse_briefing_date"><code class="docutils literal notranslate"><span class="pre">parse_briefing_date()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.parser.read_briefing"><code class="docutils literal notranslate"><span class="pre">read_briefing()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ingestion.snapshot_loader.SnapshotLoader"><code class="docutils literal notranslate"><span class="pre">SnapshotLoader</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.snapshot_loader.SnapshotLoader.__init__"><code class="docutils literal notranslate"><span class="pre">SnapshotLoader.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.snapshot_loader.SnapshotLoader.is_available"><code class="docutils literal notranslate"><span class="pre">SnapshotLoader.is_available()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.snapshot_loader.SnapshotLoader.is_complete"><code class="docutils literal notranslate"><span class="pre">SnapshotLoader.is_complete()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#ingestion.snapshot_loader.SnapshotLoader.load"><code class="docutils literal notranslate"><span class="pre">SnapshotLoader.load()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="engine.html">Engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="models.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mcp.html">MCP</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Ingestion</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/ingestion.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-ingestion">
+<span id="ingestion"></span><h1>Ingestion<a class="headerlink" href="#module-ingestion" title="Link to this heading"></a></h1>
+<section id="module-ingestion.fetcher">
+<span id="submodules"></span><h2>Submodules<a class="headerlink" href="#module-ingestion.fetcher" title="Link to this heading"></a></h2>
+<p>Data fetchers for market data, news, and RSS feeds.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="ingestion.fetcher.BraveFetcher">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ingestion.fetcher.</span></span><span class="sig-name descname"><span class="pre">BraveFetcher</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">api_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#BraveFetcher"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.BraveFetcher" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Fetches financial news headlines from the Brave Search API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>api_key</strong> (<em>str</em>)</p></li>
+<li><p><strong>query</strong> (<em>str</em>)</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.BraveFetcher.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">api_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#BraveFetcher.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.BraveFetcher.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize BraveFetcher with API credentials and search query.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>api_key</strong> (<em>str</em>) – Brave Search API key.</p></li>
+<li><p><strong>query</strong> (<em>str</em>) – Default search query string.</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>) – HTTP request timeout in seconds.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.BraveFetcher.fetch_news">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">fetch_news</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#BraveFetcher.fetch_news"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.BraveFetcher.fetch_news" title="Link to this definition"></a></dt>
+<dd><p>Fetch recent news headlines from Brave Search.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A list of NewsHeadline objects, or an empty list on failure.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[<a class="reference internal" href="models.html#models.NewsHeadline" title="src.models.market.NewsHeadline"><em>NewsHeadline</em></a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ingestion.fetcher.FinnhubFetcher">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ingestion.fetcher.</span></span><span class="sig-name descname"><span class="pre">FinnhubFetcher</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">api_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#FinnhubFetcher"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.FinnhubFetcher" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Fetches real-time stock quotes from the Finnhub API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>api_key</strong> (<em>str</em>)</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.FinnhubFetcher.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">api_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#FinnhubFetcher.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.FinnhubFetcher.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize FinnhubFetcher with API credentials.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>api_key</strong> (<em>str</em>) – Finnhub API key.</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>) – HTTP request timeout in seconds.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.FinnhubFetcher.fetch_daily_candle">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">fetch_daily_candle</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">symbol</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">target_date</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#FinnhubFetcher.fetch_daily_candle"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.FinnhubFetcher.fetch_daily_candle" title="Link to this definition"></a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>symbol</strong> (<em>str</em>)</p></li>
+<li><p><strong>target_date</strong> (<em>date</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>dict | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.FinnhubFetcher.fetch_intraday_candles">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">fetch_intraday_candles</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">symbol</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">target_date</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">resolution</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">60</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#FinnhubFetcher.fetch_intraday_candles"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.FinnhubFetcher.fetch_intraday_candles" title="Link to this definition"></a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>symbol</strong> (<em>str</em>)</p></li>
+<li><p><strong>target_date</strong> (<em>date</em>)</p></li>
+<li><p><strong>resolution</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[dict] | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.FinnhubFetcher.fetch_quote">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">fetch_quote</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">symbol</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#FinnhubFetcher.fetch_quote"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.FinnhubFetcher.fetch_quote" title="Link to this definition"></a></dt>
+<dd><p>Fetch the latest quote for a given symbol from Finnhub.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>symbol</strong> (<em>str</em>) – The ticker symbol to fetch.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A Quote object if successful, or None on failure.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.Quote" title="src.models.market.Quote"><em>Quote</em></a> | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ingestion.fetcher.RSSFetcher">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ingestion.fetcher.</span></span><span class="sig-name descname"><span class="pre">RSSFetcher</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">feed_urls</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#RSSFetcher"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.RSSFetcher" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Fetches entries from a list of RSS/Atom feeds.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>feed_urls</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>)</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.RSSFetcher.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">feed_urls</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#RSSFetcher.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.RSSFetcher.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize RSSFetcher with feed URLs.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>feed_urls</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>) – List of RSS feed URLs to fetch.</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>) – HTTP request timeout in seconds.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.RSSFetcher.fetch_all">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">fetch_all</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#RSSFetcher.fetch_all"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.RSSFetcher.fetch_all" title="Link to this definition"></a></dt>
+<dd><p>Concurrently fetch all configured RSS feeds.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Combined list of RSSCacheItem from all feeds.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>list[<a class="reference internal" href="models.html#models.RSSCacheItem" title="src.models.market.RSSCacheItem"><em>RSSCacheItem</em></a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ingestion.fetcher.RedditFetcher">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ingestion.fetcher.</span></span><span class="sig-name descname"><span class="pre">RedditFetcher</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">subreddits</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">post_limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">25</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">user_agent</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'sender-trades/1.0'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#RedditFetcher"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.RedditFetcher" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Fetches hot posts from configured subreddits via Reddit’s public JSON API.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>subreddits</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>)</p></li>
+<li><p><strong>post_limit</strong> (<em>int</em>)</p></li>
+<li><p><strong>user_agent</strong> (<em>str</em>)</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.RedditFetcher.fetch_posts">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">fetch_posts</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#RedditFetcher.fetch_posts"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.RedditFetcher.fetch_posts" title="Link to this definition"></a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[<a class="reference internal" href="models.html#models.NewsHeadline" title="src.models.market.NewsHeadline"><em>NewsHeadline</em></a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ingestion.fetcher.UnusualWhalesFetcher">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ingestion.fetcher.</span></span><span class="sig-name descname"><span class="pre">UnusualWhalesFetcher</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">api_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#UnusualWhalesFetcher"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.UnusualWhalesFetcher" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Fetches options flow data from Unusual Whales API (paid subscription required).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>api_key</strong> (<em>str</em>)</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ingestion.fetcher.UnusualWhalesFetcher.BASE_URL">
+<span class="sig-name descname"><span class="pre">BASE_URL</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'https://api.unusualwhales.com/v1'</span></span><a class="headerlink" href="#ingestion.fetcher.UnusualWhalesFetcher.BASE_URL" title="Link to this definition"></a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.fetcher.UnusualWhalesFetcher.fetch_flow_news">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">fetch_flow_news</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#UnusualWhalesFetcher.fetch_flow_news"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.UnusualWhalesFetcher.fetch_flow_news" title="Link to this definition"></a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[<a class="reference internal" href="models.html#models.NewsHeadline" title="src.models.market.NewsHeadline"><em>NewsHeadline</em></a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ingestion.fetcher.fetch_market_data">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ingestion.fetcher.</span></span><span class="sig-name descname"><span class="pre">fetch_market_data</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">symbols</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">finnhub_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">brave_key</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">brave_query</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rss_urls</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reddit_subreddits</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reddit_post_limit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">25</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">unusual_whales_key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">''</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">timeout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/fetcher.html#fetch_market_data"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.fetcher.fetch_market_data" title="Link to this definition"></a></dt>
+<dd><p>Fetch all market data concurrently: quotes, news, RSS, Reddit, and Unusual Whales.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>symbols</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>) – List of ticker symbols for which to fetch quotes.</p></li>
+<li><p><strong>finnhub_key</strong> (<em>str</em>) – Finnhub API key.</p></li>
+<li><p><strong>brave_key</strong> (<em>str</em>) – Brave Search API key.</p></li>
+<li><p><strong>brave_query</strong> (<em>str</em>) – Brave news search query.</p></li>
+<li><p><strong>rss_urls</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>) – List of RSS feed URLs.</p></li>
+<li><p><strong>reddit_subreddits</strong> (<em>list</em><em>[</em><em>str</em><em>] </em><em>| </em><em>None</em>) – List of subreddits to scrape, or None to skip.</p></li>
+<li><p><strong>reddit_post_limit</strong> (<em>int</em>) – Max posts per subreddit.</p></li>
+<li><p><strong>unusual_whales_key</strong> (<em>str</em>) – Unusual Whales API key (empty to skip).</p></li>
+<li><p><strong>timeout</strong> (<em>int</em>) – HTTP request timeout in seconds.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A MarketSnapshot containing quotes, news, RSS items, and social sentiment.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.MarketSnapshot" title="src.models.market.MarketSnapshot"><em>MarketSnapshot</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<p id="module-ingestion.parser">News article parsing and extraction utilities.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="ingestion.parser.find_todays_briefing">
+<span class="sig-prename descclassname"><span class="pre">ingestion.parser.</span></span><span class="sig-name descname"><span class="pre">find_todays_briefing</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">directory</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">briefings_subdir</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'briefings'</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/parser.html#find_todays_briefing"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.parser.find_todays_briefing" title="Link to this definition"></a></dt>
+<dd><p>Find today’s Atlas briefing markdown file, falling back to the most recent.</p>
+<p>Looks in <code class="docutils literal notranslate"><span class="pre">&lt;directory&gt;/&lt;briefings_subdir&gt;</span></code> first (current upstream
+layout) and falls back to <code class="docutils literal notranslate"><span class="pre">&lt;directory&gt;</span></code> itself if the subdir is
+missing or contains no <code class="docutils literal notranslate"><span class="pre">Atlas-Briefing-*.md</span></code> files. This handles
+both the modern layout (new briefings under <code class="docutils literal notranslate"><span class="pre">briefings/</span></code>, stale
+ones left in root) and the legacy layout (all briefings in root).</p>
+<p>Within the resolved search directory, today’s exact filename is
+preferred; otherwise the most recent file is returned.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>directory</strong> (<em>str</em><em> | </em><em>Path</em>) – Path to the atlas-morning-briefing project root.</p></li>
+<li><p><strong>briefings_subdir</strong> (<em>str</em>) – Sub-directory containing briefing markdown
+files. Pass an empty string to search the root directly.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Path to the briefing file, or None if none are found.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><em>Path</em> | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ingestion.parser.parse_briefing_date">
+<span class="sig-prename descclassname"><span class="pre">ingestion.parser.</span></span><span class="sig-name descname"><span class="pre">parse_briefing_date</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">filename</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/parser.html#parse_briefing_date"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.parser.parse_briefing_date" title="Link to this definition"></a></dt>
+<dd><p>Extract the briefing date from a filename containing YYYY.MM.DD.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>filename</strong> (<em>str</em>) – The file name to search for a date pattern.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The parsed date, or None if no pattern is found.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><em>date</em> | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ingestion.parser.read_briefing">
+<span class="sig-prename descclassname"><span class="pre">ingestion.parser.</span></span><span class="sig-name descname"><span class="pre">read_briefing</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/parser.html#read_briefing"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.parser.read_briefing" title="Link to this definition"></a></dt>
+<dd><p>Read a markdown briefing file and parse it into structured data.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>path</strong> (<em>str</em><em> | </em><em>Path</em>) – Path to the briefing markdown file.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Fully populated BriefingData instance with <code class="docutils literal notranslate"><span class="pre">briefing_quality</span></code>
+populated by <code class="xref py py-func docutils literal notranslate"><span class="pre">_classify_quality()</span></code>.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.BriefingData" title="src.models.briefing.BriefingData"><em>BriefingData</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<p id="module-ingestion.snapshot_loader">Load raw data snapshots from atlas-morning-briefing instead of making API calls.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="ingestion.snapshot_loader.SnapshotLoader">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ingestion.snapshot_loader.</span></span><span class="sig-name descname"><span class="pre">SnapshotLoader</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">atlas_briefing_dir</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/snapshot_loader.html#SnapshotLoader"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.snapshot_loader.SnapshotLoader" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Load raw data snapshots saved by atlas-morning-briefing.</p>
+<p>Snapshots live at <code class="docutils literal notranslate"><span class="pre">{atlas_dir}/snapshots/YYYY-MM-DD/</span></code> and contain
+pre-fetched Finnhub quotes, Brave news, and RSS feed items.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>atlas_briefing_dir</strong> (<em>str</em><em> | </em><em>Path</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.snapshot_loader.SnapshotLoader.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">atlas_briefing_dir</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/snapshot_loader.html#SnapshotLoader.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.snapshot_loader.SnapshotLoader.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize SnapshotLoader.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>atlas_briefing_dir</strong> (<em>str</em><em> | </em><em>Path</em>) – Path to the atlas-morning-briefing project root
+(e.g. <code class="docutils literal notranslate"><span class="pre">~/atlas-morning-briefing</span></code>).</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.snapshot_loader.SnapshotLoader.is_available">
+<span class="sig-name descname"><span class="pre">is_available</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/snapshot_loader.html#SnapshotLoader.is_available"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.snapshot_loader.SnapshotLoader.is_available" title="Link to this definition"></a></dt>
+<dd><p>Check whether a snapshot exists for today.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>True if the today’s snapshot directory exists.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.snapshot_loader.SnapshotLoader.is_complete">
+<span class="sig-name descname"><span class="pre">is_complete</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">symbols</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/snapshot_loader.html#SnapshotLoader.is_complete"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.snapshot_loader.SnapshotLoader.is_complete" title="Link to this definition"></a></dt>
+<dd><p>Check whether the snapshot has all required data for the given symbols.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>symbols</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>) – List of ticker symbols that must have quotes.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>True if all symbols have quotes and at least some news or RSS
+items are present.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ingestion.snapshot_loader.SnapshotLoader.load">
+<span class="sig-name descname"><span class="pre">load</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="_modules/ingestion/snapshot_loader.html#SnapshotLoader.load"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#ingestion.snapshot_loader.SnapshotLoader.load" title="Link to this definition"></a></dt>
+<dd><p>Load today’s snapshot data, if available.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>A <code class="docutils literal notranslate"><span class="pre">MarketSnapshot</span></code> built from snapshot files, or <code class="docutils literal notranslate"><span class="pre">None</span></code> if
+no snapshot directory exists for today.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="models.html#models.MarketSnapshot" title="src.models.market.MarketSnapshot"><em>MarketSnapshot</em></a> | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="Welcome to sender-trades’s documentation!" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="engine.html" class="btn btn-neutral float-right" title="Engine" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

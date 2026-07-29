@@ -1,0 +1,323 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MCP &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=01f34227"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="API Reference" href="api.html" />
+    <link rel="prev" title="Models" href="models.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="engine.html">Engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="models.html">Models</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">MCP</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#module-mcp.client">Submodules</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#mcp.client.MCPBrokerClient"><code class="docutils literal notranslate"><span class="pre">MCPBrokerClient</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#mcp.client.MCPBrokerClient.__init__"><code class="docutils literal notranslate"><span class="pre">MCPBrokerClient.__init__()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#mcp.client.MCPBrokerClient.execute"><code class="docutils literal notranslate"><span class="pre">MCPBrokerClient.execute()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#mcp.client.MCPBrokerClient.query_option_chain"><code class="docutils literal notranslate"><span class="pre">MCPBrokerClient.query_option_chain()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="#mcp.client.MCPBrokerClient.query_option_quote"><code class="docutils literal notranslate"><span class="pre">MCPBrokerClient.query_option_quote()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#mcp.client.MCPClientError"><code class="docutils literal notranslate"><span class="pre">MCPClientError</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mcp.client.parse_float"><code class="docutils literal notranslate"><span class="pre">parse_float()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mcp.schemas.build_alpaca_execution"><code class="docutils literal notranslate"><span class="pre">build_alpaca_execution()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mcp.schemas.build_robinhood_execution"><code class="docutils literal notranslate"><span class="pre">build_robinhood_execution()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mcp.schemas.format_execution_json"><code class="docutils literal notranslate"><span class="pre">format_execution_json()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mcp.schemas.occ_option_symbol"><code class="docutils literal notranslate"><span class="pre">occ_option_symbol()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">MCP</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/mcp.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="module-mcp">
+<span id="mcp"></span><h1>MCP<a class="headerlink" href="#module-mcp" title="Link to this heading"></a></h1>
+<section id="module-mcp.client">
+<span id="submodules"></span><h2>Submodules<a class="headerlink" href="#module-mcp.client" title="Link to this heading"></a></h2>
+<p>MCP client for broker communication and order execution.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="mcp.client.MCPBrokerClient">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">mcp.client.</span></span><span class="sig-name descname"><span class="pre">MCPBrokerClient</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/client.html#MCPBrokerClient"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.client.MCPBrokerClient" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Client for interacting with an MCP-based broker daemon (Alpaca).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>)</p>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="mcp.client.MCPBrokerClient.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/client.html#MCPBrokerClient.__init__"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.client.MCPBrokerClient.__init__" title="Link to this definition"></a></dt>
+<dd><p>Initialize MCPBrokerClient with application settings.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>config</strong> (<em>Settings</em>) – Application settings.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="mcp.client.MCPBrokerClient.execute">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">execute</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rec</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/client.html#MCPBrokerClient.execute"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.client.MCPBrokerClient.execute" title="Link to this definition"></a></dt>
+<dd><p>Execute a trade recommendation through the MCP broker.</p>
+<p>Verifies the contract exists in the chain, checks the bid/ask spread,
+and either dry-runs or submits the order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>rec</strong> (<a class="reference internal" href="models.html#models.TradeRecommendation" title="src.models.recommendation.TradeRecommendation"><em>TradeRecommendation</em></a>) – The trade recommendation to execute.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict with execution status, occ_symbol, bid, ask, and result.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>dict[str, <em>Any</em>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="mcp.client.MCPBrokerClient.query_option_chain">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">query_option_chain</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">asset</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">expiry</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/client.html#MCPBrokerClient.query_option_chain"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.client.MCPBrokerClient.query_option_chain" title="Link to this definition"></a></dt>
+<dd><p>Query the option chain for a given asset and expiry.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>asset</strong> (<em>str</em>) – Ticker symbol (e.g. SPY).</p></li>
+<li><p><strong>expiry</strong> (<em>str</em><em> | </em><em>None</em>) – Expiration date in ISO format (defaults to today).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>List of option contract dicts from the MCP daemon.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[dict[str, <em>Any</em>]]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="mcp.client.MCPBrokerClient.query_option_quote">
+<span class="property"><span class="k"><span class="pre">async</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">query_option_quote</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">occ_symbol</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/client.html#MCPBrokerClient.query_option_quote"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.client.MCPBrokerClient.query_option_quote" title="Link to this definition"></a></dt>
+<dd><p>Query the latest quote for a specific OCC option symbol.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>occ_symbol</strong> (<em>str</em>) – The OCC option symbol to look up.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dict with quote data, or None if not found.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>dict[str, <em>Any</em>] | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="mcp.client.MCPClientError">
+<span class="property"><span class="k"><span class="pre">exception</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">mcp.client.</span></span><span class="sig-name descname"><span class="pre">MCPClientError</span></span><a class="reference internal" href="_modules/mcp/client.html#MCPClientError"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.client.MCPClientError" title="Link to this definition"></a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Exception</span></code></p>
+<p>Raised when an MCP broker client encounters a non-recoverable error.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="mcp.client.parse_float">
+<span class="sig-prename descclassname"><span class="pre">mcp.client.</span></span><span class="sig-name descname"><span class="pre">parse_float</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/client.html#parse_float"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.client.parse_float" title="Link to this definition"></a></dt>
+<dd><p>Safely parse a value as a float, returning None on failure.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>value</strong> (<em>Any</em>) – The value to parse.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A float, or None if parsing fails.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p id="module-mcp.schemas">MCP message schemas and serialization utilities.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="mcp.schemas.build_alpaca_execution">
+<span class="sig-prename descclassname"><span class="pre">mcp.schemas.</span></span><span class="sig-name descname"><span class="pre">build_alpaca_execution</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">occ_symbol</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">bid</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ask</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/schemas.html#build_alpaca_execution"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.schemas.build_alpaca_execution" title="Link to this definition"></a></dt>
+<dd><p>Build an execution command for the Alpaca MCP broker.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rec</strong> (<a class="reference internal" href="models.html#models.TradeRecommendation" title="src.models.recommendation.TradeRecommendation"><em>TradeRecommendation</em></a>) – The trade recommendation to execute.</p></li>
+<li><p><strong>occ_symbol</strong> (<em>str</em>) – OCC option symbol string.</p></li>
+<li><p><strong>bid</strong> (<em>float</em><em> | </em><em>None</em>) – Current bid price (optional, used for limit price inference).</p></li>
+<li><p><strong>ask</strong> (<em>float</em><em> | </em><em>None</em>) – Current ask price (optional, used for limit price inference).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>An ExecutionCommand targeting the Alpaca paper-trading environment.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.ExecutionCommand" title="src.models.recommendation.ExecutionCommand"><em>ExecutionCommand</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="mcp.schemas.build_robinhood_execution">
+<span class="sig-prename descclassname"><span class="pre">mcp.schemas.</span></span><span class="sig-name descname"><span class="pre">build_robinhood_execution</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rec</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">occ_symbol</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/schemas.html#build_robinhood_execution"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.schemas.build_robinhood_execution" title="Link to this definition"></a></dt>
+<dd><p>Build an execution command for the Robinhood MCP broker.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rec</strong> (<a class="reference internal" href="models.html#models.TradeRecommendation" title="src.models.recommendation.TradeRecommendation"><em>TradeRecommendation</em></a>) – The trade recommendation to execute.</p></li>
+<li><p><strong>occ_symbol</strong> (<em>str</em>) – OCC option symbol string.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>An ExecutionCommand targeting the Robinhood live environment.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="models.html#models.ExecutionCommand" title="src.models.recommendation.ExecutionCommand"><em>ExecutionCommand</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="mcp.schemas.format_execution_json">
+<span class="sig-prename descclassname"><span class="pre">mcp.schemas.</span></span><span class="sig-name descname"><span class="pre">format_execution_json</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cmd</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/schemas.html#format_execution_json"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.schemas.format_execution_json" title="Link to this definition"></a></dt>
+<dd><p>Format an execution command as a pretty-printed JSON string.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>cmd</strong> (<a class="reference internal" href="models.html#models.ExecutionCommand" title="src.models.recommendation.ExecutionCommand"><em>ExecutionCommand</em></a>) – The execution command to serialise.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Indented JSON string of the command payload.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="mcp.schemas.occ_option_symbol">
+<span class="sig-prename descclassname"><span class="pre">mcp.schemas.</span></span><span class="sig-name descname"><span class="pre">occ_option_symbol</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">underlying</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">expiry</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">strike</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">option_type</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/mcp/schemas.html#occ_option_symbol"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#mcp.schemas.occ_option_symbol" title="Link to this definition"></a></dt>
+<dd><p>Build an OCC option symbol from its components.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>underlying</strong> (<em>str</em>) – Underlying ticker symbol (e.g. SPY).</p></li>
+<li><p><strong>expiry</strong> (<em>str</em>) – Expiration date in ISO format (YYYY-MM-DD).</p></li>
+<li><p><strong>strike</strong> (<em>float</em>) – Strike price.</p></li>
+<li><p><strong>option_type</strong> (<em>str</em>) – ‘CALL’ or ‘PUT’.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>OCC option symbol string.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="models.html" class="btn btn-neutral float-left" title="Models" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="api.html" class="btn btn-neutral float-right" title="API Reference" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

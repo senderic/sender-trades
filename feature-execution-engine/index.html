@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>sender-trades — 0DTE Intraday Prediction &amp; Execution Engine</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --orange: #d29922;
+      --red: #f85149;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Noto Sans, Helvetica, Arial, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+    nav {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 24px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; background: var(--bg); z-index: 10;
+    }
+    nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none; }
+    nav .logo span { color: var(--accent); }
+    nav a:not(.logo) { color: var(--muted); text-decoration: none; font-size: 0.9rem; margin-left: 24px; }
+    nav a:hover { color: var(--text); }
+
+    .hero {
+      text-align: center; padding: 100px 24px 80px;
+      background: radial-gradient(ellipse at 50% 0%, rgba(88,166,255,0.08) 0%, transparent 60%);
+    }
+    .hero h1 { font-size: 3rem; font-weight: 800; letter-spacing: -0.025em; margin-bottom: 16px; }
+    .hero h1 span { color: var(--accent); }
+    .hero p { font-size: 1.2rem; color: var(--muted); max-width: 640px; margin: 0 auto 32px; }
+    .hero-badges { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 40px; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; font-weight: 500;
+      border: 1px solid var(--border);
+    }
+    .badge.green { color: var(--green); border-color: rgba(63,185,80,0.3); background: rgba(63,185,80,0.08); }
+    .badge.blue { color: var(--accent); border-color: rgba(88,166,255,0.3); background: rgba(88,166,255,0.08); }
+    .badge.orange { color: var(--orange); border-color: rgba(210,153,34,0.3); background: rgba(210,153,34,0.08); }
+    .hero-buttons { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+    .btn {
+      display: inline-block; padding: 12px 28px; border-radius: 8px;
+      font-weight: 600; font-size: 1rem; text-decoration: none; transition: all 0.15s;
+    }
+    .btn.primary { background: var(--accent); color: #0d1117; }
+    .btn.primary:hover { background: #79c0ff; }
+    .btn.secondary { border: 1px solid var(--border); color: var(--text); }
+    .btn.secondary:hover { border-color: var(--muted); background: var(--surface); }
+
+    section { padding: 72px 0; }
+    section + section { border-top: 1px solid var(--border); }
+    h2 { font-size: 1.75rem; font-weight: 700; margin-bottom: 40px; text-align: center; }
+    h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+    h4 { font-size: 0.95rem; font-weight: 600; margin-bottom: 6px; color: var(--muted); }
+
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+    .feature {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 28px; transition: border-color 0.15s;
+    }
+    .feature:hover { border-color: var(--muted); }
+    .feature .icon { font-size: 1.5rem; margin-bottom: 12px; }
+    .feature p { color: var(--muted); font-size: 0.95rem; }
+
+    .arch {
+      display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 0;
+    }
+    .arch-row {
+      display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+    }
+    .arch-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 20px; font-size: 0.9rem; text-align: center;
+      min-width: 110px;
+    }
+    .arch-box .tag { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .arch-box .val { font-weight: 600; margin-top: 4px; font-size: 0.85rem; }
+    .arch-arrow { color: var(--muted); font-size: 1.2rem; }
+
+    .flow { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+    .flow-step {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 20px; font-size: 0.9rem; text-align: center;
+      min-width: 100px;
+    }
+    .flow-step .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .flow-step .value { font-weight: 600; margin-top: 4px; }
+    .flow-arrow { color: var(--muted); font-size: 1.2rem; }
+
+    .cmd-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .cmd-item { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; }
+    .cmd-item code {
+      display: block; font-family: var(--mono); font-size: 0.9rem; margin-bottom: 4px;
+    }
+    .cmd-item .desc { color: var(--muted); font-size: 0.85rem; }
+
+    .diagram {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 32px; margin: 24px 0; overflow-x: auto;
+    }
+    .diagram pre {
+      font-family: var(--mono); font-size: 0.8rem; line-height: 1.5; color: var(--text);
+    }
+
+    .pill-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9rem; }
+    .pill-table th { text-align: left; padding: 10px 12px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .pill-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .pill {
+      display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; font-weight: 500;
+    }
+    .pill.green { background: rgba(63,185,80,0.12); color: var(--green); }
+    .pill.blue { background: rgba(88,166,255,0.12); color: var(--accent); }
+    .pill.orange { background: rgba(210,153,34,0.12); color: var(--orange); }
+    .pill.red { background: rgba(248,81,73,0.12); color: var(--red); }
+
+    ul.compact { list-style: none; padding: 0; }
+    ul.compact li { padding: 6px 0; color: var(--muted); font-size: 0.9rem; }
+    ul.compact li::before { content: "▸ "; color: var(--accent); }
+
+    .repo-links { display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; }
+    .repo-links a { color: var(--accent); text-decoration: none; font-size: 1rem; }
+    .repo-links a:hover { text-decoration: underline; }
+
+    /* End-to-end example section */
+    .example-intro {
+      text-align: center; color: var(--muted); max-width: 640px;
+      margin: 0 auto 48px; font-size: 0.95rem;
+    }
+    .example-intro code { color: var(--accent); font-family: var(--mono); font-size: 0.85rem; }
+    .stages { display: flex; flex-direction: column; gap: 32px; max-width: 760px; margin: 0 auto; }
+    .stage {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
+    }
+    .stage-header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 16px 24px; border-bottom: 1px solid var(--border);
+      background: rgba(88,166,255,0.04);
+    }
+    .stage-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; border-radius: 50%;
+      background: var(--accent); color: #0d1117; font-weight: 700; font-size: 0.9rem;
+    }
+    .stage-title { font-weight: 600; font-size: 1rem; }
+    .stage-meta { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
+    .stage-meta a { color: var(--accent); text-decoration: none; }
+    .stage-meta a:hover { text-decoration: underline; }
+    .stage-body { padding: 24px; }
+    .stage-body p { color: var(--muted); font-size: 0.9rem; margin: 0 0 12px; }
+    .stage-body p strong { color: var(--text); font-weight: 600; }
+    .stage-body code { font-family: var(--mono); color: var(--accent); font-size: 0.85rem; }
+    .stage-link { display: inline-block; margin-top: 12px; color: var(--accent); text-decoration: none; font-size: 0.85rem; }
+    .stage-link:hover { text-decoration: underline; }
+
+    .briefing-excerpt {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px; margin: 16px 0;
+      font-size: 0.85rem; line-height: 1.55;
+    }
+    .briefing-excerpt .meta { color: var(--muted); font-size: 0.78rem; display: block; margin-bottom: 12px; }
+    .briefing-excerpt h4 { color: var(--text); font-size: 0.95rem; margin: 16px 0 8px; }
+    .briefing-excerpt h4:first-of-type { margin-top: 0; }
+    .briefing-excerpt p { color: var(--muted); font-size: 0.85rem; margin: 0 0 10px; }
+    .ticker-table {
+      width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.8rem;
+    }
+    .ticker-table th, .ticker-table td {
+      text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+    }
+    .ticker-table th { color: var(--muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+
+    .json-pick {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 20px; margin: 16px 0;
+      font-family: var(--mono); font-size: 0.82rem; line-height: 1.5;
+      overflow-x: auto; white-space: pre; color: var(--text);
+    }
+    .json-pick .k { color: var(--accent); }
+    .json-pick .s { color: var(--green); }
+    .json-pick .n { color: var(--orange); }
+
+    /* Light-themed email preview render */
+    .email-preview {
+      background: #f8f9fa; color: #1a1a1a; border-radius: 8px;
+      padding: 20px; margin: 16px 0; border: 1px solid var(--border);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    .email-preview .email-container {
+      background: #ffffff; border-radius: 8px; padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .email-preview h1 {
+      color: #0d1117; font-size: 1.2rem; font-weight: 700;
+      border-bottom: 2px solid #58a6ff; padding-bottom: 8px; margin: 0 0 12px;
+    }
+    .email-preview p { color: #57606a; font-size: 0.85rem; margin: 0 0 16px; }
+    .email-preview table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .email-preview th { background: #f0f3f6; border: 1px solid #d0d7de; padding: 8px 10px; text-align: left; font-weight: 600; color: #1f2328; }
+    .email-preview td { border: 1px solid #d0d7de; padding: 8px 10px; text-align: left; color: #1f2328; }
+    .email-preview .up-cell { color: #1a7f37; font-weight: 600; }
+    .email-preview .down-cell { color: #cf222e; font-weight: 600; }
+    .email-preview .side-cell { color: #9a6700; font-weight: 600; }
+    .email-preview .src-cell { font-family: var(--mono); font-size: 0.75rem; color: #57606a; }
+    .email-preview .email-footer {
+      margin-top: 20px; padding-top: 12px; border-top: 1px solid #e1e4e8;
+      font-size: 0.75rem; color: #8b949e; text-align: center;
+    }
+    .email-stamp {
+      display: inline-block; padding: 4px 10px; border-radius: 4px;
+      background: rgba(63,185,80,0.12); color: var(--green);
+      font-size: 0.75rem; font-weight: 500; margin-bottom: 12px;
+    }
+
+    footer { text-align: center; padding: 40px 24px; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 2rem; }
+      .flow, .arch-row { flex-direction: column; }
+      .flow-arrow, .arch-arrow { transform: rotate(90deg); }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="#" class="logo">sender-<span>trades</span></a>
+    <div>
+      <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#how">How it works</a>
+      <a href="#example">Example</a>
+      <a href="#quickstart">Quick start</a>
+      <a href="#docs">Docs</a>
+    </div>
+  </nav>
+
+  <section class="hero">
+    <h1>sender-<span>trades</span></h1>
+    <p>LLM-powered intraday directional prediction engine with optional 0DTE options execution for SPY and QQQ. Ingest the Atlas Morning Briefing, run LLM research, get a clear % direction prediction, and automatically execute paper/live trades via Alpaca with automatic exit management.</p>
+    <div class="hero-badges">
+      <span class="badge green">● 135 tests</span>
+      <span class="badge blue">● LLM-driven predictions</span>
+      <span class="badge orange">● Per-asset % forecasts</span>
+      <span class="badge green">● Paper trading</span>
+      <span class="badge blue">● Tenacity retries</span>
+      <span class="badge orange">● Automatic exits</span>
+      <span class="badge green">● Full audit trail</span>
+    </div>
+    <div class="hero-buttons">
+      <a href="#quickstart" class="btn primary">Get started</a>
+      <a href="#docs" class="btn secondary">API docs</a>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="container">
+      <h2>Features</h2>
+      <div class="features">
+        <div class="feature">
+          <div class="icon">🤖</div>
+          <h3>LLM-powered prediction</h3>
+          <p>Asks the <code>opencode</code> CLI to emit per-asset directional predictions (direction, confidence %, expected move %, rationale, sources). Free Zen models first, paid Go fallback. Traces predictions back to original news publishers and market data — not the briefing itself.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📊</div>
+          <h3>Clear forecast table</h3>
+          <p>No confusing UP/DOWN/SIDE columns. Each asset gets a simple readout: Direction (UP/DOWN), Confidence, Predicted Move %, and Key Drivers of the Prediction with cited evidence. Also includes a <em>Market Vibe</em> summary for overall context.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🔍</div>
+          <h3>Root-provenance citation</h3>
+          <p>The LLM must cite where each prediction's evidence came from — original publisher (reuters, bloomberg, seekingalpha), watchlist ticker, or market data. No more opaque "LLM said so" or "per the briefing."</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📈</div>
+          <h3>Momentum + MeanReversion + EventDriven</h3>
+          <p>Three deterministic strategies run alongside the LLM for cross-reference: gap-based momentum, RSI-based mean-reversion, and catalyst-aware event-driven logic from macro data and news polarity.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🚀</div>
+          <h3>Paper-trading execution</h3>
+          <p>Optional execution module submits 0DTE option orders to Alpaca paper trading at 9:15 AM ET (queued for 9:30 AM open). Automatic exit management with take-profit limit orders, in-app stop-loss, trailing stops, and time-deadline force-close. All trades visible at <a href="https://app.alpaca.markets/paper/dashboard" style="color: var(--accent);">Alpaca Paper Dashboard</a>.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🔄</div>
+          <h3>Auto exit management</h3>
+          <p>When a trade fills, the engine immediately places a take-profit limit order at Alpaca. Stop-loss and trailing stops are managed in-app via a monitoring loop that polls quote data and triggers market sells when thresholds are hit. Close deadline enforced at 3:25 PM ET.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🛡️</div>
+          <h3>Resilient — Tenacity retries</h3>
+          <p>Every Alpaca API call is wrapped with <code>tenacity</code> exponential backoff (3 attempts, 1s→30s). Retries on 5xx server errors and network failures; skips 4xx client errors. ExecutionConfig read from <code>config.yaml</code> at call time.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📋</div>
+          <h3>Full audit trail</h3>
+          <p>Every trade lifecycle event written to structured JSON at <code>logs/&lt;date&gt;/trade-&lt;id&gt;.json</code>. Links <code>correlation_id → trade_id → order_ids</code>. Includes execution config snapshot, monitoring snapshots, lifecycle state machine events, and full recommendation payload.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🎯</div>
+          <h3>Realistic 0DTE strikes</h3>
+          <p>Strike computation fixed — no more 15% OTM strikes that don't exist in the chain. 30-delta options now target ~0.6% OTM, producing strikes like QQQ PUT @ 691 (not 591) for a 695 underlying.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📰</div>
+          <h3>Multi-source ingestion</h3>
+          <p>Finnhub quotes, Brave news, RSS feeds, and Atlas morning briefings. Snapshot-aware — reuses cached data from atlas-morning-briefing to avoid duplicate API calls and rate limits.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📋</div>
+          <h3>Structured logging</h3>
+          <p>JSON logs with per-run correlation IDs. Every prediction, risk check, and execution step is traceable. Logs organized by date in <code>logs/YYYY-MM-DD/</code> with run and summary files.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">📬</div>
+          <h3>Email reports</h3>
+          <p>Styled HTML forecast sent via Gmail SMTP. Clear table with Direction, Confidence, Predicted Move, and Key Drivers of the Prediction per asset. Each send is persisted to <code>logs/&lt;date&gt;/email-&lt;correlation_id&gt;.html</code> for audit.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🔄</div>
+          <h3>Yesterday's prediction recap</h3>
+          <p>After each run, checks the previous business day's prediction against finhub 1-hour candles. Determines if the predicted direction came true at any point intraday, when it triggered, and how long it held. Success/fail results appear in the email and are persisted to <code>logs/prediction-history.json</code>.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🧠</div>
+          <h3>Learning from history</h3>
+          <p>Prediction history is pruned and injected into the LLM's user prompt — prioritizing recent misses — so the model can learn from past outcomes. Aggregate success rate and per-prediction rationales help refine future calls without unbounded prompt growth.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🕐</div>
+          <h3>LA timezone aware</h3>
+          <p>All dates and times use <code>America/Los_Angeles</code> — log directories, email timestamps, briefing lookup, and risk engine deadlines. Market-close checks use actual <code>America/New_York</code> time.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🛡️</div>
+          <h3>Risk guardrails (optional)</h3>
+          <p>When best_trade execution is enabled: max loss cap, realistic 0DTE strikes, bid/ask spread ≤20%, time checks (no entries after 2PM), and OCC chain existence validation.</p>
+        </div>
+        <div class="feature">
+          <div class="icon">🐳</div>
+          <h3>Docker + CI/CD</h3>
+          <p>Multi-stage Dockerfile, docker-compose for app + docs, GitHub Actions for CI (ruff + pytest, 127 tests) and GitHub Pages deploy.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <div class="container">
+      <h2>Architecture</h2>
+
+      <h4>Pipeline overview</h4>
+      <div class="arch">
+        <div class="arch-row">
+          <div class="arch-box"><div class="tag">Phase 1</div><div class="val">Ingest<br>briefing</div><div class="tag">Atlas markdown</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 2</div><div class="val">Ingest<br>market</div><div class="tag">Snapshots or API</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 3</div><div class="val">Analyse</div><div class="tag">LLM + 3 strategies</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 4</div><div class="val">Forecast</div><div class="tag">Per-asset table</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 6</div><div class="val">Decide</div><div class="tag">Aggregate + risk</div></div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-box"><div class="tag">Phase 7</div><div class="val">Execute</div><div class="tag">Alpaca + exits</div></div>
+        </div>
+      </div>
+
+      <h4>Data sources</h4>
+      <table class="pill-table">
+        <tr><th>Source</th><th>Data</th><th>Snapshot cached</th></tr>
+        <tr><td>Finnhub</td><td>Real-time stock quotes (SPY, QQQ)</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>Yahoo Finance</td><td>Quote fallback when Finnhub 502s</td><td><span class="pill blue">Live</span></td></tr>
+        <tr><td>Brave Search</td><td>Financial news headlines</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>RSS Feeds (4)</td><td>Market news from Reuters, Dow Jones, Seeking Alpha, Investing.com</td><td><span class="pill green">Yes</span></td></tr>
+        <tr><td>Atlas Briefing</td><td>Macro summary, ticker table, news, blogs, papers</td><td><span class="pill blue">N/A</span></td></tr>
+        <tr><td>Alpaca Paper</td><td>Option chain, orders, positions, quotes</td><td><span class="pill green">N/A</span></td></tr>
+      </table>
+
+      <h4 style="margin-top: 32px;">Snapshot flow</h4>
+      <p style="color: var(--muted); font-size: 0.9rem;">
+        atlas-morning-briefing saves raw API responses to <code>snapshots/YYYY-MM-DD/</code>. sender-trades checks this directory
+        before making any API call. If snapshot has quotes for all target assets plus news — zero API calls are made.
+        This avoids duplicate Finnhub/Brave charges and rate limits.
+      </p>
+      <div class="diagram">
+<pre>atlas-morning-briefing/              sender-trades/
+                                          ┌────────────────────────┐
+  snapshots/                              │                        │
+    └── 2026-07-18/                       │     SnapshotLoader     │
+        ├── finnhub_data.json  ──────────►│    is_complete()?      │
+        ├── brave_news.json    ──────────►│     ┌─── Yes ────┐     │
+        ├── rss_feeds.json                │     │ Use cached │     │
+        └── snapshot_manifest.json        │     └────────────┘     │
+                                          │     ┌─── No ─────┐     │
+Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
+  Parser → BriefingData ─────────────────►│     └────────────┘     │
+                                          └────────────────────────┘</pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="container">
+      <h2>How it works</h2>
+      <div class="flow">
+        <div class="flow-step"><div class="label">1</div><div class="value">Ingest</div><div class="label">briefing + market data</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">2</div><div class="value">LLM Predict</div><div class="label">per-asset direction + %</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">3</div><div class="value">Forecast</div><div class="label">table + market vibe</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">4</div><div class="value">Check yesterday</div><div class="label">finhub 1h candles</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">5</div><div class="value">Execute</div><div class="label">submit + monitor + close</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="label">6</div><div class="value">Email</div><div class="label">forecast + recap</div></div>
+      </div>
+      <p style="text-align:center; color:var(--muted); margin-top: 24px; font-size:0.95rem;">
+        Predictions are always free. Set <code style="color:var(--accent)">execute: true</code> in
+        <code style="color:var(--accent)">config.yaml</code> to enable Alpaca paper/live execution with automatic exit management.
+      </p>
+    </div>
+  </section>
+
+  <section id="example">
+    <div class="container">
+      <h2>End-to-end example</h2>
+      <p class="example-intro">
+        A live prediction run from <code>2026-07-18</code> against the
+        <a href="https://github.com/senderic/atlas-morning-briefing" style="color: var(--accent);">atlas-morning-briefing</a>
+        snapshot. Three stages: ingest briefing + market → LLM predicts per-asset → email delivered.
+        Correlation ID: <code>test-run-001</code>.
+      </p>
+
+      <div class="stages">
+
+        <!-- Stage 1: ingest briefing + market -->
+        <div class="stage">
+          <div class="stage-header">
+            <span class="stage-num">1</span>
+            <span class="stage-title">Ingest — Atlas briefing + market snapshots</span>
+            <span class="stage-meta">
+              <a href="https://github.com/senderic/atlas-morning-briefing">atlas-morning-briefing repo →</a>
+            </span>
+          </div>
+          <div class="stage-body">
+            <p>
+              <strong>Parsed briefing</strong> from <code>~/atlas-morning-briefing/briefings/Atlas-Briefing-2026.07.18.md</code>.
+              Upstream runs an LLM distillation pass and ships a 25-row watchlist,
+              executive summary, AI &amp; tech news, blog updates, and top papers.
+            </p>
+            <p>
+              <strong>Market data</strong> loaded from snapshot
+              <code>snapshots/2026-07-18/</code> — 241 news items, 24 quotes, 67 RSS
+              entries. Zero API calls made.
+            </p>
+          </div>
+        </div>
+
+        <!-- Stage 2: LLM prediction -->
+        <div class="stage">
+          <div class="stage-header">
+            <span class="stage-num">2</span>
+            <span class="stage-title">LLM prediction — per-asset forecast</span>
+            <span class="stage-meta">opencode/deepseek-v4-flash-free · 17.2s · free Zen tier</span>
+          </div>
+          <div class="stage-body">
+            <p>
+              <strong>LLM prompt</strong> asked for predictions covering ALL target
+              assets (SPY and QQQ), not just a single trade. The free Zen model
+              <code>opencode/deepseek-v4-flash-free</code> responded first.
+            </p>
+            <p>
+              The LLM was instructed to cite <strong>root provenance</strong> — tracing
+              evidence back to the original news publisher (reuters, bloomberg, etc.) or
+              market data — not the atlas briefing itself. The response included both
+              per-asset predictions and an optional best_trade.
+            </p>
+
+            <div class="json-pick">{
+  <span class="k">"predictions"</span>: {
+    <span class="k">"SPY"</span>: {
+      <span class="k">"direction"</span>: <span class="s">"DOWN"</span>,
+      <span class="k">"confidence"</span>: <span class="n">0.82</span>,
+      <span class="k">"predicted_move_pct"</span>: <span class="n">-1.2</span>,
+      <span class="k">"rationale"</span>: <span class="s">"Broad-based selloff led by mega-cap tech (NVDA -2.2%, META -2.8%, MSFT -1.8%) and a -1.15% gap-down open signals capital rotation out of consumer-AI compute into defense/space infrastructure."</span>,
+      <span class="k">"sources"</span>: [<span class="s">"reuters:agentic-defense"</span>, <span class="s">"market:NVDA"</span>, <span class="s">"market:META"</span>]
+    },
+    <span class="k">"QQQ"</span>: {
+      <span class="k">"direction"</span>: <span class="s">"DOWN"</span>,
+      <span class="k">"confidence"</span>: <span class="n">0.88</span>,
+      <span class="k">"predicted_move_pct"</span>: <span class="n">-1.8</span>,
+      <span class="k">"rationale"</span>: <span class="s">"QQQ is the epicenter of the rotation: gapped -2.02%, now -1.50%, with every major tech holding (NVDA -2.2%, GOOGL -2.2%, META -2.8%, MSFT -1.8%) selling off as capital rotates from consumer-AI compute into defense/space infrastructure."</span>,
+      <span class="k">"sources"</span>: [<span class="s">"reuters:agentic-defense"</span>, <span class="s">"market:NVDA"</span>, <span class="s">"market:GOOGL"</span>]
+    }
+  },
+  <span class="k">"market_vibe"</span>: <span class="s">"Rotation from consumer-AI compute into defense/space infrastructure; tech-heavy indices gapping down as capital exits mega-cap tech for physical/electronic defense plays."</span>,
+  <span class="k">"best_trade"</span>: {
+    <span class="k">"asset"</span>: <span class="s">"QQQ"</span>,
+    <span class="k">"direction"</span>: <span class="s">"PUT"</span>,
+    <span class="k">"confidence"</span>: <span class="n">0.85</span>,
+    <span class="k">"rationale"</span>: <span class="s">"QQQ's heavy big-tech exposure makes it the cleanest directional play on the rotation."</span>,
+    <span class="k">"sources"</span>: [<span class="s">"market:QQQ"</span>]
+  }
+}</div>
+
+            <p>
+              <strong>Forecast table</strong> uses per-asset predictions directly.
+              The optional <code>best_trade</code> feeds into the execution path
+              (risk checks, strike computation, MCP submission).
+            </p>
+          </div>
+        </div>
+
+        <!-- Stage 3: email render -->
+        <div class="stage">
+          <div class="stage-header">
+            <span class="stage-num">3</span>
+            <span class="stage-title">Email output — as delivered</span>
+            <span class="stage-meta">Gmail SMTP · 2/2 sent</span>
+          </div>
+          <div class="stage-body">
+            <p>
+              The forecast table is rendered into an HTML email via Gmail SMTP.
+              No confusing UP/DOWN/SIDE columns — just clear Direction, Confidence,
+              Predicted Move, and Key Drivers of the Prediction per asset. The optional
+              <em>Market Vibe</em> section gives overall context.
+            </p>
+
+            <div class="email-preview">
+              <div class="email-container">
+                <span class="email-stamp" style="background: rgba(88,166,255,0.12); color: #58a6ff;">Inbox preview</span>
+                <h1>sender-trades — Intraday Prediction</h1>
+                <p>Generated at 2026-07-19 01:23 AM PDT</p>
+                <p style="font-size:0.82rem; background:#f0f6ff; padding:10px 14px; border-radius:6px; border-left:4px solid #58a6ff;">
+                  <strong>Market Vibe:</strong> Rotation from consumer-AI compute into defense/space
+                  infrastructure; tech-heavy indices gapping down as capital exits mega-cap tech
+                  for physical/electronic defense plays.
+                </p>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Asset</th><th>Direction</th><th>Confidence</th><th>Pred. Move</th><th>Key Drivers of the Prediction</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>SPY</td>
+                      <td class="down-cell">DOWN</td>
+                      <td>82%</td>
+                      <td class="down-cell">-1.2%</td>
+                      <td>Broad-based selloff led by mega-cap tech (NVDA -2.2%, META -2.8%, MSFT -1.8%) and a -1.15% gap-down open signals capital rotation out of consumer-AI compute into defense/space infrastructure.<br>
+                      <span style="font-size:0.75rem;color:#8b949e">reuters:agentic-defense · market:NVDA · market:META</span></td>
+                    </tr>
+                    <tr>
+                      <td>QQQ</td>
+                      <td class="down-cell">DOWN</td>
+                      <td>88%</td>
+                      <td class="down-cell">-1.8%</td>
+                      <td>QQQ is the epicenter of the rotation: gapped -2.02%, now -1.50%, with every major tech holding (NVDA -2.2%, GOOGL -2.2%, META -2.8%, MSFT -1.8%) selling off as capital rotates from consumer-AI compute into defense/space infrastructure.<br>
+                      <span style="font-size:0.75rem;color:#8b949e">reuters:agentic-defense · market:NVDA · market:GOOGL</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div style="margin-top: 20px; padding: 10px 14px; border-radius: 6px; border-left: 4px solid #1a7f37; background: #f0faf1; font-size: 0.82rem;">
+                  <p style="margin: 4px 0; color: #1f2328;"><strong>Yesterday's Prediction Recap</strong></p>
+                  <p style="margin: 4px 0; color: #1f2328;">
+                    <strong>QQQ</strong> — Predicted <strong>DOWN</strong> (72% confidence)
+                    <span style="display:inline-block; background:#1a7f37; color:#fff; border-radius:4px; padding:1px 8px; font-size:0.7rem; font-weight:600;">SUCCESS</span>
+                  </p>
+                  <p style="margin: 4px 0; color: #57606a;">
+                    Triggered at 07:00 AM PDT | held for ~3 hours |
+                    Daily range: $685.00 &ndash; $700.10 | Close: $690.50
+                  </p>
+                </div>
+                <div class="email-footer">
+                  sender-trades &mdash; 0DTE Intraday Prediction Engine
+                </div>
+              </div>
+            </div>
+
+            <p style="margin-top: 16px;">
+              A copy is persisted to
+              <code>logs/2026-07-19/email-test-run-001.html</code> for audit.
+              Prediction outcomes are appended to
+              <code>logs/prediction-history.json</code> for learning.
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      <p style="text-align: center; color: var(--muted); margin-top: 40px; font-size: 0.85rem;">
+        Read the full design notes in
+        <a href="https://github.com/senderic/sender-trades/blob/main/LESSONS_LEARNED.md" style="color: var(--accent);">LESSONS_LEARNED.md</a>
+        and the
+        <a href="https://github.com/senderic/sender-trades/blob/main/src/llm/trade_signal.py" style="color: var(--accent);">LLMTradeStrategy source</a>.
+      </p>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="container">
+      <h2>Quick start</h2>
+      <div class="cmd-list">
+        <div class="cmd-item">
+          <code>git clone &lt;repo&gt; &amp;&amp; cd sender-trades</code>
+          <div class="desc">Clone the repository</div>
+        </div>
+        <div class="cmd-item">
+          <code>cp .env.example .env</code>
+          <div class="desc">Configure API keys (Finnhub, Brave, Alpaca)</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv sync --all-extras</code>
+          <div class="desc">Install dependencies (uv recommended)</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run python -m src.main --dry-run</code>
+          <div class="desc">Run a dry run — no trades executed</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run python -m src.main --dry-run --email</code>
+          <div class="desc">Dry run + send forecast email</div>
+        </div>
+        <div class="cmd-item">
+          <code>docker compose run --rm app python -m src.main --dry-run</code>
+          <div class="desc">Or run via Docker</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run pytest -m "not integration"</code>
+          <div class="desc">Run all 135 tests (skip integration)</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run ruff check &amp;&amp; uv run ruff format --check</code>
+          <div class="desc">Lint and format check</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="container">
+      <h2>Documentation</h2>
+      <p style="text-align:center; color: var(--muted); margin-bottom: 32px;">
+        Full API reference and module documentation generated by Sphinx.
+      </p>
+      <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
+        <a href="#quickstart" class="btn primary">Quick start</a>
+        <a href="https://github.com/senderic/sender-trades" class="btn secondary">GitHub →</a>
+      </div>
+      <p style="text-align:center; color: var(--muted); margin-top: 24px; font-size: 0.85rem;">
+        To build and view the Sphinx docs locally:
+      </p>
+      <div class="cmd-list" style="max-width: 540px; margin: 16px auto 0;">
+        <div class="cmd-item">
+          <code>docker compose up docs</code>
+          <div class="desc">Sphinx autobuild at localhost:8080 (use <code>up</code>, not <code>run</code>)</div>
+        </div>
+        <div class="cmd-item">
+          <code>docker compose run --service-ports --rm docs</code>
+          <div class="desc">Or run once with ports published</div>
+        </div>
+        <div class="cmd-item">
+          <code>uv run sphinx-build docs/source docs/build</code>
+          <div class="desc">Static build (requires dev extras)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="container">
+      <h2>Strategy reference</h2>
+      <table class="pill-table">
+        <tr><th>Strategy</th><th>Approach</th><th>Output</th></tr>
+        <tr>
+          <td>LLM prediction (primary)</td>
+          <td>Opencode LLM over briefing + market snapshot + news sentiment + prediction history context</td>
+          <td>Per-asset direction, confidence %, predicted move %, cited sources, market vibe</td>
+        </tr>
+        <tr>
+          <td>Momentum</td>
+          <td>Gap opening detection + sentiment confirmation</td>
+          <td>CALL/PUT recommendation + confidence</td>
+        </tr>
+        <tr>
+          <td>Mean reversion</td>
+          <td>RSI-estimate contrarian signals</td>
+          <td>CALL/PUT recommendation + confidence</td>
+        </tr>
+        <tr>
+          <td>Event-driven</td>
+          <td>News catalyst keyword matching + polarity</td>
+          <td>CALL/PUT recommendation + confidence</td>
+        </tr>
+      </table>
+
+      <h4 style="margin-top: 32px;">Trade lifecycle (when execution is enabled)</h4>
+      <div class="diagram">
+<pre>CREATED → VALIDATING → SUBMITTED → ACKNOWLEDGED → FILLED → EXITS_PLACED → CLOSED
+    ↓         ↓            ↓              ↓          ↓            ↓
+                                        REJECTED   PARTIALLY   TP_FILLED
+                                         EXPIRED    FILLED     SL_FILLED
+                                                              FORCE_CLOSED
+
+Terminal: CLOSED, REJECTED, EXPIRED, FAILED</pre>
+      </div>
+
+      <h4 style="margin-top: 32px;">Risk guardrails (for best_trade execution)</h4>
+      <ul class="compact">
+        <li>Realistic 0DTE strikes — ~0.6% OTM for 30-delta, strikes that actually exist in the chain</li>
+        <li>Max loss hard cap — default $500</li>
+        <li>Bid/ask spread ≤20% of mid-price</li>
+        <li>OCC chain existence verification</li>
+        <li>Time check — no entries after 2PM ET</li>
+        <li>Tenacity retries — 3 attempts with exponential backoff on all Alpaca API calls</li>
+        <li>Time-deadline guard — monitoring loop force-closes at 15:25 ET</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="container">
+      <h2>Project</h2>
+      <div class="repo-links">
+        <a href="https://github.com/senderic/sender-trades">GitHub repository →</a>
+        <a href="https://github.com/senderic/sender-trades/actions">CI status →</a>
+        <a href="https://github.com/senderic/sender-trades/blob/main/README.md">README →</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    sender-trades &mdash; 0DTE Intraday Prediction &amp; Execution Engine · Powered by opencode LLM + Alpaca
+  </footer>
+</body>
+</html>

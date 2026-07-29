@@ -1,0 +1,249 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>src.models.briefing &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../engine.html">Engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../models.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../mcp.html">MCP</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">src.models.briefing</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for src.models.briefing</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">date</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">StrEnum</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+
+
+<div class="viewcode-block" id="BriefingQuality">
+<a class="viewcode-back" href="../../../models.html#models.BriefingQuality">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BriefingQuality</span><span class="p">(</span><span class="n">StrEnum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Observed quality of an Atlas morning briefing.</span>
+
+<span class="sd">    Attributes:</span>
+<span class="sd">        FULL: LLM layer ran upstream; executive summary is real LLM output.</span>
+<span class="sd">        DEGRADED: Upstream LLM layer was skipped or failed; the markdown</span>
+<span class="sd">            is the deterministic fallback (e.g. starts with</span>
+<span class="sd">            ``&quot;Synthesis unavailable for today&#39;s briefing&quot;``).</span>
+<span class="sd">        FAILED: Briefing is missing or unparsable — no executive summary</span>
+<span class="sd">            and no news items.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">FULL</span> <span class="o">=</span> <span class="s2">&quot;full&quot;</span>
+    <span class="n">DEGRADED</span> <span class="o">=</span> <span class="s2">&quot;degraded&quot;</span>
+    <span class="n">FAILED</span> <span class="o">=</span> <span class="s2">&quot;failed&quot;</span></div>
+
+
+
+<div class="viewcode-block" id="TickerRow">
+<a class="viewcode-back" href="../../../models.html#models.TickerRow">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">TickerRow</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A single ticker entry from the briefing watchlist.&quot;&quot;&quot;</span>
+
+    <span class="n">symbol</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">price</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">change_pct</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">likely_driver</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span></div>
+
+
+
+<div class="viewcode-block" id="NewsItem">
+<a class="viewcode-back" href="../../../models.html#models.NewsItem">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">NewsItem</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A news item extracted from the briefing.&quot;&quot;&quot;</span>
+
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">source</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">url</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">snippet</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">relevance_score</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></div>
+
+
+
+<div class="viewcode-block" id="BlogItem">
+<a class="viewcode-back" href="../../../models.html#models.BlogItem">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BlogItem</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A blog update entry from the briefing.&quot;&quot;&quot;</span>
+
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">author</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">summary</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">rating</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span></div>
+
+
+
+<div class="viewcode-block" id="PaperItem">
+<a class="viewcode-back" href="../../../models.html#models.PaperItem">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">PaperItem</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A research paper entry from the briefing.&quot;&quot;&quot;</span>
+
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">authors</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">arxiv_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">reproduction_score</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span></div>
+
+
+
+<div class="viewcode-block" id="BriefingData">
+<a class="viewcode-back" href="../../../models.html#models.BriefingData">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BriefingData</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Structured representation of a parsed morning briefing document.&quot;&quot;&quot;</span>
+
+    <span class="n">briefing_date</span><span class="p">:</span> <span class="n">date</span>
+    <span class="n">executive_summary</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">key_connections</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">tickers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">TickerRow</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">news_items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">NewsItem</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">blog_items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">BlogItem</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">papers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">PaperItem</span><span class="p">]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">raw_markdown</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">briefing_quality</span><span class="p">:</span> <span class="n">BriefingQuality</span> <span class="o">=</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">FULL</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">macro_sentiment</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Estimate macro sentiment from the executive summary text.</span>
+
+<span class="sd">        Returns ``None`` when the briefing is degraded or failed — the</span>
+<span class="sd">        absence of sentiment words on a degraded summary means &quot;we don&#39;t</span>
+<span class="sd">        know,&quot; not &quot;market is neutral,&quot; and downstream strategies must</span>
+<span class="sd">        not treat it as a neutral signal.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            A polarity score between -1.0 (bearish) and 1.0 (bullish),</span>
+<span class="sd">            or ``None`` when briefing quality is not ``FULL``.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">briefing_quality</span> <span class="o">!=</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">FULL</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">bullish_words</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;surge&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;gain&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;rally&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;bullish&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;optimism&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;growth&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;positive&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;strength&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;breakout&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;upside&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="n">bearish_words</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;decline&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;drop&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;loss&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;bearish&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;pessimism&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;slowdown&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;negative&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;weakness&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;selloff&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;downside&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="n">summary_lower</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">executive_summary</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="n">words</span> <span class="o">=</span> <span class="n">summary_lower</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+        <span class="n">bullish_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">words</span> <span class="k">if</span> <span class="n">w</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;.,!?&quot;</span><span class="p">)</span> <span class="ow">in</span> <span class="n">bullish_words</span><span class="p">)</span>
+        <span class="n">bearish_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">words</span> <span class="k">if</span> <span class="n">w</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;.,!?&quot;</span><span class="p">)</span> <span class="ow">in</span> <span class="n">bearish_words</span><span class="p">)</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="n">bullish_count</span> <span class="o">+</span> <span class="n">bearish_count</span>
+        <span class="k">if</span> <span class="n">total</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mf">0.0</span>
+        <span class="k">return</span> <span class="nb">round</span><span class="p">((</span><span class="n">bullish_count</span> <span class="o">-</span> <span class="n">bearish_count</span><span class="p">)</span> <span class="o">/</span> <span class="n">total</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,430 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mcp.client &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../engine.html">Engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../models.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../mcp.html">MCP</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">mcp.client</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for mcp.client</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;MCP client for broker communication and order execution.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">uuid</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">structlog</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">Settings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.mcp.schemas</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">build_alpaca_execution</span><span class="p">,</span>
+    <span class="n">format_execution_json</span><span class="p">,</span>
+    <span class="n">occ_option_symbol</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.recommendation</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ExecutionCommand</span><span class="p">,</span>
+    <span class="n">TradeRecommendation</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.timezone</span><span class="w"> </span><span class="kn">import</span> <span class="n">today_local</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">structlog</span><span class="o">.</span><span class="n">get_logger</span><span class="p">()</span>
+
+
+<div class="viewcode-block" id="MCPClientError">
+<a class="viewcode-back" href="../../mcp.html#mcp.client.MCPClientError">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">MCPClientError</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Raised when an MCP broker client encounters a non-recoverable error.&quot;&quot;&quot;</span>
+
+    <span class="k">pass</span></div>
+
+
+
+<div class="viewcode-block" id="MCPBrokerClient">
+<a class="viewcode-back" href="../../mcp.html#mcp.client.MCPBrokerClient">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">MCPBrokerClient</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Client for interacting with an MCP-based broker daemon (Alpaca).&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="MCPBrokerClient.__init__">
+<a class="viewcode-back" href="../../mcp.html#mcp.client.MCPBrokerClient.__init__">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Settings</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Initialize MCPBrokerClient with application settings.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            config: Application settings.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">env_mode</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">env_mode</span></div>
+
+
+<div class="viewcode-block" id="MCPBrokerClient.query_option_chain">
+<a class="viewcode-back" href="../../mcp.html#mcp.client.MCPBrokerClient.query_option_chain">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">query_option_chain</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">asset</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">expiry</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Query the option chain for a given asset and expiry.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            asset: Ticker symbol (e.g. SPY).</span>
+<span class="sd">            expiry: Expiration date in ISO format (defaults to today).</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            List of option contract dicts from the MCP daemon.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">expiry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">expiry</span> <span class="o">=</span> <span class="n">today_local</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;mcp_chain_query&quot;</span><span class="p">,</span> <span class="n">asset</span><span class="o">=</span><span class="n">asset</span><span class="p">,</span> <span class="n">expiry</span><span class="o">=</span><span class="n">expiry</span><span class="p">)</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mcp_call</span><span class="p">(</span>
+            <span class="s2">&quot;get_option_contracts&quot;</span><span class="p">,</span>
+            <span class="p">{</span>
+                <span class="s2">&quot;underlying_symbol&quot;</span><span class="p">:</span> <span class="n">asset</span><span class="p">,</span>
+                <span class="s2">&quot;expiration_date&quot;</span><span class="p">:</span> <span class="n">expiry</span><span class="p">,</span>
+            <span class="p">},</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="MCPBrokerClient.query_option_quote">
+<a class="viewcode-back" href="../../mcp.html#mcp.client.MCPBrokerClient.query_option_quote">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">query_option_quote</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">occ_symbol</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Query the latest quote for a specific OCC option symbol.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            occ_symbol: The OCC option symbol to look up.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Dict with quote data, or None if not found.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;mcp_quote_query&quot;</span><span class="p">,</span> <span class="n">symbol</span><span class="o">=</span><span class="n">occ_symbol</span><span class="p">)</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mcp_single</span><span class="p">(</span>
+            <span class="s2">&quot;get_option_latest_quote&quot;</span><span class="p">,</span>
+            <span class="p">{</span>
+                <span class="s2">&quot;symbol&quot;</span><span class="p">:</span> <span class="n">occ_symbol</span><span class="p">,</span>
+            <span class="p">},</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="MCPBrokerClient.execute">
+<a class="viewcode-back" href="../../mcp.html#mcp.client.MCPBrokerClient.execute">[docs]</a>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rec</span><span class="p">:</span> <span class="n">TradeRecommendation</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Execute a trade recommendation through the MCP broker.</span>
+
+<span class="sd">        Verifies the contract exists in the chain, checks the bid/ask spread,</span>
+<span class="sd">        and either dry-runs or submits the order.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            rec: The trade recommendation to execute.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Dict with execution status, occ_symbol, bid, ask, and result.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">today_str</span> <span class="o">=</span> <span class="n">today_local</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="n">option_type</span> <span class="o">=</span> <span class="s2">&quot;C&quot;</span> <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">direction</span><span class="o">.</span><span class="n">value</span> <span class="o">==</span> <span class="s2">&quot;CALL&quot;</span> <span class="k">else</span> <span class="s2">&quot;P&quot;</span>
+        <span class="n">expiry</span> <span class="o">=</span> <span class="n">rec</span><span class="o">.</span><span class="n">expires_at</span> <span class="ow">or</span> <span class="n">today_str</span>
+        <span class="n">occ_sym</span> <span class="o">=</span> <span class="n">occ_option_symbol</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">asset</span><span class="p">,</span> <span class="n">expiry</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">target_strike</span><span class="p">,</span> <span class="n">option_type</span><span class="p">)</span>
+
+        <span class="n">chain_data</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">query_option_chain</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">asset</span><span class="p">,</span> <span class="n">expiry</span><span class="p">)</span>
+        <span class="n">chain_symbols</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;symbol&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">chain_data</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">occ_sym</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">chain_symbols</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Contract </span><span class="si">{</span><span class="n">occ_sym</span><span class="si">}</span><span class="s2"> not found in chain for </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">asset</span><span class="si">}</span><span class="s2"> expiring </span><span class="si">{</span><span class="n">expiry</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;mcp_contract_not_found&quot;</span><span class="p">,</span> <span class="n">occ_symbol</span><span class="o">=</span><span class="n">occ_sym</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="p">,</span> <span class="s2">&quot;occ_symbol&quot;</span><span class="p">:</span> <span class="n">occ_sym</span><span class="p">,</span> <span class="s2">&quot;found_symbols&quot;</span><span class="p">:</span> <span class="n">chain_symbols</span><span class="p">[:</span><span class="mi">10</span><span class="p">]}</span>
+
+        <span class="n">quote_data</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">query_option_quote</span><span class="p">(</span><span class="n">occ_sym</span><span class="p">)</span>
+        <span class="n">bid</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="n">ask</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">quote_data</span><span class="p">:</span>
+            <span class="n">bid</span> <span class="o">=</span> <span class="n">parse_float</span><span class="p">(</span><span class="n">quote_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;bid&quot;</span><span class="p">))</span>
+            <span class="n">ask</span> <span class="o">=</span> <span class="n">parse_float</span><span class="p">(</span><span class="n">quote_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;ask&quot;</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">bid</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">ask</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">ask</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">spread_pct</span> <span class="o">=</span> <span class="p">(</span><span class="n">ask</span> <span class="o">-</span> <span class="n">bid</span><span class="p">)</span> <span class="o">/</span> <span class="p">((</span><span class="n">ask</span> <span class="o">+</span> <span class="n">bid</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">)</span> <span class="o">*</span> <span class="mi">100</span>
+                <span class="n">max_spread</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">risk</span><span class="o">.</span><span class="n">max_bid_ask_spread_pct</span>
+                <span class="k">if</span> <span class="n">spread_pct</span> <span class="o">&gt;</span> <span class="n">max_spread</span><span class="p">:</span>
+                    <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Bid/ask spread </span><span class="si">{</span><span class="n">spread_pct</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">% exceeds max </span><span class="si">{</span><span class="n">max_spread</span><span class="si">}</span><span class="s2">%&quot;</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;mcp_wide_spread&quot;</span><span class="p">,</span> <span class="n">spread_pct</span><span class="o">=</span><span class="n">spread_pct</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="p">{</span>
+                        <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="p">,</span>
+                        <span class="s2">&quot;occ_symbol&quot;</span><span class="p">:</span> <span class="n">occ_sym</span><span class="p">,</span>
+                        <span class="s2">&quot;bid&quot;</span><span class="p">:</span> <span class="n">bid</span><span class="p">,</span>
+                        <span class="s2">&quot;ask&quot;</span><span class="p">:</span> <span class="n">ask</span><span class="p">,</span>
+                        <span class="s2">&quot;spread_pct&quot;</span><span class="p">:</span> <span class="n">spread_pct</span><span class="p">,</span>
+                    <span class="p">}</span>
+
+        <span class="n">cmd</span> <span class="o">=</span> <span class="n">build_alpaca_execution</span><span class="p">(</span><span class="n">rec</span><span class="p">,</span> <span class="n">occ_sym</span><span class="p">,</span> <span class="n">bid</span><span class="o">=</span><span class="n">bid</span><span class="p">,</span> <span class="n">ask</span><span class="o">=</span><span class="n">ask</span><span class="p">)</span>
+        <span class="n">execute_flag</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">general</span><span class="o">.</span><span class="n">execute</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">execute_flag</span><span class="p">:</span>
+            <span class="n">execution_json</span> <span class="o">=</span> <span class="n">format_execution_json</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;mcp_dry_run&quot;</span><span class="p">,</span> <span class="n">execution_payload</span><span class="o">=</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">execution_json</span><span class="p">))</span>
+            <span class="k">return</span> <span class="p">{</span>
+                <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;dry_run&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;occ_symbol&quot;</span><span class="p">:</span> <span class="n">occ_sym</span><span class="p">,</span>
+                <span class="s2">&quot;bid&quot;</span><span class="p">:</span> <span class="n">bid</span><span class="p">,</span>
+                <span class="s2">&quot;ask&quot;</span><span class="p">:</span> <span class="n">ask</span><span class="p">,</span>
+                <span class="s2">&quot;execution_command&quot;</span><span class="p">:</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">execution_json</span><span class="p">),</span>
+            <span class="p">}</span>
+
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_execute_mcp_command</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;executed&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;occ_symbol&quot;</span><span class="p">:</span> <span class="n">occ_sym</span><span class="p">,</span>
+            <span class="s2">&quot;bid&quot;</span><span class="p">:</span> <span class="n">bid</span><span class="p">,</span>
+            <span class="s2">&quot;ask&quot;</span><span class="p">:</span> <span class="n">ask</span><span class="p">,</span>
+            <span class="s2">&quot;execution_result&quot;</span><span class="p">:</span> <span class="n">result</span><span class="p">,</span>
+        <span class="p">}</span></div>
+
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_mcp_call</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Send a JSON-RPC tools/call request to the MCP daemon.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            tool: Name of the tool to call.</span>
+<span class="sd">            params: Arguments for the tool.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            List of result dicts from the daemon response.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">daemon</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">mcp</span><span class="o">.</span><span class="n">alpaca</span>
+        <span class="n">request</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;jsonrpc&quot;</span><span class="p">:</span> <span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;tools/call&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">tool</span><span class="p">,</span> <span class="s2">&quot;arguments&quot;</span><span class="p">:</span> <span class="n">params</span><span class="p">},</span>
+            <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
+        <span class="p">}</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">proc</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_subprocess_exec</span><span class="p">(</span>
+                <span class="n">daemon</span><span class="o">.</span><span class="n">command</span><span class="p">,</span>
+                <span class="o">*</span><span class="n">daemon</span><span class="o">.</span><span class="n">args</span><span class="p">,</span>
+                <span class="n">stdin</span><span class="o">=</span><span class="n">asyncio</span><span class="o">.</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                <span class="n">stdout</span><span class="o">=</span><span class="n">asyncio</span><span class="o">.</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                <span class="n">stderr</span><span class="o">=</span><span class="n">asyncio</span><span class="o">.</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">request_bytes</span> <span class="o">=</span> <span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">request</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+            <span class="n">stdout_bytes</span><span class="p">,</span> <span class="n">stderr_bytes</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span>
+                <span class="n">proc</span><span class="o">.</span><span class="n">communicate</span><span class="p">(</span><span class="n">request_bytes</span><span class="p">),</span>
+                <span class="n">timeout</span><span class="o">=</span><span class="n">daemon</span><span class="o">.</span><span class="n">timeout_sec</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="n">stderr_bytes</span><span class="p">:</span>
+                <span class="n">stderr</span> <span class="o">=</span> <span class="n">stderr_bytes</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">stderr</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;mcp_stderr&quot;</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">stderr</span><span class="p">)</span>
+            <span class="n">results</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parse_mcp_response</span><span class="p">(</span><span class="n">stdout_bytes</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span>
+            <span class="k">return</span> <span class="n">results</span>
+        <span class="k">except</span> <span class="ne">TimeoutError</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;mcp_timeout&quot;</span><span class="p">,</span> <span class="n">tool</span><span class="o">=</span><span class="n">tool</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;mcp_not_found&quot;</span><span class="p">,</span> <span class="n">command</span><span class="o">=</span><span class="n">daemon</span><span class="o">.</span><span class="n">command</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;mcp_error&quot;</span><span class="p">,</span> <span class="n">tool</span><span class="o">=</span><span class="n">tool</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+            <span class="k">return</span> <span class="p">[]</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_mcp_single</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tool</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">params</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Call an MCP tool and return the first result element.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            tool: Name of the tool to call.</span>
+<span class="sd">            params: Arguments for the tool.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            First result dict, or None if no results.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mcp_call</span><span class="p">(</span><span class="n">tool</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">results</span> <span class="k">else</span> <span class="kc">None</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_execute_mcp_command</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cmd</span><span class="p">:</span> <span class="n">ExecutionCommand</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Send an order execution command to the MCP daemon.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            cmd: The execution command to send.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Dict containing parsed response and raw output.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">daemon</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">mcp</span><span class="o">.</span><span class="n">alpaca</span>
+        <span class="n">payload</span> <span class="o">=</span> <span class="n">cmd</span><span class="o">.</span><span class="n">payload</span><span class="o">.</span><span class="n">model_dump</span><span class="p">(</span><span class="n">exclude_none</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">request</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;jsonrpc&quot;</span><span class="p">:</span> <span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;tools/call&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">cmd</span><span class="o">.</span><span class="n">action</span><span class="p">,</span> <span class="s2">&quot;arguments&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">},</span>
+            <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()),</span>
+        <span class="p">}</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">proc</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_subprocess_exec</span><span class="p">(</span>
+                <span class="n">daemon</span><span class="o">.</span><span class="n">command</span><span class="p">,</span>
+                <span class="o">*</span><span class="n">daemon</span><span class="o">.</span><span class="n">args</span><span class="p">,</span>
+                <span class="n">stdin</span><span class="o">=</span><span class="n">asyncio</span><span class="o">.</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                <span class="n">stdout</span><span class="o">=</span><span class="n">asyncio</span><span class="o">.</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                <span class="n">stderr</span><span class="o">=</span><span class="n">asyncio</span><span class="o">.</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">stdout_bytes</span><span class="p">,</span> <span class="n">stderr_bytes</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span>
+                <span class="n">proc</span><span class="o">.</span><span class="n">communicate</span><span class="p">((</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">request</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">()),</span>
+                <span class="n">timeout</span><span class="o">=</span><span class="n">daemon</span><span class="o">.</span><span class="n">timeout_sec</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">result_text</span> <span class="o">=</span> <span class="n">stdout_bytes</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">stderr_bytes</span><span class="p">:</span>
+                <span class="n">stderr_text</span> <span class="o">=</span> <span class="n">stderr_bytes</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">stderr_text</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;mcp_exec_stderr&quot;</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">stderr_text</span><span class="p">)</span>
+            <span class="n">parsed</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parse_mcp_response</span><span class="p">(</span><span class="n">result_text</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;response&quot;</span><span class="p">:</span> <span class="n">parsed</span><span class="p">,</span> <span class="s2">&quot;raw&quot;</span><span class="p">:</span> <span class="n">result_text</span><span class="p">}</span>
+        <span class="k">except</span> <span class="ne">TimeoutError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;mcp_timeout&quot;</span><span class="p">}</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_parse_mcp_response</span><span class="p">(</span><span class="n">output</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Parse JSON-RPC response lines from the MCP daemon output.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            output: Raw stdout string from the daemon process.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            List of parsed result dicts, skipping errors.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">results</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">output</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">):</span>
+            <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+                <span class="k">if</span> <span class="s2">&quot;result&quot;</span> <span class="ow">in</span> <span class="n">msg</span><span class="p">:</span>
+                    <span class="n">content</span> <span class="o">=</span> <span class="n">msg</span><span class="p">[</span><span class="s2">&quot;result&quot;</span><span class="p">]</span>
+                    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+                        <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+                    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                        <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="s2">&quot;error&quot;</span> <span class="ow">in</span> <span class="n">msg</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;mcp_rpc_error&quot;</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="n">msg</span><span class="p">[</span><span class="s2">&quot;error&quot;</span><span class="p">])</span>
+            <span class="k">except</span> <span class="n">json</span><span class="o">.</span><span class="n">JSONDecodeError</span><span class="p">:</span>
+                <span class="k">continue</span>
+        <span class="k">return</span> <span class="n">results</span></div>
+
+
+
+<div class="viewcode-block" id="parse_float">
+<a class="viewcode-back" href="../../mcp.html#mcp.client.parse_float">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_float</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Safely parse a value as a float, returning None on failure.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        value: The value to parse.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        A float, or None if parsing fails.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="ne">TypeError</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

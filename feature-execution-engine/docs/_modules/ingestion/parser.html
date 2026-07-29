@@ -1,0 +1,559 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ingestion.parser &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../engine.html">Engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../models.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../mcp.html">MCP</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">ingestion.parser</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for ingestion.parser</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;News article parsing and extraction utilities.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">date</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.briefing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">BlogItem</span><span class="p">,</span>
+    <span class="n">BriefingData</span><span class="p">,</span>
+    <span class="n">BriefingQuality</span><span class="p">,</span>
+    <span class="n">NewsItem</span><span class="p">,</span>
+    <span class="n">PaperItem</span><span class="p">,</span>
+    <span class="n">TickerRow</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.timezone</span><span class="w"> </span><span class="kn">import</span> <span class="n">today_local</span>
+
+<span class="c1"># Literal deterministic fallback string emitted by</span>
+<span class="c1"># atlas-morning-briefing&#39;s generate_markdown_briefing() when the LLM</span>
+<span class="c1"># layer is skipped upstream. See LESSONS_LEARNED.md (2026-07-18 incident).</span>
+<span class="n">DEGRADED_SUMMARY_PREFIX</span> <span class="o">=</span> <span class="s2">&quot;Synthesis unavailable for today&#39;s briefing&quot;</span>
+
+
+<div class="viewcode-block" id="parse_briefing_date">
+<a class="viewcode-back" href="../../ingestion.html#ingestion.parser.parse_briefing_date">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_briefing_date</span><span class="p">(</span><span class="n">filename</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">date</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract the briefing date from a filename containing YYYY.MM.DD.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        filename: The file name to search for a date pattern.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The parsed date, or None if no pattern is found.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(\d</span><span class="si">{4}</span><span class="s2">)\.(\d</span><span class="si">{2}</span><span class="s2">)\.(\d</span><span class="si">{2}</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">match</span><span class="p">:</span>
+        <span class="n">year</span><span class="p">,</span> <span class="n">month</span><span class="p">,</span> <span class="n">day</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)),</span> <span class="nb">int</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">3</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">date</span><span class="p">(</span><span class="n">year</span><span class="p">,</span> <span class="n">month</span><span class="p">,</span> <span class="n">day</span><span class="p">)</span>
+    <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<div class="viewcode-block" id="find_todays_briefing">
+<a class="viewcode-back" href="../../ingestion.html#ingestion.parser.find_todays_briefing">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">find_todays_briefing</span><span class="p">(</span>
+    <span class="n">directory</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">,</span>
+    <span class="n">briefings_subdir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;briefings&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Find today&#39;s Atlas briefing markdown file, falling back to the most recent.</span>
+
+<span class="sd">    Looks in ``&lt;directory&gt;/&lt;briefings_subdir&gt;`` first (current upstream</span>
+<span class="sd">    layout) and falls back to ``&lt;directory&gt;`` itself if the subdir is</span>
+<span class="sd">    missing or contains no ``Atlas-Briefing-*.md`` files. This handles</span>
+<span class="sd">    both the modern layout (new briefings under ``briefings/``, stale</span>
+<span class="sd">    ones left in root) and the legacy layout (all briefings in root).</span>
+
+<span class="sd">    Within the resolved search directory, today&#39;s exact filename is</span>
+<span class="sd">    preferred; otherwise the most recent file is returned.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        directory: Path to the atlas-morning-briefing project root.</span>
+<span class="sd">        briefings_subdir: Sub-directory containing briefing markdown</span>
+<span class="sd">            files. Pass an empty string to search the root directly.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Path to the briefing file, or None if none are found.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">root</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">()</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">root</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">candidates</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">if</span> <span class="n">briefings_subdir</span><span class="p">:</span>
+        <span class="n">subdir</span> <span class="o">=</span> <span class="n">root</span> <span class="o">/</span> <span class="n">briefings_subdir</span>
+        <span class="k">if</span> <span class="n">subdir</span><span class="o">.</span><span class="n">is_dir</span><span class="p">():</span>
+            <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">subdir</span><span class="p">)</span>
+    <span class="n">candidates</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">root</span><span class="p">)</span>
+
+    <span class="n">today</span> <span class="o">=</span> <span class="n">today_local</span><span class="p">()</span>
+    <span class="n">expected_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Atlas-Briefing-</span><span class="si">{</span><span class="n">today</span><span class="o">.</span><span class="n">year</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">today</span><span class="o">.</span><span class="n">month</span><span class="si">:</span><span class="s2">02d</span><span class="si">}</span><span class="s2">.</span><span class="si">{</span><span class="n">today</span><span class="o">.</span><span class="n">day</span><span class="si">:</span><span class="s2">02d</span><span class="si">}</span><span class="s2">.md&quot;</span>
+
+    <span class="k">for</span> <span class="n">search_dir</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">:</span>
+        <span class="n">today_candidate</span> <span class="o">=</span> <span class="n">search_dir</span> <span class="o">/</span> <span class="n">expected_name</span>
+        <span class="k">if</span> <span class="n">today_candidate</span><span class="o">.</span><span class="n">is_file</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">today_candidate</span>
+        <span class="n">md_files</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">search_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">&quot;Atlas-Briefing-*.md&quot;</span><span class="p">),</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">md_files</span><span class="p">:</span>
+            <span class="c1"># Skip .epub (glob above is .md-only already); return newest.</span>
+            <span class="k">return</span> <span class="n">md_files</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">return</span> <span class="kc">None</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_ticker_section</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract the Financial Market Overview / Stock Watchlist section from markdown.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        text: Full markdown content of the briefing.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The raw text of the ticker section, or empty string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="sa">r</span><span class="s2">&quot;(?:##\s*Financial Market Overview|##\s*Stock Watchlist)\s*\n(.*?)(?=\n##\s|\Z)&quot;</span><span class="p">,</span>
+        <span class="n">text</span><span class="p">,</span>
+        <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">match</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_executive_summary</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract the Executive Summary or Today&#39;s Key Connections section.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        text: Full markdown content of the briefing.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The raw text of the executive summary, or empty string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="sa">r</span><span class="s2">&quot;(?:##\s*Executive Summary|##\s*Today&#39;s Key Connections)\s*\n(.*?)(?=\n##\s|\Z)&quot;</span><span class="p">,</span>
+        <span class="n">text</span><span class="p">,</span>
+        <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">match</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_tickers</span><span class="p">(</span><span class="n">ticker_section</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">TickerRow</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse individual ticker rows from the ticker section text.</span>
+
+<span class="sd">    Handles both pipe-table markdown format and plain bold-marker format.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        ticker_section: Raw text of the ticker section.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List of TickerRow objects parsed from the section.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tickers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">TickerRow</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">ticker_section</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">line</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">lines</span><span class="p">):</span>
+        <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span> <span class="ow">or</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;#&quot;</span><span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;|&quot;</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">2</span> <span class="ow">or</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;|---&quot;</span><span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="n">cells</span> <span class="o">=</span> <span class="p">[</span><span class="n">c</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;|&quot;</span><span class="p">)</span> <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">cells</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">symbol</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">price</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="n">change_pct</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="n">driver</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">for</span> <span class="n">cell</span> <span class="ow">in</span> <span class="n">cells</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+                <span class="n">price_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$?([0-9,]+\.\d</span><span class="si">{2}</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">cell</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">price_match</span> <span class="ow">and</span> <span class="n">price</span> <span class="o">==</span> <span class="mf">0.0</span><span class="p">:</span>
+                    <span class="n">price</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">price_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
+                <span class="n">pct_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;([+-]?\d+\.?\d*)%&quot;</span><span class="p">,</span> <span class="n">cell</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">pct_match</span> <span class="ow">and</span> <span class="n">change_pct</span> <span class="o">==</span> <span class="mf">0.0</span><span class="p">:</span>
+                    <span class="n">change_pct</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">pct_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="n">driver_cells</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="n">c</span>
+                <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">cells</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$?[0-9,]+\.\d</span><span class="si">{2}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;[+-]?\d+\.?\d*%&quot;</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span>
+            <span class="p">]</span>
+            <span class="k">if</span> <span class="n">driver_cells</span><span class="p">:</span>
+                <span class="n">driver</span> <span class="o">=</span> <span class="n">driver_cells</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">driver_cells</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">tickers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">TickerRow</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="n">price</span><span class="p">,</span> <span class="n">change_pct</span><span class="o">=</span><span class="n">change_pct</span><span class="p">,</span> <span class="n">likely_driver</span><span class="o">=</span><span class="n">driver</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="n">bold_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\*\*(\w+)\*\*&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">bold_match</span><span class="p">:</span>
+            <span class="n">symbol</span> <span class="o">=</span> <span class="n">bold_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">price_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\$?([0-9,]+\.\d</span><span class="si">{2}</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+            <span class="n">pct_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;([+-]?\d+\.?\d*)%&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+            <span class="n">driver_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+                <span class="sa">r</span><span class="s2">&quot;(?:(?:Driver|driver)[:\s]+|Likely driver:\s*)(.+?)(?:\.\s|\.$|$)&quot;</span><span class="p">,</span>
+                <span class="n">line</span><span class="p">,</span>
+                <span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">price</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">price_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span> <span class="k">if</span> <span class="n">price_match</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="n">change_pct</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">pct_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span> <span class="k">if</span> <span class="n">pct_match</span> <span class="k">else</span> <span class="mf">0.0</span>
+            <span class="n">driver</span> <span class="o">=</span> <span class="n">driver_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">driver_match</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">tickers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">TickerRow</span><span class="p">(</span><span class="n">symbol</span><span class="o">=</span><span class="n">symbol</span><span class="p">,</span> <span class="n">price</span><span class="o">=</span><span class="n">price</span><span class="p">,</span> <span class="n">change_pct</span><span class="o">=</span><span class="n">change_pct</span><span class="p">,</span> <span class="n">likely_driver</span><span class="o">=</span><span class="n">driver</span><span class="p">)</span>
+            <span class="p">)</span>
+    <span class="k">return</span> <span class="n">tickers</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_news</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">NewsItem</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract AI &amp; Tech News / News items from the briefing markdown.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        text: Full markdown content of the briefing.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List of NewsItem objects.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">NewsItem</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">section</span> <span class="o">=</span> <span class="n">_extract_section</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="s2">&quot;AI &amp; Tech News&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">section</span><span class="p">:</span>
+        <span class="n">section</span> <span class="o">=</span> <span class="n">_extract_section</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="s2">&quot;News&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">section</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">items</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">section</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">current_title</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">current_source</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">current_url</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+        <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">url_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\[Read more\]\((.+?)\)&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">url_match</span><span class="p">:</span>
+            <span class="n">current_url</span> <span class="o">=</span> <span class="n">url_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">current_title</span> <span class="ow">and</span> <span class="n">current_source</span><span class="p">:</span>
+                <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">NewsItem</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="n">current_title</span><span class="p">,</span> <span class="n">source</span><span class="o">=</span><span class="n">current_source</span><span class="p">,</span> <span class="n">url</span><span class="o">=</span><span class="n">current_url</span><span class="p">))</span>
+                <span class="n">current_title</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                <span class="n">current_source</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+                <span class="n">current_url</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">continue</span>
+        <span class="n">source_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\*Source:\s*(.+?)\*&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">source_match</span><span class="p">:</span>
+            <span class="n">current_source</span> <span class="o">=</span> <span class="n">source_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;### &quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;**&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;***&quot;</span><span class="p">)):</span>
+            <span class="n">current_title</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;### &quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">items</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_blogs</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">BlogItem</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract Blog Updates section from the briefing markdown.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        text: Full markdown content of the briefing.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List of BlogItem objects.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">BlogItem</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">section</span> <span class="o">=</span> <span class="n">_extract_section</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="s2">&quot;Blog Updates&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">section</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">items</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">section</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">current_title</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">current_author</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">current_summary</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">current_rating</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+        <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;### &quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span>
+            <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;**&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;***&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="s2">&quot;*(&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">line</span>
+        <span class="p">):</span>
+            <span class="k">if</span> <span class="n">current_title</span> <span class="ow">and</span> <span class="n">current_author</span><span class="p">:</span>
+                <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="n">BlogItem</span><span class="p">(</span>
+                        <span class="n">title</span><span class="o">=</span><span class="n">current_title</span><span class="p">,</span>
+                        <span class="n">author</span><span class="o">=</span><span class="n">current_author</span><span class="p">,</span>
+                        <span class="n">summary</span><span class="o">=</span><span class="n">current_summary</span><span class="p">,</span>
+                        <span class="n">rating</span><span class="o">=</span><span class="n">current_rating</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+            <span class="n">current_title</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;### &quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s2">&quot;*&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="n">current_author</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">current_summary</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">current_rating</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">continue</span>
+        <span class="n">author_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\*([A-Za-z0-9\s&amp;.]+)\*&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">author_match</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">current_author</span><span class="p">:</span>
+            <span class="n">current_author</span> <span class="o">=</span> <span class="n">author_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="k">continue</span>
+        <span class="n">star_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;([★☆]+)&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">star_match</span><span class="p">:</span>
+            <span class="n">current_rating</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">star_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="s2">&quot;★&quot;</span><span class="p">)</span>
+            <span class="k">continue</span>
+        <span class="n">url_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\[Read more\]\((.+?)\)&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">url_match</span><span class="p">:</span>
+            <span class="n">current_summary</span> <span class="o">=</span> <span class="n">current_summary</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="k">continue</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">line</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">40</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;*Source&quot;</span><span class="p">):</span>
+            <span class="n">current_summary</span> <span class="o">=</span> <span class="p">(</span><span class="n">current_summary</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span> <span class="o">+</span> <span class="n">line</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">current_title</span> <span class="ow">and</span> <span class="n">current_author</span><span class="p">:</span>
+        <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">BlogItem</span><span class="p">(</span>
+                <span class="n">title</span><span class="o">=</span><span class="n">current_title</span><span class="p">,</span>
+                <span class="n">author</span><span class="o">=</span><span class="n">current_author</span><span class="p">,</span>
+                <span class="n">summary</span><span class="o">=</span><span class="n">current_summary</span><span class="p">,</span>
+                <span class="n">rating</span><span class="o">=</span><span class="n">current_rating</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">items</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_papers</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">PaperItem</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract Top Papers section from the briefing markdown.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        text: Full markdown content of the briefing.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        List of PaperItem objects.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">PaperItem</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">section</span> <span class="o">=</span> <span class="n">_extract_section</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="s2">&quot;Top Papers&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">section</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">items</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">section</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">current_title</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">current_authors</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">current_score</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+        <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">title_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;###\s+\d+\.\s+(.+?)(?:\s+[★☆]+\s*)?$&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">title_match</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">current_title</span><span class="p">:</span>
+                <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="n">PaperItem</span><span class="p">(</span>
+                        <span class="n">title</span><span class="o">=</span><span class="n">current_title</span><span class="p">,</span>
+                        <span class="n">authors</span><span class="o">=</span><span class="n">current_authors</span><span class="p">,</span>
+                        <span class="n">reproduction_score</span><span class="o">=</span><span class="n">current_score</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+            <span class="n">current_title</span> <span class="o">=</span> <span class="n">title_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="n">current_authors</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">current_score</span> <span class="o">=</span> <span class="mf">0.0</span>
+            <span class="k">continue</span>
+        <span class="n">author_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\*\*Authors?\*\*:\s*(.+)&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">author_match</span><span class="p">:</span>
+            <span class="n">current_authors</span> <span class="o">=</span> <span class="n">author_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="k">continue</span>
+        <span class="n">score_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\*\*Score\*\*:\s*([0-9.]+)&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">score_match</span><span class="p">:</span>
+            <span class="n">current_score</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">score_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+            <span class="k">continue</span>
+        <span class="n">repro_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;Repro:\s*[🟡🟢🔴]\s*(\d+)/(\d+)&quot;</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">repro_match</span><span class="p">:</span>
+            <span class="n">current_score</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">repro_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="n">repro_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span> <span class="o">*</span> <span class="mi">10</span>
+            <span class="k">continue</span>
+    <span class="k">if</span> <span class="n">current_title</span><span class="p">:</span>
+        <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+            <span class="n">PaperItem</span><span class="p">(</span>
+                <span class="n">title</span><span class="o">=</span><span class="n">current_title</span><span class="p">,</span> <span class="n">authors</span><span class="o">=</span><span class="n">current_authors</span><span class="p">,</span> <span class="n">reproduction_score</span><span class="o">=</span><span class="n">current_score</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">items</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_key_connections</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract the Today&#39;s Key Connections section from the briefing.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        text: Full markdown content of the briefing.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The raw text of key connections, or empty string.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="sa">r</span><span class="s2">&quot;##\s*Today&#39;s Key Connections\s*\n(.*?)(?=\n##\s|\Z)&quot;</span><span class="p">,</span>
+        <span class="n">text</span><span class="p">,</span>
+        <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">match</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_classify_quality</span><span class="p">(</span><span class="n">briefing</span><span class="p">:</span> <span class="n">BriefingData</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BriefingQuality</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Classify briefing quality from parsed content.</span>
+
+<span class="sd">    Mirrors the degradation signatures documented in</span>
+<span class="sd">    ``LESSONS_LEARNED.md`` (2026-07-18 incident):</span>
+
+<span class="sd">    - ``FAILED``: no executive summary AND no news items — the briefing</span>
+<span class="sd">      is missing or unparsable.</span>
+<span class="sd">    - ``DEGRADED``: either the executive summary is the literal upstream</span>
+<span class="sd">      fallback string (&quot;Synthesis unavailable for today&#39;s briefing&quot;),</span>
+<span class="sd">      or blog summaries are absent while news is present (blogs require</span>
+<span class="sd">      an LLM pass; their absence with news present is a strong signal</span>
+<span class="sd">      the LLM layer was skipped).</span>
+<span class="sd">    - ``FULL``: otherwise.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        briefing: Parsed BriefingData (quality field is ignored).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The detected BriefingQuality tier.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">briefing</span><span class="o">.</span><span class="n">executive_summary</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">briefing</span><span class="o">.</span><span class="n">news_items</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">FAILED</span>
+    <span class="k">if</span> <span class="n">briefing</span><span class="o">.</span><span class="n">executive_summary</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">DEGRADED_SUMMARY_PREFIX</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">DEGRADED</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">briefing</span><span class="o">.</span><span class="n">blog_items</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">briefing</span><span class="o">.</span><span class="n">news_items</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">DEGRADED</span>
+    <span class="k">return</span> <span class="n">BriefingQuality</span><span class="o">.</span><span class="n">FULL</span>
+
+
+<div class="viewcode-block" id="read_briefing">
+<a class="viewcode-back" href="../../ingestion.html#ingestion.parser.read_briefing">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">read_briefing</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BriefingData</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Read a markdown briefing file and parse it into structured data.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        path: Path to the briefing markdown file.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Fully populated BriefingData instance with ``briefing_quality``</span>
+<span class="sd">        populated by :func:`_classify_quality`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">path_obj</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">()</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+    <span class="n">markdown</span> <span class="o">=</span> <span class="n">path_obj</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+    <span class="n">briefing_date</span> <span class="o">=</span> <span class="n">parse_briefing_date</span><span class="p">(</span><span class="n">path_obj</span><span class="o">.</span><span class="n">name</span><span class="p">)</span> <span class="ow">or</span> <span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span>
+    <span class="n">exec_summary</span> <span class="o">=</span> <span class="n">_extract_executive_summary</span><span class="p">(</span><span class="n">markdown</span><span class="p">)</span>
+    <span class="n">key_connections</span> <span class="o">=</span> <span class="n">_extract_key_connections</span><span class="p">(</span><span class="n">markdown</span><span class="p">)</span>
+    <span class="n">ticker_section</span> <span class="o">=</span> <span class="n">_extract_ticker_section</span><span class="p">(</span><span class="n">markdown</span><span class="p">)</span>
+    <span class="n">tickers</span> <span class="o">=</span> <span class="n">_extract_tickers</span><span class="p">(</span><span class="n">ticker_section</span><span class="p">)</span>
+    <span class="n">news</span> <span class="o">=</span> <span class="n">_extract_news</span><span class="p">(</span><span class="n">markdown</span><span class="p">)</span>
+    <span class="n">blogs</span> <span class="o">=</span> <span class="n">_extract_blogs</span><span class="p">(</span><span class="n">markdown</span><span class="p">)</span>
+    <span class="n">papers</span> <span class="o">=</span> <span class="n">_extract_papers</span><span class="p">(</span><span class="n">markdown</span><span class="p">)</span>
+    <span class="n">briefing</span> <span class="o">=</span> <span class="n">BriefingData</span><span class="p">(</span>
+        <span class="n">briefing_date</span><span class="o">=</span><span class="n">briefing_date</span><span class="p">,</span>
+        <span class="n">executive_summary</span><span class="o">=</span><span class="n">exec_summary</span><span class="p">,</span>
+        <span class="n">key_connections</span><span class="o">=</span><span class="n">key_connections</span><span class="p">,</span>
+        <span class="n">tickers</span><span class="o">=</span><span class="n">tickers</span><span class="p">,</span>
+        <span class="n">news_items</span><span class="o">=</span><span class="n">news</span><span class="p">,</span>
+        <span class="n">blog_items</span><span class="o">=</span><span class="n">blogs</span><span class="p">,</span>
+        <span class="n">papers</span><span class="o">=</span><span class="n">papers</span><span class="p">,</span>
+        <span class="n">raw_markdown</span><span class="o">=</span><span class="n">markdown</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">briefing</span><span class="o">.</span><span class="n">briefing_quality</span> <span class="o">=</span> <span class="n">_classify_quality</span><span class="p">(</span><span class="n">briefing</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">briefing</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_section</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">section_title</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract a named level-2 markdown section from the briefing text.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        text: Full markdown content.</span>
+<span class="sd">        section_title: Title of the section to extract.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Content of the section, or empty string if not found.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">pattern</span> <span class="o">=</span> <span class="sa">rf</span><span class="s2">&quot;##\s*</span><span class="si">{</span><span class="n">re</span><span class="o">.</span><span class="n">escape</span><span class="p">(</span><span class="n">section_title</span><span class="p">)</span><span class="si">}</span><span class="s2">\s*\n(.*?)(?=\n##\s|\Z)&quot;</span>
+    <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">match</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

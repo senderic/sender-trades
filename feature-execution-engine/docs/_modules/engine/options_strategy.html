@@ -1,0 +1,234 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>engine.options_strategy &mdash; sender-trades 0.1.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=01f34227"></script>
+      <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            sender-trades
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Modules</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../engine.html">Engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../models.html">Models</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../mcp.html">MCP</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../api.html">API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">sender-trades</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">engine.options_strategy</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for engine.options_strategy</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Options pricing and strategy evaluation utilities.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">src.models.recommendation</span><span class="w"> </span><span class="kn">import</span> <span class="n">Direction</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_days_to_expiry</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mi">0</span>
+
+
+<div class="viewcode-block" id="compute_otm_strike">
+<a class="viewcode-back" href="../../engine.html#engine.options_strategy.compute_otm_strike">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_otm_strike</span><span class="p">(</span>
+    <span class="n">underlying_price</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">direction</span><span class="p">:</span> <span class="n">Direction</span><span class="p">,</span>
+    <span class="n">delta_target</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.30</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute an out-of-the-money strike price for a given delta target.</span>
+
+<span class="sd">    For 0DTE options, delta changes rapidly with small moneyness moves.</span>
+<span class="sd">    This approximates the OTM distance as roughly 2 % per 1.0 delta</span>
+<span class="sd">    (e.g. 30-delta → ~0.6 % OTM), which produces strikes that actually</span>
+<span class="sd">    exist in the chain.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        underlying_price: Current price of the underlying asset.</span>
+<span class="sd">        direction: CALL or PUT direction.</span>
+<span class="sd">        delta_target: Target delta for the option (default 0.30).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The computed OTM strike price rounded to the nearest $1.00 increment.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">underlying_price</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="n">otm_distance</span> <span class="o">=</span> <span class="n">delta_target</span> <span class="o">*</span> <span class="mf">0.02</span>
+    <span class="n">multiplier</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">otm_distance</span> <span class="k">if</span> <span class="n">direction</span> <span class="o">==</span> <span class="n">Direction</span><span class="o">.</span><span class="n">CALL</span> <span class="k">else</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">otm_distance</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">underlying_price</span> <span class="o">*</span> <span class="n">multiplier</span>
+    <span class="k">return</span> <span class="n">_round_to_strike</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">increment</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_round_to_strike</span><span class="p">(</span><span class="n">price</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">increment</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Round a price to the nearest valid strike increment.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        price: The price to round.</span>
+<span class="sd">        increment: Strike increment (default 1.0).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The rounded strike price.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">round</span><span class="p">(</span><span class="n">price</span> <span class="o">/</span> <span class="n">increment</span><span class="p">)</span> <span class="o">*</span> <span class="n">increment</span>
+
+
+<div class="viewcode-block" id="estimate_delta">
+<a class="viewcode-back" href="../../engine.html#engine.options_strategy.estimate_delta">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_delta</span><span class="p">(</span>
+    <span class="n">underlying_price</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">strike</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">days_to_expiry</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">iv</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.20</span><span class="p">,</span>
+    <span class="n">direction</span><span class="p">:</span> <span class="n">Direction</span> <span class="o">=</span> <span class="n">Direction</span><span class="o">.</span><span class="n">CALL</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate the Black-Scholes delta of an option using a normal approximation.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        underlying_price: Current price of the underlying.</span>
+<span class="sd">        strike: Strike price of the option.</span>
+<span class="sd">        days_to_expiry: Days until option expiration.</span>
+<span class="sd">        iv: Implied volatility (default 0.20).</span>
+<span class="sd">        direction: CALL or PUT direction.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Estimated delta between -1.0 and 1.0.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">days_to_expiry</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">days_to_expiry</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">iv</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">days_to_expiry</span> <span class="o">/</span> <span class="mf">365.0</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">sigma</span> <span class="o">&lt;</span> <span class="mf">1e-6</span><span class="p">:</span>
+        <span class="n">sigma</span> <span class="o">=</span> <span class="mf">1e-6</span>
+    <span class="k">if</span> <span class="n">underlying_price</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="n">moneyness</span> <span class="o">=</span> <span class="p">(</span><span class="n">underlying_price</span> <span class="o">-</span> <span class="n">strike</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">underlying_price</span> <span class="o">*</span> <span class="n">sigma</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">delta_est</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">math</span><span class="o">.</span><span class="n">erf</span><span class="p">(</span><span class="n">moneyness</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)))</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">OverflowError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>
+        <span class="n">delta_est</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="k">if</span> <span class="n">moneyness</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="p">(</span><span class="mf">1.0</span> <span class="k">if</span> <span class="n">moneyness</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">direction</span> <span class="o">==</span> <span class="n">Direction</span><span class="o">.</span><span class="n">PUT</span><span class="p">:</span>
+        <span class="n">delta_est</span> <span class="o">=</span> <span class="n">delta_est</span> <span class="o">-</span> <span class="mf">1.0</span>
+    <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">delta_est</span><span class="p">))</span></div>
+
+
+
+<div class="viewcode-block" id="compute_premium_bounds">
+<a class="viewcode-back" href="../../engine.html#engine.options_strategy.compute_premium_bounds">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_premium_bounds</span><span class="p">(</span>
+    <span class="n">underlying_price</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">strike</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">direction</span><span class="p">:</span> <span class="n">Direction</span><span class="p">,</span>
+    <span class="n">iv</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.20</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute estimated bid/ask bounds for an option premium.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        underlying_price: Current price of the underlying.</span>
+<span class="sd">        strike: Strike price of the option.</span>
+<span class="sd">        direction: CALL or PUT direction.</span>
+<span class="sd">        iv: Implied volatility (default 0.20).</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Tuple of (low_estimate, high_estimate) premium.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">days</span> <span class="o">=</span> <span class="n">_days_to_expiry</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">iv</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">days</span> <span class="o">/</span> <span class="mf">365.0</span><span class="p">)</span>
+    <span class="n">intrinsic</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+        <span class="mf">0.0</span><span class="p">,</span>
+        <span class="p">(</span><span class="n">underlying_price</span> <span class="o">-</span> <span class="n">strike</span><span class="p">)</span> <span class="k">if</span> <span class="n">direction</span> <span class="o">==</span> <span class="n">Direction</span><span class="o">.</span><span class="n">CALL</span> <span class="k">else</span> <span class="p">(</span><span class="n">strike</span> <span class="o">-</span> <span class="n">underlying_price</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">extrinsic</span> <span class="o">=</span> <span class="n">underlying_price</span> <span class="o">*</span> <span class="n">sigma</span> <span class="o">*</span> <span class="mf">0.4</span>
+    <span class="n">mid</span> <span class="o">=</span> <span class="n">intrinsic</span> <span class="o">+</span> <span class="n">extrinsic</span>
+    <span class="n">spread</span> <span class="o">=</span> <span class="n">mid</span> <span class="o">*</span> <span class="mf">0.1</span>
+    <span class="k">return</span> <span class="nb">round</span><span class="p">(</span><span class="n">mid</span> <span class="o">-</span> <span class="n">spread</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="nb">round</span><span class="p">(</span><span class="n">mid</span> <span class="o">+</span> <span class="n">spread</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2026, sender-trades.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

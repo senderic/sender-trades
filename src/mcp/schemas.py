@@ -117,6 +117,8 @@ def occ_option_symbol(
         OCC option symbol string.
     """
     date_part = expiry.replace("-", "")
+    if len(date_part) == 8:
+        date_part = date_part[2:]
     strike_int = round(strike * 1000)
     return f"{underlying}{date_part}{option_type.upper()[0]}{strike_int:08d}"
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -223,6 +224,13 @@ class AlpacaBrokerClient:
 
 
 def _order_to_result(order: Any) -> OrderResult:
+    def _str(val: Any) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, datetime):
+            return val.isoformat()
+        return str(val)
+
     return OrderResult(
         order_id=str(order.id),
         status=order.status,
@@ -233,7 +241,7 @@ def _order_to_result(order: Any) -> OrderResult:
         filled_qty=order.filled_qty or "0",
         filled_avg_price=order.filled_avg_price,
         limit_price=getattr(order, "limit_price", None),
-        created_at=getattr(order, "created_at", ""),
-        updated_at=getattr(order, "updated_at", ""),
+        created_at=_str(getattr(order, "created_at", None)),
+        updated_at=_str(getattr(order, "updated_at", None)),
         raw=order.model_dump() if hasattr(order, "model_dump") else {},
     )

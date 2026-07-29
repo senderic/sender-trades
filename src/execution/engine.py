@@ -173,26 +173,23 @@ class ExecutionEngine:
             exit_mgr.on_entry_filled(entry_price)
 
             tp_spec = exit_mgr.build_tp_order(occ_sym, filled_qty)
-            sl_spec = exit_mgr.build_sl_order(occ_sym, filled_qty)
-
             tp_result = await self.client.submit_order(tp_spec)
-            sl_result = await self.client.submit_order(sl_spec)
             lifecycle.transition(
                 TradeState.EXITS_PLACED,
-                {"tp_order_id": tp_result.order_id, "sl_order_id": sl_result.order_id},
+                {"tp_order_id": tp_result.order_id, "sl_managed_in_app": True},
             )
             ctx.record_entry(
                 "exits_placed",
                 tp_order_id=tp_result.order_id,
                 tp_level=exit_mgr.tp_level,
-                sl_order_id=sl_result.order_id,
                 sl_level=exit_mgr.sl_level,
+                sl_managed_in_app=True,
+                note="SL order not placed — Alpaca prohibits two simultaneous sell orders for same contract. SL managed via monitoring loop.",
             )
 
             close_result = await self._monitor_exits(
                 exit_mgr,
                 tp_result.order_id,
-                sl_result.order_id,
                 occ_sym,
                 filled_qty,
                 lifecycle,
@@ -254,7 +251,6 @@ class ExecutionEngine:
         self,
         exit_mgr: ExitManager,
         tp_order_id: str,
-        sl_order_id: str,
         occ_symbol: str,
         contracts: int,
         lifecycle: TradeLifecycle,
@@ -263,12 +259,13 @@ class ExecutionEngine:
         """Monitor exit orders until one fills or time expires.
 
         Polls quote data and evaluates exit conditions, adjusting
-        trailing stops as needed.
+        trailing stops as needed. Only a TP limit order is placed
+        at Alpaca; SL and trailing stops are managed in-app by
+        submitting a market sell when triggered.
 
         Args:
             exit_mgr: Configured exit manager.
-            tp_order_id: Take-profit order ID.
-            sl_order_id: Stop-loss order ID.
+            tp_order_id: Take-profit order ID at Alpaca.
             occ_symbol: OCC option symbol.
             contracts: Number of contracts.
             lifecycle: Trade lifecycle tracker.
@@ -278,6 +275,25 @@ class ExecutionEngine:
             Finalized trade summary dict.
         """
         while not lifecycle.is_terminal:
+            if exit_mgr.is_time_deadline_approaching():
+                logger.info("monitor_time_deadline", trade_id=ctx.trade_id)
+                await self.client.cancel_order(tp_order_id)
+                from uuid import uuid4
+
+                close_spec = exit_mgr.build_market_close_order(
+                    occ_symbol, contracts, client_order_id=uuid4().hex[:12]
+                )
+                await self.client.submit_order(close_spec)
+                lifecycle.transition(TradeState.FORCE_CLOSED)
+                lifecycle.transition(TradeState.CLOSED)
+                return ctx.finalize(
+                    exit_reason="force_close",
+                    exit_price=0.0,
+                    final_pnl=0.0,
+                    final_pnl_pct=0.0,
+                    lifecycle_events=lifecycle.event_summary(),
+                )
+
             quote = await self.client.get_option_quote(occ_symbol)
             current_price: float | None = None
 
@@ -291,15 +307,9 @@ class ExecutionEngine:
 
             if current_price is None:
                 tp_order = await self.client.get_order(tp_order_id)
-                sl_order = await self.client.get_order(sl_order_id)
-                if tp_order.status in (
-                    "filled",
-                    "canceled",
-                    "expired",
-                    "rejected",
-                ) or sl_order.status in ("filled", "canceled", "expired", "rejected"):
+                if tp_order.status in ("filled", "canceled", "expired", "rejected"):
                     return await self._resolve_exit(
-                        tp_order_id, sl_order_id, exit_mgr, lifecycle, ctx
+                        tp_order_id, exit_mgr, lifecycle, ctx, occ_symbol, contracts
                     )
                 await asyncio.sleep(self._monitor_interval)
                 continue
@@ -317,36 +327,32 @@ class ExecutionEngine:
             if evaluation["triggered"]:
                 trigger = evaluation["trigger_type"]
                 await self.client.cancel_order(tp_order_id)
-                await self.client.cancel_order(sl_order_id)
 
-                if trigger == "time_deadline":
-                    from uuid import uuid4
-
-                    close_spec = exit_mgr.build_market_close_order(
-                        occ_symbol, contracts, client_order_id=uuid4().hex[:12]
-                    )
-                    close_result = await self.client.submit_order(close_spec)
-                    lifecycle.transition(
-                        TradeState.FORCE_CLOSED,
-                        {"close_order_id": close_result.order_id},
-                    )
+                if trigger == "take_profit":
+                    lifecycle.transition(TradeState.TP_FILLED)
                     lifecycle.transition(TradeState.CLOSED)
                     return ctx.finalize(
-                        exit_reason="force_close",
+                        exit_reason="take_profit",
                         exit_price=current_price,
                         final_pnl=(current_price - (exit_mgr.entry_price or 0)) * contracts * 100,
                         final_pnl_pct=evaluation["current_pnl_pct"],
                         lifecycle_events=lifecycle.event_summary(),
                     )
 
-                if trigger == "take_profit":
-                    lifecycle.transition(TradeState.TP_FILLED)
-                elif trigger in ("stop_loss", "trailing_stop"):
-                    lifecycle.transition(TradeState.SL_FILLED)
+                from uuid import uuid4
 
+                close_spec = exit_mgr.build_market_close_order(
+                    occ_symbol, contracts, client_order_id=uuid4().hex[:12]
+                )
+                await self.client.submit_order(close_spec)
+
+                if trigger == "time_deadline":
+                    lifecycle.transition(TradeState.FORCE_CLOSED)
+                else:
+                    lifecycle.transition(TradeState.SL_FILLED)
                 lifecycle.transition(TradeState.CLOSED)
                 return ctx.finalize(
-                    exit_reason="take_profit" if trigger == "take_profit" else "stop_loss",
+                    exit_reason="force_close" if trigger == "time_deadline" else "stop_loss",
                     exit_price=current_price,
                     final_pnl=(current_price - (exit_mgr.entry_price or 0)) * contracts * 100,
                     final_pnl_pct=evaluation["current_pnl_pct"],
@@ -373,13 +379,13 @@ class ExecutionEngine:
     async def _resolve_exit(
         self,
         tp_order_id: str,
-        sl_order_id: str,
         exit_mgr: ExitManager,
         lifecycle: TradeLifecycle,
         ctx: TradeContext,
+        occ_symbol: str,
+        contracts: int,
     ) -> dict[str, Any]:
         tp = await self.client.get_order(tp_order_id)
-        sl = await self.client.get_order(sl_order_id)
 
         if tp.status == "filled":
             lifecycle.transition(TradeState.TP_FILLED)
@@ -390,22 +396,6 @@ class ExecutionEngine:
                 exit_price=fill_price,
                 final_pnl=(fill_price - (exit_mgr.entry_price or 0))
                 * (int(tp.filled_qty) if tp.filled_qty else 0)
-                * 100,
-                final_pnl_pct=(
-                    (fill_price - (exit_mgr.entry_price or 0)) / (exit_mgr.entry_price or 1) * 100
-                ),
-                lifecycle_events=lifecycle.event_summary(),
-            )
-
-        if sl.status == "filled":
-            lifecycle.transition(TradeState.SL_FILLED)
-            lifecycle.transition(TradeState.CLOSED)
-            fill_price = float(sl.filled_avg_price or 0)
-            return ctx.finalize(
-                exit_reason="stop_loss",
-                exit_price=fill_price,
-                final_pnl=(fill_price - (exit_mgr.entry_price or 0))
-                * (int(sl.filled_qty) if sl.filled_qty else 0)
                 * 100,
                 final_pnl_pct=(
                     (fill_price - (exit_mgr.entry_price or 0)) / (exit_mgr.entry_price or 1) * 100

@@ -2,7 +2,7 @@ name: Deploy site + Sphinx docs to GitHub Pages
 
 on:
   push:
-    branches: ["main", "feature/**"]
+    branches: ["main"]
   workflow_dispatch:
     inputs:
       branch:
@@ -16,8 +16,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages-${{ github.ref }}"
-  cancel-in-progress: true
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
@@ -44,22 +44,11 @@ jobs:
       - name: Build Sphinx docs into site/docs/
         run: uv run sphinx-build docs/source site/docs
 
-      - name: Place site into branch subdirectory
-        run: |
-          BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          if [ "$BRANCH" != "main" ]; then
-            mkdir -p "public/$BRANCH"
-            cp -r site/* "public/$BRANCH/"
-          else
-            mkdir -p public
-            cp -r site/* public/
-          fi
-
       - name: Upload artifact
         if: ${{ !env.ACT }}
         uses: actions/upload-pages-artifact@v3
         with:
-          path: public
+          path: site
 
       - name: Deploy to GitHub Pages
         if: ${{ !env.ACT }}

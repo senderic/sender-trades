@@ -45,7 +45,12 @@ class TestExitManagerBasic:
 
 class TestExitManagerEvaluate:
     def test_no_trigger_when_price_between_levels(self) -> None:
-        config = ExitConfig(take_profit_pct=100.0, stop_loss_pct=-50.0)
+        config = ExitConfig(
+            take_profit_pct=100.0,
+            stop_loss_pct=-50.0,
+            trailing=TrailingConfig(enabled=False),
+            time_deadline_est="23:59",
+        )
         mgr = ExitManager(config)
         mgr.on_entry_filled(0.50)
         result = mgr.evaluate(0.75)

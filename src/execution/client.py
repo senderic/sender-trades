@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import structlog
-from alpaca.data.historical import OptionHistoricalDataClient
-from alpaca.data.requests import OptionChainRequest, OptionLatestQuoteRequest
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
 from alpaca.trading.requests import (
@@ -26,9 +25,9 @@ logger = structlog.get_logger()
 class AlpacaBrokerClient:
     """Direct Alpaca API client for order execution and market data.
 
-    Uses ``alpaca-py`` SDK for all order actions and option chain
-    queries. All API calls are wrapped in Tenacity retries configured
-    via :class:`ExecutionConfig`.
+    Uses ``alpaca-py`` SDK for all order actions and direct REST
+    calls for option chain/quote lookups. All API calls are wrapped
+    in Tenacity retries configured via :class:`ExecutionConfig`.
     """
 
     def __init__(
@@ -51,7 +50,10 @@ class AlpacaBrokerClient:
         self.paper = paper
         self.exec_config = config or ExecutionConfig()
         self._trading: TradingClient | None = None
-        self._data: OptionHistoricalDataClient | None = None
+        self._http: httpx.AsyncClient | None = None
+        self._base_url = (
+            "https://paper-api.alpaca.markets" if paper else "https://api.alpaca.markets"
+        )
 
     @property
     def trading(self) -> TradingClient:
@@ -61,11 +63,15 @@ class AlpacaBrokerClient:
         return self._trading
 
     @property
-    def data(self) -> OptionHistoricalDataClient:
-        """Lazy-loaded Alpaca OptionHistoricalDataClient."""
-        if self._data is None:
-            self._data = OptionHistoricalDataClient(self.api_key, self.secret_key)
-        return self._data
+    def http(self) -> httpx.AsyncClient:
+        """Lazy-loaded httpx client with Alpaca auth."""
+        if self._http is None:
+            self._http = httpx.AsyncClient(
+                base_url=self._base_url,
+                auth=httpx.BasicAuth(self.api_key, self.secret_key),
+                timeout=30.0,
+            )
+        return self._http
 
     @al_api_retry()
     async def submit_order(self, order_data: dict[str, Any]) -> OrderResult:
@@ -160,22 +166,22 @@ class AlpacaBrokerClient:
         from src.timezone import today_local
 
         exp = expiry or today_local().isoformat()
-        request = OptionChainRequest(
-            underlying_symbol=underlying,
-            expiration_date=exp,
+        response = await self.http.get(
+            "/v2/options/contracts",
+            params={"underlying_symbols": underlying, "expiration_date": exp},
         )
-        response = self.data.get_option_chain(request)
-        contracts = []
-        if response and response.option_contracts:
-            for c in response.option_contracts:
-                contracts.append(
-                    {
-                        "symbol": c.symbol,
-                        "strike_price": float(c.strike_price),
-                        "type": c.type,
-                        "expiration_date": c.expiration_date,
-                    }
-                )
+        response.raise_for_status()
+        data = response.json()
+        raw = data.get("option_contracts", [])
+        contracts = [
+            {
+                "symbol": c["symbol"],
+                "strike_price": float(c["strike_price"]),
+                "type": c.get("type", ""),
+                "expiration_date": c.get("expiration_date", ""),
+            }
+            for c in raw
+        ]
         logger.info("option_chain_fetched", underlying=underlying, count=len(contracts))
         return contracts
 
@@ -183,23 +189,37 @@ class AlpacaBrokerClient:
     async def get_option_quote(self, occ_symbol: str) -> dict[str, Any] | None:
         """Fetch the latest quote for an option contract.
 
+        Paper accounts may not have live options market data.
+        Returns None when quotes are unavailable — the engine falls
+        back to polling order status directly.
+
         Args:
             occ_symbol: OCC option symbol.
 
         Returns:
-            Dict with bid/ask or None if not found.
+            Dict with bid/ask or None if unavailable.
         """
-        request = OptionLatestQuoteRequest(symbol_or_symbols=occ_symbol)
-        response = self.data.get_option_latest_quote(request)
-        if response and occ_symbol in response:
-            quote = response[occ_symbol]
-            return {
-                "symbol": occ_symbol,
-                "bid": float(quote.bid_price) if quote.bid_price else None,
-                "ask": float(quote.ask_price) if quote.ask_price else None,
-                "bid_size": quote.bid_size,
-                "ask_size": quote.ask_size,
-            }
+        try:
+            response = await self.http.get(
+                "/v2/options/snapshots",
+                params={"symbols": occ_symbol},
+            )
+            response.raise_for_status()
+            data = response.json()
+            snapshots = data.get("snapshots", {})
+            snap = snapshots.get(occ_symbol)
+            if snap and snap.get("latest_quote"):
+                q = snap["latest_quote"]
+                return {
+                    "symbol": occ_symbol,
+                    "bid": float(q["bp"]) if q.get("bp") else None,
+                    "ask": float(q["ap"]) if q.get("ap") else None,
+                    "bid_size": q.get("bs"),
+                    "ask_size": q.get("as"),
+                }
+        except Exception:
+            logger.debug("option_quote_unavailable", symbol=occ_symbol)
+
         return None
 
     def build_entry_order(

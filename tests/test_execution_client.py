@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -162,16 +162,20 @@ class TestAlpacaBrokerClientSubmit:
     @pytest.mark.asyncio
     async def test_get_option_chain(self) -> None:
         client = AlpacaBrokerClient("key", "secret", paper=True)
-        mock_chain = MagicMock()
-        mock_contract = MagicMock()
-        mock_contract.symbol = "SPY250728C00600000"
-        mock_contract.strike_price = "600"
-        mock_contract.type = "call"
-        mock_contract.expiration_date = "2026-07-28"
-        mock_chain.option_contracts = [mock_contract]
-        mock_data = MagicMock()
-        mock_data.get_option_chain.return_value = mock_chain
-        client._data = mock_data
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "option_contracts": [
+                {
+                    "symbol": "SPY250728C00600000",
+                    "strike_price": "600",
+                    "type": "call",
+                    "expiration_date": "2026-07-28",
+                }
+            ]
+        }
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+        client._http = mock_http
 
         result = await client.get_option_chain("SPY", "2026-07-28")
         assert len(result) == 1
@@ -180,14 +184,17 @@ class TestAlpacaBrokerClientSubmit:
     @pytest.mark.asyncio
     async def test_get_option_quote(self) -> None:
         client = AlpacaBrokerClient("key", "secret", paper=True)
-        mock_quote = MagicMock()
-        mock_quote.bid_price = "0.48"
-        mock_quote.ask_price = "0.52"
-        mock_quote.bid_size = 100
-        mock_quote.ask_size = 100
-        mock_data = MagicMock()
-        mock_data.get_option_latest_quote.return_value = {"SPY250728C00600000": mock_quote}
-        client._data = mock_data
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "snapshots": {
+                "SPY250728C00600000": {
+                    "latest_quote": {"bp": "0.48", "ap": "0.52", "bs": 100, "as": 100}
+                }
+            }
+        }
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+        client._http = mock_http
 
         result = await client.get_option_quote("SPY250728C00600000")
         assert result is not None

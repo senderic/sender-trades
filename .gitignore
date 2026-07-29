@@ -11,3 +11,4 @@ logs/**/email-*
 dist/
 build/
 site/docs/
+logs/

@@ -150,10 +150,9 @@ class TestExitManagerTimeDeadline:
         mgr = ExitManager(config)
         mgr.on_entry_filled(0.50)
         after = datetime(2026, 7, 28, 15, 30, tzinfo=ET_TZ)
-        result = mgr.evaluate(0.60)
-        if mgr.is_time_deadline_approaching(now=after):
-            assert result["triggered"] is True
-            assert result["trigger_type"] == "time_deadline"
+        result = mgr.evaluate(0.60, now=after)
+        assert result["triggered"] is True
+        assert result["trigger_type"] == "time_deadline"
 
 
 class TestExitManagerBuildOrders:

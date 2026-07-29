@@ -80,11 +80,12 @@ class ExitManager:
         """Whether the trailing stop is currently active."""
         return self._trailing_active
 
-    def evaluate(self, current_price: float) -> dict[str, Any]:
+    def evaluate(self, current_price: float, now: datetime | None = None) -> dict[str, Any]:
         """Evaluate the current price against all exit conditions.
 
         Args:
             current_price: Current mark/quote price of the option.
+            now: Current time override (used in tests).
 
         Returns:
             Dict with exit trigger flags, current PnL, and active levels.
@@ -121,7 +122,7 @@ class ExitManager:
         ):
             triggered = True
             trigger_type = "trailing_stop"
-        elif self.is_time_deadline_approaching():
+        elif self.is_time_deadline_approaching(now=now):
             triggered = True
             trigger_type = "time_deadline"
 

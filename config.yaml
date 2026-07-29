@@ -3,7 +3,7 @@ general:
   target_assets:
     - SPY
     - QQQ
-  execute: false
+  execute: true
 
 atlas_briefing:
   directory: ~/atlas-morning-briefing

@@ -1,7 +1,7 @@
 #!/bin/bash
 # sender-trades daily cron runner.
 # Picks up the latest Atlas morning briefing snapshot from ~/atlas-morning-briefing,
-# runs the pipeline in dry-run mode, and emails the directional forecast + trade idea.
+# runs the pipeline with paper execution enabled, and emails the directional forecast + trade idea.
 
 set -u
 
@@ -20,6 +20,15 @@ if [ -f "$ATLAS_ENV" ]; then
   set +a
 fi
 
+# Source project .env for Alpaca paper trading keys (APCA_API_KEY_ID, APCA_API_SECRET_KEY).
+PROJECT_ENV="$DIR/.env"
+if [ -f "$PROJECT_ENV" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$PROJECT_ENV"
+  set +a
+fi
+
 cd "$DIR" || exit 1
 
 LOG_DIR="$DIR/logs/cron"
@@ -27,8 +36,8 @@ mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 LOG_FILE="$LOG_DIR/sender-trades-$STAMP.log"
 
-# Dry-run by default (no MCP order execution). --email dispatches the forecast.
-uv run python -m src.main --dry-run --email > "$LOG_FILE" 2>&1
+# Paper execution enabled (config execute:true). --email dispatches the forecast.
+uv run python -m src.main --email > "$LOG_FILE" 2>&1
 RC=$?
 
 logger -t sender-trades "run complete rc=$RC log=$LOG_FILE"

@@ -6,6 +6,53 @@ Newest entries at the top.
 
 ---
 
+## 2026-07-29 — First paper-trading day: wins, failures, and live debugging
+
+### What happened
+
+The pipeline ran at 9:15 AM ET via cron and produced **QQQ PUT @ $671, 70% confidence**. The LLM correctly predicted a DOWN day for QQQ driven by China's open-source Kimi K3 AI model threatening US tech valuations, enterprise networking selloffs (ANET/EQIX/LITE), and a -0.87% gap down.
+
+The trade was NOT executed because of a bug: `occ_option_symbol()` produced an 8-digit year date (`20260729`) but Alpaca requires 6-digit (`260729`). By the time the bug was fixed at ~9:44 AM ET, the pipeline produced **SPY PUT @ $735** which filled on paper. Later runs opened SPY PUT @ $736 and QQQ PUT @ $671.
+
+### What we got right
+
+- **Prediction accuracy**: QQQ DOWN call was correct. QQQ opened at $675.46 and hit a low of $663.30 (-1.80%). The predicted move was -0.9% — actual was double.
+- **Source quality**: The LLM's reasoning about Kimi K3 and tech rotation was accurate. QQQ gapped down -0.87% and never recovered.
+- **Yahoo Finance fallback**: When Finnhub 502'd every symbol in the snapshot, Yahoo Finance filled the gap and the pipeline still produced a trade. This saved the day.
+- **Trade timing**: SPY PUT @ $735 was profitable (opened around $740, closed at $734). The system's directional calls were directionally right on both assets.
+
+### What went wrong
+
+1. **OCC symbol format** — `occ_option_symbol()` uses 8-digit date; Alpaca uses 6-digit. Fixed by stripping century prefix.
+2. **`datetime` serialization** — `alpaca-py` returns `datetime` objects for `created_at`/`updated_at`. Pydantic `OrderResult` expected `str`. Fixed with `.isoformat()` conversion.
+3. **Cannot place two sell orders** — Alpaca rejects simultaneous sell orders for the same option contract. Engine now places only TP at Alpaca; SL + force-close handled by safety-close cron.
+4. **Monitoring loop dies with pipeline** — Pipeline process exits after ~40 seconds, killing the in-app monitoring loop. Positions left open with no exits. Fixed: TP order is `time_in_force: "day"` at Alpaca, safety-close cron at 3:20 PM ET force-closes everything.
+5. **AdGuard DNS rewrite** — `ericsender.com` was being resolved locally, breaking SSL and the site. Fixed by adding `@@||ericsender.com^$dnsrewrite` exception in AdGuard.
+6. **Paper chain truncation** — Default `GET /v2/options/contracts` returns only calls. Puts require explicit `type=put` filter.
+
+### Paper PnL (test trades)
+
+All positions were manually closed after market hours:
+- QQQ 671 PUT: +$530
+- SPY 735 PUT x2: +$545
+- SPY 736 PUT: +$322
+- **Total**: +$1,397 on paper
+
+The QQQ PUT @ $671 would have been the intended morning trade. If it had been the only position, it would have yielded the largest single gain.
+
+### What we'd do differently
+
+- Verify OCC symbol against the chain BEFORE submitting (query contract endpoint first)
+- Run a quick validation trade at system startup using the test credentials
+- Don't trust in-process monitoring — put exit orders at Alpaca directly
+- Always test with `type=put` filter for put contracts
+
+### Market data note
+
+Finnhub free tier 502'd every symbol in the atlas snapshot today. The Yahoo Finance fallback (`snapshot_loader._fetch_yahoo_quote()`) was essential. Consider adding Alpha Vantage as a third fallback.
+
+---
+
 ## 2026-07-18b — Redesigned from trade-executor to prediction-engine
 
 ### What we changed

@@ -2,9 +2,6 @@ __pycache__/
 *.pyc
 *.pyo
 .env
-logs/**/*.json
-logs/**/*log
-logs/**/email-*
 .atlas-state.json
 .DS_Store
 *.egg-info/

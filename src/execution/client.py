@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 import httpx
@@ -13,9 +14,10 @@ from alpaca.trading.requests import (
     MarketOrderRequest,
     StopOrderRequest,
 )
+from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential
 
 from src.execution.models import ExecutionConfig, OrderResult
-from src.execution.retry import al_api_retry
+from src.execution.retry import _is_retryable
 from src.mcp.schemas import occ_option_symbol
 from src.models.recommendation import TradeRecommendation
 
@@ -37,14 +39,6 @@ class AlpacaBrokerClient:
         paper: bool = True,
         config: ExecutionConfig | None = None,
     ):
-        """Initialize the Alpaca broker client.
-
-        Args:
-            api_key: Alpaca API key ID.
-            secret_key: Alpaca API secret key.
-            paper: Whether to use the paper trading environment.
-            config: Execution configuration for retry parameters.
-        """
         self.api_key = api_key
         self.secret_key = secret_key
         self.paper = paper
@@ -57,14 +51,12 @@ class AlpacaBrokerClient:
 
     @property
     def trading(self) -> TradingClient:
-        """Lazy-loaded Alpaca TradingClient."""
         if self._trading is None:
             self._trading = TradingClient(self.api_key, self.secret_key, paper=self.paper)
         return self._trading
 
     @property
     def http(self) -> httpx.AsyncClient:
-        """Lazy-loaded httpx client with Alpaca auth."""
         if self._http is None:
             self._http = httpx.AsyncClient(
                 base_url=self._base_url,
@@ -73,154 +65,132 @@ class AlpacaBrokerClient:
             )
         return self._http
 
-    @al_api_retry()
+    async def _with_retry(self, fn: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
+        cfg = self.exec_config.tenacity
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(cfg.max_attempts),
+            wait=wait_exponential(
+                multiplier=cfg.backoff_multiplier,
+                min=cfg.min_wait_sec,
+                max=cfg.max_wait_sec,
+            ),
+            retry=retry_if_exception(_is_retryable),
+            reraise=True,
+        ):
+            with attempt:
+                return await fn()
+
     async def submit_order(self, order_data: dict[str, Any]) -> OrderResult:
-        """Submit an order to Alpaca.
+        async def _do() -> OrderResult:
+            order_type = order_data.get("type", "market")
+            side = OrderSide.BUY if order_data.get("side") == "buy" else OrderSide.SELL
+            symbol = order_data["symbol"]
+            qty = order_data["qty"]
+            tif = TimeInForce.DAY
+            if order_data.get("time_in_force") == "gtc":
+                tif = TimeInForce.GTC
 
-        Args:
-            order_data: Dict with keys: symbol, qty, side, type,
-                time_in_force, and optional limit_price/stop_price.
+            if order_type == "limit":
+                request = LimitOrderRequest(
+                    symbol=symbol,
+                    qty=int(qty),
+                    side=side,
+                    type=OrderType.LIMIT,
+                    limit_price=float(order_data["limit_price"]),
+                    time_in_force=tif,
+                )
+            elif order_type == "stop":
+                request = StopOrderRequest(
+                    symbol=symbol,
+                    qty=int(qty),
+                    side=side,
+                    type=OrderType.STOP,
+                    stop_price=float(order_data["stop_price"]),
+                    time_in_force=tif,
+                )
+            else:
+                request = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=int(qty),
+                    side=side,
+                    type=OrderType.MARKET,
+                    time_in_force=tif,
+                )
 
-        Returns:
-            An :class:`OrderResult` with the order details.
-        """
-        order_type = order_data.get("type", "market")
-        side = OrderSide.BUY if order_data.get("side") == "buy" else OrderSide.SELL
-        symbol = order_data["symbol"]
-        qty = order_data["qty"]
-        tif = TimeInForce.DAY
-        if order_data.get("time_in_force") == "gtc":
-            tif = TimeInForce.GTC
+            response = self.trading.submit_order(request)
+            logger.info("order_submitted", order_id=str(response.id), symbol=symbol, side=str(side))
+            return _order_to_result(response)
 
-        if order_type == "limit":
-            request = LimitOrderRequest(
-                symbol=symbol,
-                qty=int(qty),
-                side=side,
-                type=OrderType.LIMIT,
-                limit_price=float(order_data["limit_price"]),
-                time_in_force=tif,
-            )
-        elif order_type == "stop":
-            request = StopOrderRequest(
-                symbol=symbol,
-                qty=int(qty),
-                side=side,
-                type=OrderType.STOP,
-                stop_price=float(order_data["stop_price"]),
-                time_in_force=tif,
-            )
-        else:
-            request = MarketOrderRequest(
-                symbol=symbol,
-                qty=int(qty),
-                side=side,
-                type=OrderType.MARKET,
-                time_in_force=tif,
-            )
+        return await self._with_retry(_do)
 
-        response = self.trading.submit_order(request)
-        logger.info("order_submitted", order_id=str(response.id), symbol=symbol, side=str(side))
-        return _order_to_result(response)
-
-    @al_api_retry()
     async def get_order(self, order_id: str) -> OrderResult:
-        """Query an existing order by ID.
+        async def _do() -> OrderResult:
+            response = self.trading.get_order_by_id(order_id)
+            return _order_to_result(response)
 
-        Args:
-            order_id: Alpaca order UUID.
+        return await self._with_retry(_do)
 
-        Returns:
-            An :class:`OrderResult` with current order state.
-        """
-        response = self.trading.get_order_by_id(order_id)
-        return _order_to_result(response)
-
-    @al_api_retry()
     async def cancel_order(self, order_id: str) -> OrderResult:
-        """Cancel an open order.
+        async def _do() -> OrderResult:
+            self.trading.cancel_order_by_id(order_id)
+            logger.info("order_cancelled", order_id=order_id)
+            return await self.get_order(order_id)
 
-        Args:
-            order_id: Alpaca order UUID.
+        return await self._with_retry(_do)
 
-        Returns:
-            An :class:`OrderResult` reflecting the cancelled state.
-        """
-        self.trading.cancel_order_by_id(order_id)
-        logger.info("order_cancelled", order_id=order_id)
-        return await self.get_order(order_id)
-
-    @al_api_retry()
     async def get_option_chain(
         self, underlying: str, expiry: str | None = None
     ) -> list[dict[str, Any]]:
-        """Fetch the option chain for an underlying symbol.
-
-        Args:
-            underlying: Ticker symbol (e.g. SPY, QQQ).
-            expiry: Expiration date in YYYY-MM-DD format.
-
-        Returns:
-            List of option contract dicts.
-        """
         from src.timezone import today_local
 
-        exp = expiry or today_local().isoformat()
-        response = await self.http.get(
-            "/v2/options/contracts",
-            params={"underlying_symbols": underlying, "expiration_date": exp},
-        )
-        response.raise_for_status()
-        data = response.json()
-        raw = data.get("option_contracts", [])
-        contracts = [
-            {
-                "symbol": c["symbol"],
-                "strike_price": float(c["strike_price"]),
-                "type": c.get("type", ""),
-                "expiration_date": c.get("expiration_date", ""),
-            }
-            for c in raw
-        ]
-        logger.info("option_chain_fetched", underlying=underlying, count=len(contracts))
-        return contracts
-
-    @al_api_retry()
-    async def get_option_quote(self, occ_symbol: str) -> dict[str, Any] | None:
-        """Fetch the latest quote for an option contract.
-
-        Paper accounts may not have live options market data.
-        Returns None when quotes are unavailable — the engine falls
-        back to polling order status directly.
-
-        Args:
-            occ_symbol: OCC option symbol.
-
-        Returns:
-            Dict with bid/ask or None if unavailable.
-        """
-        try:
+        async def _do() -> list[dict[str, Any]]:
+            exp = expiry or today_local().isoformat()
             response = await self.http.get(
-                "/v2/options/snapshots",
-                params={"symbols": occ_symbol},
+                "/v2/options/contracts",
+                params={"underlying_symbols": underlying, "expiration_date": exp},
             )
             response.raise_for_status()
             data = response.json()
-            snapshots = data.get("snapshots", {})
-            snap = snapshots.get(occ_symbol)
-            if snap and snap.get("latest_quote"):
-                q = snap["latest_quote"]
-                return {
-                    "symbol": occ_symbol,
-                    "bid": float(q["bp"]) if q.get("bp") else None,
-                    "ask": float(q["ap"]) if q.get("ap") else None,
-                    "bid_size": q.get("bs"),
-                    "ask_size": q.get("as"),
+            raw = data.get("option_contracts", [])
+            contracts = [
+                {
+                    "symbol": c["symbol"],
+                    "strike_price": float(c["strike_price"]),
+                    "type": c.get("type", ""),
+                    "expiration_date": c.get("expiration_date", ""),
                 }
-        except Exception:
-            logger.debug("option_quote_unavailable", symbol=occ_symbol)
+                for c in raw
+            ]
+            logger.info("option_chain_fetched", underlying=underlying, count=len(contracts))
+            return contracts
 
-        return None
+        return await self._with_retry(_do)
+
+    async def get_option_quote(self, occ_symbol: str) -> dict[str, Any] | None:
+        async def _do() -> dict[str, Any] | None:
+            try:
+                response = await self.http.get(
+                    "/v2/options/snapshots",
+                    params={"symbols": occ_symbol},
+                )
+                response.raise_for_status()
+                data = response.json()
+                snapshots = data.get("snapshots", {})
+                snap = snapshots.get(occ_symbol)
+                if snap and snap.get("latest_quote"):
+                    q = snap["latest_quote"]
+                    return {
+                        "symbol": occ_symbol,
+                        "bid": float(q["bp"]) if q.get("bp") else None,
+                        "ask": float(q["ap"]) if q.get("ap") else None,
+                        "bid_size": q.get("bs"),
+                        "ask_size": q.get("as"),
+                    }
+            except Exception:
+                logger.debug("option_quote_unavailable", symbol=occ_symbol)
+            return None
+
+        return await self._with_retry(_do)
 
     def build_entry_order(
         self,
@@ -228,16 +198,6 @@ class AlpacaBrokerClient:
         occ_symbol: str | None = None,
         limit_price: float | None = None,
     ) -> dict[str, Any]:
-        """Build an entry order dict from a trade recommendation.
-
-        Args:
-            rec: The trade recommendation to execute.
-            occ_symbol: Pre-computed OCC symbol (computed if not provided).
-            limit_price: Limit price override (uses mid+offset if None).
-
-        Returns:
-            Dict ready for :meth:`submit_order`.
-        """
         if occ_symbol is None:
             expiry = rec.expires_at
             option_type = "C" if rec.direction.value == "CALL" else "P"

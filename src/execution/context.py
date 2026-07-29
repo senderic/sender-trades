@@ -27,6 +27,7 @@ class TradeContext:
         correlation_id: str,
         recommendation: TradeRecommendation,
         log_dir: str | Path = "logs",
+        execution_config: dict[str, Any] | None = None,
     ):
         """Initialize a trade context for audit logging.
 
@@ -35,6 +36,7 @@ class TradeContext:
             correlation_id: Pipeline run identifier linking to the decision.
             recommendation: The trade recommendation that spawned this trade.
             log_dir: Root directory for audit log output.
+            execution_config: Optional execution config snapshot for the audit.
         """
         self.trade_id = trade_id
         self.correlation_id = correlation_id
@@ -42,6 +44,7 @@ class TradeContext:
         self.log_dir = Path(log_dir).expanduser().resolve()
         self.entries: list[dict[str, Any]] = []
         self._start_time = datetime.now(UTC)
+        self._execution_config = execution_config
 
     @property
     def audit_path(self) -> Path:
@@ -127,6 +130,7 @@ class TradeContext:
             final_pnl: Realized profit/loss in dollars.
             final_pnl_pct: Realized PnL as a percentage.
             lifecycle_events: Optional state machine event list.
+            execution_config: Optional execution config snapshot.
 
         Returns:
             The complete trade summary dict.
@@ -151,6 +155,7 @@ class TradeContext:
             "events": lifecycle_events or [],
             "entries": list(self.entries),
             "recommendation": self.recommendation.model_dump(),
+            "execution_config": self._execution_config,
         }
 
         self._write_final_summary(summary)

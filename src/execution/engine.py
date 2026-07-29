@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import uuid
 from datetime import datetime
 from typing import Any
@@ -19,6 +21,15 @@ from src.models.recommendation import TradeRecommendation
 from src.timezone import ET_TZ
 
 logger = structlog.get_logger()
+
+
+def _safe_error(exception: BaseException) -> dict[str, Any]:
+    """Parse an exception into a safe, serializable dict."""
+    raw = str(exception)
+    try:
+        return json.loads(raw) if isinstance(raw, str) and raw.startswith("{") else {"message": raw}
+    except json.JSONDecodeError:
+        return {"message": raw}
 
 
 class ExecutionEngineError(Exception):
@@ -67,7 +78,13 @@ class ExecutionEngine:
         """
         trade_id = uuid.uuid4().hex[:12]
         lifecycle = TradeLifecycle(trade_id)
-        ctx = TradeContext(trade_id, correlation_id, rec, log_dir=self.log_dir)
+        ctx = TradeContext(
+            trade_id,
+            correlation_id,
+            rec,
+            log_dir=self.log_dir,
+            execution_config=self.exec_config.model_dump(),
+        )
 
         try:
             lifecycle.transition(
@@ -186,7 +203,8 @@ class ExecutionEngine:
 
         except InvalidTransitionError as e:
             logger.error("execution_invalid_transition", trade_id=trade_id, error=str(e))
-            lifecycle._state = TradeState.FAILED
+            with contextlib.suppress(InvalidTransitionError):
+                lifecycle.transition(TradeState.FAILED, {"error": str(e)})
             return ctx.finalize(
                 exit_reason="error",
                 exit_price=0.0,
@@ -196,8 +214,9 @@ class ExecutionEngine:
             )
         except Exception as e:
             logger.error("execution_error", trade_id=trade_id, error=str(e))
-            lifecycle._state = TradeState.FAILED
-            ctx.record_entry("execution_error", error=str(e))
+            with contextlib.suppress(InvalidTransitionError):
+                lifecycle.transition(TradeState.FAILED, {"error": _safe_error(e)})
+            ctx.record_entry("execution_error", error=str(e), error_detail=_safe_error(e))
             return ctx.finalize(
                 exit_reason="error",
                 exit_price=0.0,

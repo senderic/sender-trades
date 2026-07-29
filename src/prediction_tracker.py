@@ -186,7 +186,11 @@ def check_outcome(
         if triggered_at_str:
             parts = [f"Hit {threshold_label} at {triggered_at_str}"]
             if duration_h is not None and duration_h > 1:
-                parts.append(f"held above for ~{duration_h} hours" if direction == "UP" else f"held below for ~{duration_h} hours")
+                parts.append(
+                    f"held above for ~{duration_h} hours"
+                    if direction == "UP"
+                    else f"held below for ~{duration_h} hours"
+                )
             parts.append(f"Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}")
             details_parts.append(" | ".join(parts))
         else:

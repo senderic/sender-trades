@@ -253,26 +253,32 @@ class _FakeProvider:
 class TestCandleProviderChain:
     async def test_first_provider_succeeds(self):
         data = {"s": "ok", "o": [100.0]}
-        chain = CandleProviderChain([
-            _FakeProvider("A", daily_result=data),
-            _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", daily_result=data),
+                _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
+            ]
+        )
         result = await chain.fetch_daily_candle("SPY", date(2026, 7, 17))
         assert result == data
 
     async def test_first_fails_second_succeeds(self):
-        chain = CandleProviderChain([
-            _FakeProvider("A", daily_result=None),
-            _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", daily_result=None),
+                _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
+            ]
+        )
         result = await chain.fetch_daily_candle("SPY", date(2026, 7, 17))
         assert result == {"s": "ok", "o": [200.0]}
 
     async def test_all_fail(self):
-        chain = CandleProviderChain([
-            _FakeProvider("A", daily_result=None),
-            _FakeProvider("B", daily_result=None),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", daily_result=None),
+                _FakeProvider("B", daily_result=None),
+            ]
+        )
         result = await chain.fetch_daily_candle("SPY", date(2026, 7, 17))
         assert result is None
 
@@ -282,10 +288,12 @@ class TestCandleProviderChain:
         assert result is None
 
     async def test_intraday_fallback(self):
-        chain = CandleProviderChain([
-            _FakeProvider("A", intraday_result=None),
-            _FakeProvider("B", intraday_result=[{"timestamp": 0, "open": 100.0}]),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", intraday_result=None),
+                _FakeProvider("B", intraday_result=[{"timestamp": 0, "open": 100.0}]),
+            ]
+        )
         result = await chain.fetch_intraday_candles("SPY", date(2026, 7, 17))
         assert result == [{"timestamp": 0, "open": 100.0}]
 

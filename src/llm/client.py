@@ -257,7 +257,6 @@ class OpencodeLLMClient:
         )
         return None
 
-
     def get_usage_summary_html(self) -> str:
         """Return an HTML snippet summarizing LLM usage for this run.
 

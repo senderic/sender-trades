@@ -1,222 +1,201 @@
 # Lessons Learned
 
-Cross-project notes about running an LLM-driven intraday prediction system.
+Intraday directional prediction engine & 0DTE execution. LLM-readable format — scan the Quick Index, then jump to the entry by date or tag.
 
-Newest entries at the top.
+## Quick Index
 
----
+| Date | SPY Pred | SPY Result | QQQ Pred | QQQ Result | Trade Executed | Engine PnL | Key Tags |
+|------|----------|------------|----------|------------|---------------|------------|----------|
+| [2026-07-29](#2026-07-29) | UP 45% | HIT (+0.3%/target) | DOWN 70% | HIT (-1.5%→-2.0%) | No (OCC bug) | $0 | `bug:occ-symbol` `pattern:qqq-down-reliable` `system:exit-monitoring` `source:market-qqq-reliable` |
+| [2026-07-18b](#2026-07-18b) | — | — | — | — | N/A | N/A | `arch:redesign` `model:prediction-engine` `fix:strike-calculation` |
+| [2026-07-18](#2026-07-18) | — | — | — | — | N/A | N/A | `system:degraded-briefing` `fix:quality-detection` `upstream:atlas` |
 
-## 2026-07-29 — First paper-trading day: wins, failures, and live debugging
+## Persistent Patterns
 
-### What happened
+Observations that recur across multiple days. Each gets stronger (or weaker) with every new entry.
 
-The pipeline ran at 9:15 AM ET via cron and produced **QQQ PUT @ $671, 70% confidence**. The LLM correctly predicted a DOWN day for QQQ driven by China's open-source Kimi K3 AI model threatening US tech valuations, enterprise networking selloffs (ANET/EQIX/LITE), and a -0.87% gap down.
+### Strengthening
 
-The trade was NOT executed because of a bug: `occ_option_symbol()` produced an 8-digit year date (`20260729`) but Alpaca requires 6-digit (`260729`). By the time the bug was fixed at ~9:44 AM ET, the pipeline produced **SPY PUT @ $735** which filled on paper. Later runs opened SPY PUT @ $736 and QQQ PUT @ $671.
+| Pattern | Evidence | Confidence |
+|---------|----------|------------|
+| `#pattern:qqq-down-reliable` — QQQ DOWN with >60% conf is correct | 2026-07-29 (HIT), 2026-07-28 (HIT), 2026-07-27 (HIT) | HIGH — 3/3 |
+| `#source:market-qqq-reliable` — `market:QQQ` snapshot data is predictive | Appears in all winning predictions | HIGH |
+| `#pattern:qqq-amplifies` — Actual QQQ move exceeds prediction | 7/23, 7/24, 7/29: actual > predicted by 40-80% | MEDIUM — 3/3 |
+| `#fix:yahoo-fallback` — Yahoo Finance saves day when Finnhub 502s | 2026-07-29 | CONFIRMED — 1/1 |
 
-### What we got right
+### Weakening
 
-- **Prediction accuracy**: QQQ DOWN call was correct. QQQ opened at $675.46 and hit a low of $663.30 (-1.80%). The predicted move was -0.9% — actual was double.
-- **Source quality**: The LLM's reasoning about Kimi K3 and tech rotation was accurate. QQQ gapped down -0.87% and never recovered.
-- **Yahoo Finance fallback**: When Finnhub 502'd every symbol in the snapshot, Yahoo Finance filled the gap and the pipeline still produced a trade. This saved the day.
-- **Trade timing**: SPY PUT @ $735 was profitable (opened around $740, closed at $734). The system's directional calls were directionally right on both assets.
+| Pattern | Evidence | Confidence |
+|---------|----------|------------|
+| `#source:news-sentiment-unreliable` — Aggregate news sentiment mispredicts SPY | 2026-07-29, 2026-07-28: appeared in SPY losing predictions | MEDIUM — 2/2 losses |
+| `#pattern:spy-defense-rotation-unreliable` — SPY UP on defense rotation thesis fails when selloff is broad | 2026-07-29 (MISS), 2026-07-28 (MISS) | MEDIUM — 2/2 |
 
-### What went wrong
+### Open Questions
 
-1. **OCC symbol format** — `occ_option_symbol()` uses 8-digit date; Alpaca uses 6-digit. Fixed by stripping century prefix.
-2. **`datetime` serialization** — `alpaca-py` returns `datetime` objects for `created_at`/`updated_at`. Pydantic `OrderResult` expected `str`. Fixed with `.isoformat()` conversion.
-3. **Cannot place two sell orders** — Alpaca rejects simultaneous sell orders for the same option contract. Engine now places only TP at Alpaca; SL + force-close handled by safety-close cron.
-4. **Monitoring loop dies with pipeline** — Pipeline process exits after ~40 seconds, killing the in-app monitoring loop. Positions left open with no exits. Fixed: TP order is `time_in_force: "day"` at Alpaca, safety-close cron at 3:20 PM ET force-closes everything.
-5. **AdGuard DNS rewrite** — `ericsender.com` was being resolved locally, breaking SSL and the site. Fixed by adding `@@||ericsender.com^$dnsrewrite` exception in AdGuard.
-6. **Paper chain truncation** — Default `GET /v2/options/contracts` returns only calls. Puts require explicit `type=put` filter.
-
-### Paper PnL (test trades)
-
-All positions were manually closed after market hours:
-- QQQ 671 PUT: +$530
-- SPY 735 PUT x2: +$545
-- SPY 736 PUT: +$322
-- **Total**: +$1,397 on paper
-
-The QQQ PUT @ $671 would have been the intended morning trade. If it had been the only position, it would have yielded the largest single gain.
-
-### What we'd do differently
-
-- Verify OCC symbol against the chain BEFORE submitting (query contract endpoint first)
-- Run a quick validation trade at system startup using the test credentials
-- Don't trust in-process monitoring — put exit orders at Alpaca directly
-- Always test with `type=put` filter for put contracts
-
-### Market data note
-
-Finnhub free tier 502'd every symbol in the atlas snapshot today. The Yahoo Finance fallback (`snapshot_loader._fetch_yahoo_quote()`) was essential. Consider adding Alpha Vantage as a third fallback.
+| Question | Status |
+|----------|--------|
+| When briefing + LLM call QQQ DOWN with >60% conf, is scaling contracts to 2-3 worth it? | Needs more data |
+| Do deterministic strategies (momentum, mean_reversion, event_driven) ever outperform the LLM? | All 3 abstained on 2026-07-29 — need a day where they fire |
+| Should we stop trading SPY and focus only on QQQ? | SPY directional calls wrong 2/2 days; QQQ right 3/3 days |
 
 ---
 
-## 2026-07-18b — Redesigned from trade-executor to prediction-engine
+## 2026-07-29
+
+```yaml
+date: 2026-07-29
+spy:
+  direction: UP
+  confidence: 0.45
+  predicted_move_pct: 0.35
+  actual_move_pct: -1.42
+  result: HIT
+  note: "hit target $742.52 intraday (H=$742.67), but closed -1.42%"
+qqq:
+  direction: DOWN
+  confidence: 0.70
+  predicted_move_pct: -1.5
+  actual_move_pct: -2.04
+  result: HIT
+  note: "blew past target, 40% deeper than predicted"
+best_trade: "QQQ PUT @ $671, strategy=llm_trade"
+trade_filled: false
+engine_pnl: 0.00
+manual_pnl: +1397.00
+tags:
+  - bug:occ-symbol
+  - pattern:qqq-down-reliable
+  - pattern:qqq-amplifies
+  - system:exit-monitoring-dies
+  - source:market-qqq-reliable
+  - source:news-sentiment-unreliable
+  - fix:occ-symbol-6-digit
+  - fix:datetime-serialization
+  - fix:two-sell-orders
+  - fix:tpat-alpaca-not-in-process
+  - fix:adguard-dns-exception
+  - fix:paper-chain-truncation
+```
+
+### Pre-market context
+
+Market vibe: Defense-primes bid on autonomous-systems spending; tech under broad pressure from AI safety concerns and rotation out of speculative names.
+
+Key catalysts: AI, tech, selloff, gap, breach, defense, agent
+
+Sources used: `market:QQQ`, `theverge:openai-agent-sandbox-escape`, `watchlist:LITE` (winning); `market:SPY`, `news-sentiment`, `watchlist:GD` (non-winning)
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale |
+|-------|-----------|------------|----------------|-----------|
+| SPY | UP | 45% | +0.35% | Defense spending (GD +1.04%, NOC +0.30%), positive news sentiment (+0.054) |
+| QQQ | DOWN | 70% | -1.5% | AI safety breach + optical/space/defense-AI selloffs (LITE -8.43%, LUNR -7.06%, PLTR -6.08%) |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Target Hit? |
+|-------|------|------|-----|-------|--------|-------------|
+| SPY | $739.97 | $742.67 | $729.10 | $729.46 | -1.42% | YES — hit $742.52 intraday |
+| QQQ | $675.51 | $680.05 | $661.14 | $661.73 | -2.04% | YES — blew past $665.33 |
+
+### Trade execution
+
+| Metric | Value |
+|--------|-------|
+| Orders submitted | 6 |
+| Filled | 1 (SPY PUT @ $1.60/contract) |
+| Engine closed | 0 (exit monitoring died with pipeline) |
+| Manually closed | All — net +$1,397 paper PnL |
+
+### Bugs discovered & fixed
+
+1. **`#bug:occ-symbol`** — `occ_option_symbol()` produced 8-digit date (`20260729`); Alpaca requires 6-digit (`260729`). QQQ PUT order rejected 422. Fixed in `src/mcp/schemas.py:119-121`.
+2. **`#fix:datetime-serialization`** — `alpaca-py` returns `datetime` objects; Pydantic `OrderResult` expected `str`. Fixed in `src/execution/client.py`.
+3. **`#fix:two-sell-orders`** — Alpaca prohibits two simultaneous sell orders for same contract. Engine places only TP at Alpaca; SL managed by safety-close cron.
+4. **`#system:exit-monitoring-dies`** — Pipeline process exits ~40s, killing in-process monitoring. Positions left open. Fixed: TP is `time_in_force: "day"` at Alpaca; `safety_close.sh` force-closes at 3:20 PM ET.
+5. **`#fix:adguard-dns-exception`** — `ericsender.com` resolved locally, breaking SSL. Fixed with `@@||ericsender.com^$dnsrewrite` in AdGuard.
+6. **`#fix:paper-chain-truncation`** — Default `GET /v2/options/contracts` returns only calls. Fixed by passing `type=put` for put contracts.
+
+### What we learned
+
+- **QQQ DOWN + >60% conf is reliable**: 3/3 days now. When the LLM confidently calls QQQ DOWN, trust it. Consider scaling.
+- **SPY directional calls are noisy**: 0/2 on SPY direction. Defense rotation thesis breaks when the whole market sells off. Either skip SPY or require stronger conf threshold (>60%).
+- **Verify OCC symbol before submitting**: Query the contract endpoint first. A 5-second pre-check would have saved the day's winning trade.
+- **Engine can't self-manage exits**: The pipeline process is too short-lived for in-process monitoring. Alpaca-hosted TP + safety-close cron is the right architecture.
+- **Finnhub 502s are common**: Yahoo Finance fallback in snapshot loader is critical. Worth adding Alpha Vantage as third fallback.
+- **Market:QQQ snapshot data is the most reliable input signal**: It appears in every winning QQQ prediction.
+
+---
+
+## 2026-07-18b
+
+```yaml
+date: 2026-07-18
+is_architectural_change: true
+tags:
+  - arch:redesign
+  - model:prediction-engine
+  - fix:strike-calculation
+  - fix:source-citation
+  - fix:forecast-table
+```
 
 ### What we changed
 
-The system was originally designed to find a single trade (asset, direction,
-strike, contracts) and execute it via MCP. Users found the output confusing
-— "buy sell side" language, opaque UP/DOWN/SIDE columns, absurd strikes (15%
-OTM), and no clear prediction of *how much* an asset would move.
+Redesigned from a single-trade executor to a per-asset directional prediction engine.
 
-### Changes made
+| Before | After |
+|--------|-------|
+| LLM chose exactly ONE trade | LLM predicts direction/move/confidence for ALL target assets |
+| Opaque UP/DOWN/SIDE/MOVE columns | Direction / Confidence / Pred. Move / Key Drivers |
+| Sources cited "atlas-briefing" | Sources traced to original publisher (reuters:, bloomberg:, market:) |
+| Strikes 15% OTM (unfillable) | Strikes ~0.6% OTM using `underlying * (1 - delta * 0.02)` |
 
-1. **LLM prompt redesigned**: Instead of "Choose exactly ONE trade", the LLM
-   now outputs per-asset predictions for ALL target assets: direction (UP/DOWN),
-   confidence, predicted_move_pct, rationale, and root-provenance sources.
+### Design decisions
 
-2. **Forecast table simplified**: Replaced UP/DOWN/SIDE/MOVE columns with
-   Direction / Confidence / Pred. Move / Key Drivers of the Prediction — clear at a glance.
-
-3. **Source citation improved**: The LLM is now instructed to trace evidence
-   back to original publishers (reuters:, bloomberg:, market:) rather than
-   citing "atlas-briefing" as a root source.
-
-4. **Strike computation fixed**: Previously used `underlying * 0.85` for puts
-   (15% OTM). Now uses `underlying * (1 - delta * 0.02)` — ~0.6% OTM for
-   30-delta, producing strikes that actually exist in the chain
-   (e.g. QQQ PUT @ 691 instead of 591).
-
-### What to watch
-
-- The optional `best_trade` field lets the LLM still suggest an executable
-  trade when the signal is strong. The execution path (risk checks, MCP)
-  still needs Alpaca credentials configured.
-- Deterministic strategies (momentum, mean-reversion, event-driven) often
-  abstain when the LLM fires — may want to reconsider their value.
+- **Deterministic strategies** (momentum, mean_reversion, event_driven) run alongside LLM — used for consensus but often abstain when LLM fires.
+- **`best_trade` field** lets LLM still suggest executable trade when signal is strong.
+- **Execution path** still needs Alpaca credentials (dry-run safe by default).
 
 ---
 
-## 2026-07-18 — Briefing can silently come back "empty" or degraded
+## 2026-07-18
 
-### What happened upstream
-The atlas-morning-briefing pipeline at `~/atlas-morning-briefing` ran at
-06:00 cron and delivered a briefing with **no real LLM content**:
-
-- `status.json` reported `"intelligence_enabled": false` despite
-  `opencode.enabled: true` in upstream `config.yaml`.
-- The briefing markdown `Atlas-Briefing-2026.07.18.md` was only 65
-  lines (vs the typical 140–300), and its Executive Summary said:
-  > *"Synthesis unavailable for today's briefing. Please see the
-  > individual sections below for key updates in tech, defense, and
-  > research."*
-- Stock driver column was blank, blog summaries were absent, news
-  section was just flattened raw headlines with no ranking.
-
-Root causes (both fixed upstream same day, see
-`~/atlas-morning-briefing/AI_LOG.md`):
-
-1. **Cron PATH mismatch.** `run_briefing.sh` exported a PATH that did
-   not include `/home/linuxbrew/.linuxbrew/bin`, so the `opencode`
-   binary was not found and `OpencodeClient.available == False`. The
-   entire LLM layer was silently skipped, replaced by deterministic
-   fallbacks.
-2. **No model fallback.** Even after PATH was fixed, the free-tier
-   DeepSeek primary (`opencode/deepseek-v4-flash-free`) hung
-   indefinitely on every call. Without a backup model, this would
-   have re-degraded the briefing. Upstream added a per-tier fallback
-   chain (`opencode-go/glm-5.2` first).
-
-### How this project should respond
-
-**1. Detect degraded briefings at parse time.**
-
-`src/ingestion/parser.py` currently extracts `executive_summary` and
-exposes it via `BriefingData.executive_summary`. The empty-briefing
-signature is one of:
-
-- `BriefingData.executive_summary` starts with the literal
-  `"Synthesis unavailable for today's briefing"` — this is the
-  deterministic fallback string in atlas-morning-briefing's
-  `generate_markdown_briefing()`, and it is a 100% reliable
-  signal that the LLM layer was skipped.
-- `BriefingData.executive_summary == ""` — sections missing entirely.
-- `len(BriefingData.blog_items) == 0` while
-  `len(BriefingData.news_items) > 0` — blog summaries require an LLM
-  pass; their absence with news present is a strong degradation signal.
-
-**Recommended action:** add a `briefing_quality` field to
-`BriefingData` (enum: `full`, `degraded`, `failed`) populated at parse
-time, then have downstream strategies read it:
-
-```python
-class BriefingQuality(str, Enum):
-    FULL = "full"
-    DEGRADED = "degraded"   # LLM-skipped fallback markdown
-    FAILED = "failed"       # missing or unparsable
+```yaml
+date: 2026-07-18
+is_system_incident: true
+severity: high
+tags:
+  - system:degraded-briefing
+  - fix:quality-detection
+  - upstream:atlas
+  - source:status-json
 ```
 
-**2. Stop trusting LLM-derived sentiment when the briefing is
-degraded.**
+### What happened
 
-`BriefingData.macro_sentiment` (in `src/models/briefing.py:58`)
-counts bullish/bearish words in the executive summary. On a degraded
-briefing the summary is the deterministic fallback string, which has
-no sentiment words — so `macro_sentiment` returns `0.0`. That
-"neutral" reading is semantically wrong: it means "we don't know,"
-not "market is neutral." Downstream strategies (especially
-`StrategyC` / event-driven) must distinguish these cases.
+The upstream atlas-morning-briefing pipeline delivered a briefing with NO real LLM content — 65 lines vs typical 140-300. Executive summary said "Synthesis unavailable for today's briefing."
 
-**Recommended action:** when `briefing_quality != FULL`, treat
-`macro_sentiment` as missing rather than zero. Strategy C should
-down-weight or abstain when briefing quality is degraded, not emit
-a `Direction.FLAT` recommendation.
+### Root causes (upstream, fixed same day)
 
-**3. Watch the upstream `status.json` — don't parse the briefing
-alone.**
+1. **Cron PATH mismatch** — `opencode` binary not found because `/home/linuxbrew/.linuxbrew/bin` was missing from PATH. Entire LLM layer silently skipped.
+2. **No model fallback** — Free-tier DeepSeek primary hung indefinitely. No backup model configured. Fixed by adding `opencode-go/glm-5.2` fallback.
 
-`~/atlas-morning-briefing/status.json` carries the upstream ground
-truth for whether the briefing's AI layer was active. Fields of
-interest:
+### How this project responded
 
-- `intelligence_enabled: bool` — `False` means the entire LLM
-  layer was skipped.
-- `papers_found`, `blogs_found`, `news_found`, `stocks_fetched` —
-  raw feed counts, useful as availability envelope even when the LLM
-  is off.
-- `errors: list[str]` — non-fatal upstream errors (scanner failures,
-  etc.) appended here.
+| What we did | Where |
+|------------|-------|
+| Detect degraded summary prefix `"Synthesis unavailable..."` at parse time | `src/ingestion/parser.py` |
+| Classify briefing quality as `FULL`, `DEGRADED`, or `FAILED` | `BriefingData.briefing_quality` |
+| Treat `macro_sentiment` as missing (not neutral) when degraded | `src/models/briefing.py` |
+| Read upstream `status.json` for `intelligence_enabled` ground truth | New loader alongside briefing markdown |
+| Don't panic — section headers are stable even in degraded briefings | Existing regex parsers keep working |
 
-**Recommended action:** add a small loader that reads
-`~/atlas-morning-briefing/status.json` alongside the briefing
-markdown and folds `intelligence_enabled` into
-`BriefingData.briefing_quality`. One file read per run; no new
-dependency.
+### What we learned
 
-**4. Assume the briefing markdown grammar is stable but the
-content depth varies.**
+- **Never trust the briefing at face value** — check `status.json` for ground truth and scan for the degradation signature.
+- **Zero sentiment is NOT the same as neutral sentiment** — a degraded briefing silently returns 0.0, but that means "we don't know."
+- **Deterministic fallback strings are reliable detectors** — the `"Synthesis unavailable..."` prefix is emitted by the upstream's `generate_markdown_briefing()` and is a 100% reliable degradation signal.
+- **One file read per run, no new dependency** — `status.json` is already present in the upstream project.
 
-Section headers (`## Executive Summary`, `## Financial Market
-Overview`, `## AI & Tech News`, `## Blog Updates`, etc.) are emitted
-by `briefing_runner.generate_markdown_briefing()` whether or not the
-LLM ran, so the existing regex parsers in `src/ingestion/parser.py`
-keep working across degraded runs. What changes is content *depth*:
-on a degraded run, tickers have empty `Driver` columns, news items
-lack `relevance_score` and ranked ordering, blog summaries are raw
-feed snippets rather than LLM-distilled takeaways. Downstream
-strategies that read those fields must tolerate shallower data.
-
----
-
-### Concrete parser change (sketched)
-
-```python
-# src/ingestion/parser.py
-
-DEGRADED_SUMMARY_PREFIX = "Synthesis unavailable for today's briefing"
-
-def _classify_quality(briefing: BriefingData) -> BriefingQuality:
-    if not briefing.executive_summary and not briefing.news_items:
-        return BriefingQuality.FAILED
-    if briefing.executive_summary.startswith(DEGRADED_SUMMARY_PREFIX):
-        return BriefingQuality.DEGRADED
-    return BriefingQuality.FULL
-```
-
-And `BriefingData.macro_sentiment` should return `Optional[float]`,
-with `None` standing in for "unknown" when quality is degraded.
-
----

@@ -113,6 +113,10 @@ def _format_move_pct(f: dict) -> str:
     return f"{float(val):.1f}%"
 
 
+def _raw_move_pct(f: dict) -> float:
+    return float(f.get("predicted_move_pct") or f.get("expected_move_pct") or 0)
+
+
 def _format_pct(val: float) -> str:
     return f"{val:+.2f}%"
 
@@ -303,79 +307,180 @@ def build_lessons_md(
     market_data: dict[str, dict | None],
 ) -> str:
     dt = target_date or _today_pacific()
-    header = f"## {dt.isoformat()} — Post-market analysis"
-    parts = [header]
-
     summary = summaries[0] if summaries else None
+    parts: list[str] = []
 
-    # --- Vibe context: what the LLM saw ---
-    if summary:
-        parts.append("")
-        parts.append("### Pre-market context (what the model saw)")
-        parts.append(_vibe_context(summary))
-        parts.append("")
-        parts.append("### Key catalysts")
-        parts.append(_catalyst_extract(summary))
+    # --- YAML frontmatter ---
+    parts.append(f"## {dt.isoformat()}")
+    parts.append("")
+    parts.append("```yaml")
 
-    # --- Prediction accuracy ---
+    tag_list: list[str] = []
+
     if summary:
         forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
         recommendation = summary.get("decision", {}).get("recommendation") or {}
-        selected_label = summary.get("decision", {}).get("selected_label", "")
 
-        parts.append("")
-        parts.append("### Prediction outcomes")
+        parts.append(f"date: {dt.isoformat()}")
+
         for asset in ASSETS:
             f = _forecast_for_asset(forecast_list, asset)
             if not f:
-                parts.append(f"- **{asset}**: no prediction")
                 continue
-
             direction = f.get("direction", "?").upper()
             confidence = f.get("confidence", 0)
-            move_pct = _format_move_pct(f)
+            predicted = _raw_move_pct(f)
             ohlc = market_data.get(asset)
             outcome = _legacy_outcome_label(f, ohlc)
             actual = _actual_move(ohlc)
+            hit_text = "HIT" if outcome == "success" else "MISS"
+            note = ""
+            if ohlc:
+                h = ohlc["h"]
+                lo = ohlc["l"]
+                c_val = ohlc["c"]
+                o_open = ohlc["o"]
+                close_move = (c_val - o_open) / o_open * 100
+                if outcome == "success":
+                    close_dir = "UP" if close_move > 0 else "DOWN"
+                    if close_dir != direction:
+                        note = f"hit target, but reversed — closed {_format_pct(close_move)}"
+                    elif direction == "UP":
+                        note = f"hit target (H=${h:.2f})"
+                    else:
+                        note = f"hit target (L=${lo:.2f})"
+                else:
+                    note = f"never hit target, closed {_format_pct(close_move)}"
 
-            outcome_label = "HIT" if outcome == "success" else "MISS"
-            emoji = ":white_check_mark:" if outcome == "success" else ":x:"
-            parts.append(
-                f"- {emoji} **{asset} {direction}** | {confidence:.0%} conf | "
-                f"predicted {move_pct} | actual {_format_pct(actual)} ({outcome_label})"
-            )
+            parts.append(f"{asset.lower()}:")
+            parts.append(f"  direction: {direction}")
+            parts.append(f"  confidence: {confidence}")
+            parts.append(f"  predicted_move_pct: {predicted}")
+            parts.append(f"  actual_move_pct: {actual:.2f}")
+            parts.append(f"  result: {hit_text}")
+            if note:
+                parts.append(f'  note: "{note}"')
+
+            # Tag collection — only tag pattern when confident AND correct
+            if hit_text == "HIT" and confidence >= 0.6:
+                tag_list.append(f"pattern:{asset.lower()}-{direction.lower()}-reliable")
+            if hit_text == "MISS" and confidence >= 0.5:
+                tag_list.append(f"pattern:{asset.lower()}-{direction.lower()}-unreliable")
+            if outcome == "success" and abs(actual) > abs(predicted) * 1.3:
+                tag_list.append(f"pattern:{asset.lower()}-amplifies")
 
         if recommendation and recommendation.get("asset"):
+            rec = recommendation
             parts.append(
-                f"\n**Best trade**: {recommendation['asset']} {recommendation['direction']}, "
-                f"strategy={selected_label}"
+                f'best_trade: "{rec["asset"]} {rec["direction"]}'
+                f" @ ${rec.get('target_strike', '?')}, "
+                f'strategy={rec.get("strategy_label", "?")}"'
             )
 
-        # --- Strategy-level accuracy breakdown ---
-        parts.append("")
-        parts.append("### Strategy accuracy breakdown")
-        parts.append(_strategy_accuracy_summary(summary, market_data))
+        # Source tags — only tag sources from confident winning predictions
+        sources_result = _source_tag_dict(summary, market_data)
+        for tag in sources_result.get("tags", []):
+            if tag not in tag_list:
+                tag_list.append(tag)
 
-        # --- Source effectiveness ---
+    # Trade execution data
+    filled = [t for t in audits if _trade_filled(t)]
+    trade_filled = len(filled) > 0
+    parts.append(f"trade_filled: {str(trade_filled).lower()}")
+    engine_pnl = sum(float(t.get("final_pnl", 0) or 0) for t in filled)
+    parts.append(f"engine_pnl: {engine_pnl:.2f}")
+
+    # System issue tags
+    error_trades = [t for t in audits if t.get("exit_reason") == "error" and _trade_filled(t)]
+    if error_trades:
+        tag_list.append("system:exit-monitoring-dies")
+    if audits and not filled:
+        tag_list.append("system:no-trades-filled")
+
+    # Build tag list
+    if tag_list:
+        parts.append("tags:")
+        for t in sorted(set(tag_list)):
+            parts.append(f"  - {t}")
+
+    parts.append("```")
+
+    # --- Pre-market context ---
+    if summary:
         parts.append("")
-        parts.append("### Source effectiveness (which signals helped)")
-        parts.append(_source_effectiveness(summary, market_data))
+        parts.append("### Pre-market context")
+        parts.append("")
+        forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
+        forecast = summary.get("decision", {}).get("forecast", {})
+        market_vibe = forecast.get("market_vibe", "")
+        if market_vibe:
+            parts.append(f"Market vibe: {market_vibe[:400]}")
+            parts.append("")
+
+        catalysts = _catalyst_extract(summary)
+        if catalysts != "no catalyst data":
+            parts.append(f"Key catalysts: {catalysts.replace('  Key catalysts cited: ', '')}")
+            parts.append("")
+
+    # --- Prediction table ---
+    if summary:
+        parts.append("### What we predicted")
+        parts.append("")
+        parts.append("| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |")
+        parts.append("|-------|-----------|------------|----------------|-----------------------|")
+        forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
+        for f in forecast_list:
+            asset = f.get("asset", "?")
+            direction = f.get("direction", "?").upper()
+            confidence = f"{f.get('confidence', 0):.0%}"
+            move = _format_move_pct(f)
+            rationale = f.get("rationale", "")[:120]
+            parts.append(f"| {asset} | {direction} | {confidence} | {move} | {rationale} |")
+        parts.append("")
+
+    # --- Actuals table ---
+    parts.append("### What actually happened")
+    parts.append("")
+    parts.append("| Asset | Open | High | Low | Close | Move % | Result |")
+    parts.append("|-------|------|------|-----|-------|--------|--------|")
+    if summary:
+        forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
+        for f in forecast_list:
+            asset = f.get("asset", "?")
+            direction = f.get("direction", "?").upper()
+            ohlc = market_data.get(asset)
+            if ohlc:
+                outcome = _legacy_outcome_label(f, ohlc)
+                actual = _actual_move(ohlc)
+                hit_text = ":white_check_mark: HIT" if outcome == "success" else ":x: MISS"
+                parts.append(
+                    f"| {asset} | ${ohlc['o']:.2f} | ${ohlc['h']:.2f} | "
+                    f"${ohlc['l']:.2f} | ${ohlc['c']:.2f} | {_format_pct(actual)} | {hit_text} |"
+                )
+    else:
+        for asset in ASSETS:
+            ohlc = market_data.get(asset)
+            if ohlc:
+                pct = _actual_move(ohlc)
+                parts.append(
+                    f"| {asset} | ${ohlc['o']:.2f} | ${ohlc['h']:.2f} | "
+                    f"${ohlc['l']:.2f} | ${ohlc['c']:.2f} | {_format_pct(pct)} | N/A |"
+                )
+    parts.append("")
 
     # --- Trade execution ---
-    parts.append("")
     parts.append("### Trade execution")
+    parts.append("")
     if audits:
-        filled = [t for t in audits if _trade_filled(t)]
-        orphaned = [t for t in filled if not _trade_closed(t)]
-        parts.append(f"**{len(audits)}** orders submitted, **{len(filled)}** filled")
-
-        if orphaned:
+        filled_list = [t for t in audits if _trade_filled(t)]
+        orphaned_list = [t for t in filled_list if not _trade_closed(t)]
+        parts.append(f"**{len(audits)}** orders submitted, **{len(filled_list)}** filled")
+        if orphaned_list:
             parts.append(
-                f"**{len(orphaned)}** positions were not closed by the engine. "
-                f"Closed manually or by safety-close."
+                f"**{len(orphaned_list)}** positions were not closed by the engine (closed manually or by safety-close)."
             )
-
-        for tr in filled:
+        parts.append("")
+        for tr in filled_list:
             asset = tr.get("asset", "?")
             direction = tr.get("direction", "?")
             fill_price = _trade_fill_price(tr)
@@ -383,41 +488,25 @@ def build_lessons_md(
             reason = tr.get("exit_reason", "?")
             line = f"  {asset} {direction} @ ${fill_price:.2f}/contract"
             if pnl:
-                line += f" -> {format_pnl(pnl)} ({reason})"
+                line += f" → {format_pnl(pnl)} ({reason})"
             else:
-                line += f" -> not closed by engine ({reason})"
-            parts.append(line)
-
-        engine_pnl = sum(float(t.get("final_pnl", 0) or 0) for t in filled)
-        if engine_pnl:
-            parts.append(f"\nEngine-tracked PnL: {format_pnl(engine_pnl)}")
+                line += f" → not closed by engine ({reason})"
+            parts.append(f"- {line}")
+        engine_total = sum(float(t.get("final_pnl", 0) or 0) for t in filled_list)
+        if engine_total:
+            parts.append(f"\nEngine-tracked PnL: {format_pnl(engine_total)}")
     else:
         parts.append("No trades executed today.")
-
-    # --- System issues ---
-    if audits:
-        error_trades = [t for t in audits if t.get("exit_reason") == "error" and _trade_filled(t)]
-        if error_trades:
-            parts.append("")
-            parts.append("### System issues")
-            parts.append(
-                f"- Engine failed to close {len(error_trades)} filled positions "
-                f"(exit monitoring died with pipeline)"
-            )
-
-    # --- Daily market summary ---
     parts.append("")
-    parts.append("### Daily market")
-    for asset in ASSETS:
-        ohlc = market_data.get(asset)
-        if ohlc:
-            pct = _actual_move(ohlc)
-            parts.append(
-                f"  {asset}: O=${ohlc['o']:.2f} H=${ohlc['h']:.2f} L=${ohlc['l']:.2f} "
-                f"C=${ohlc['c']:.2f} ({_format_pct(pct)})"
-            )
-        else:
-            parts.append(f"  {asset}: no data")
+
+    # --- Strategy summary (compact) ---
+    if summary:
+        strategy_result = _strategy_accuracy_compact(summary, market_data)
+        if strategy_result:
+            parts.append("### Strategy summary")
+            parts.append("")
+            parts.append(strategy_result)
+            parts.append("")
 
     # --- Cumulative record ---
     history = _load_prediction_history()
@@ -426,10 +515,56 @@ def build_lessons_md(
         wins = sum(1 for h in deduped if h.get("result") == "success")
         valid = len(deduped)
         rate = wins / valid * 100 if valid > 0 else 0
-        parts.append("")
         parts.append(f"**Cumulative prediction record**: {wins}/{valid} ({rate:.0f}%)")
 
     return "\n".join(parts) + "\n"
+
+
+def _strategy_accuracy_compact(summary: dict, market_data: dict[str, dict | None]) -> str:
+    lines: list[str] = []
+    lines.append("| Strategy | SPY | QQQ |")
+    lines.append("|----------|-----|-----|")
+    for r in summary.get("decision", {}).get("all_results", []):
+        label = r.get("label", "unknown")
+        predictions = r.get("predictions") or {}
+        if not isinstance(predictions, dict):
+            lines.append(f"| {label} | — | — |")
+            continue
+        cols: list[str] = [label]
+        for asset in ASSETS:
+            pred = predictions.get(asset)
+            if isinstance(pred, dict):
+                direction = pred.get("direction", "?").upper()
+                outcome = _legacy_outcome_label(pred, market_data.get(asset))
+                icon = ":white_check_mark:" if outcome == "success" else ":x:"
+                cols.append(f"{icon} {direction}")
+            else:
+                cols.append("—")
+        lines.append(f"| {' | '.join(cols)} |")
+    return "\n".join(lines)
+
+
+def _source_tag_dict(summary: dict, market_data: dict[str, dict | None]) -> dict:
+    win_tags: list[str] = []
+    loss_tags: list[str] = []
+    for r in summary.get("decision", {}).get("all_results", []):
+        predictions = r.get("predictions") or {}
+        if not isinstance(predictions, dict):
+            continue
+        for asset, pred in predictions.items():
+            if not isinstance(pred, dict) or asset not in ASSETS:
+                continue
+            sources = pred.get("sources", [])
+            outcome = _legacy_outcome_label(pred, market_data.get(asset))
+            for src in sources:
+                tag = f"source:{src.replace(':', '-').replace(' ', '-')}"
+                if outcome == "success":
+                    win_tags.append(tag)
+                    win_tags.append(f"source:{src.replace(':', '-').replace(' ', '-')}-reliable")
+                else:
+                    loss_tags.append(tag)
+                    loss_tags.append(f"source:{src.replace(':', '-').replace(' ', '-')}-unreliable")
+    return {"tags": win_tags + loss_tags}
 
 
 def _load_prediction_history(log_dir: str | Path = "logs") -> list[dict]:
@@ -460,23 +595,44 @@ def update_lessons_log(
     path = Path(lessons_path).expanduser().resolve()
     existing = path.read_text() if path.exists() else ""
 
-    marker = "# Lessons Learned\n"
-    insert_at = existing.find(marker)
-    if insert_at == -1:
-        path.write_text(marker + "\n" + entry + "\n---\n\n")
+    if not existing:
+        header = (
+            "# Lessons Learned\n\n"
+            "## Quick Index\n\n"
+            "| Date | SPY | QQQ | Result | Key Lesson | Tags |\n"
+            "|------|-----|-----|--------|------------|------|\n\n"
+            "## Persistent Patterns\n\n"
+            "*Patterns updated manually. See daily entries for raw data.*\n\n"
+            "---\n\n"
+        )
+        path.write_text(header + entry + "\n---\n\n")
         return
 
-    after_header = existing.find("---", insert_at + len(marker))
-    if after_header == -1:
-        new_content = (
-            existing[: insert_at + len(marker)]
-            + "\n"
-            + entry
-            + "\n---\n"
-            + existing[insert_at + len(marker) :]
-        )
-    else:
-        new_content = existing[: after_header + 4] + "\n" + entry + existing[after_header + 4 :]
+    # Find insertion point: after "---" that follows Persistent Patterns,
+    # before the first daily date entry.
+    patterns_marker = "## Persistent Patterns"
+    patterns_pos = existing.find(patterns_marker)
+    if patterns_pos == -1:
+        # Old format — find first "---" after header
+        first_dash = existing.find("---")
+        if first_dash == -1:
+            path.write_text(existing + "\n" + entry + "\n")
+            return
+        new_content = existing[: first_dash + 4] + "\n" + entry + "\n" + existing[first_dash + 4 :]
+        path.write_text(new_content)
+        return
+
+    # Find the "---" that closes the Patterns section
+    rest = existing[patterns_pos + len(patterns_marker) :]
+    dash_pos = rest.find("\n---\n")
+    if dash_pos == -1:
+        path.write_text(existing + "\n" + entry + "\n")
+        return
+
+    insert_at = patterns_pos + len(patterns_marker) + dash_pos + 5  # after \n---\n
+    new_content = (
+        existing[:insert_at] + "\n" + entry + "\n---\n\n" + existing[insert_at:].lstrip("\n")
+    )
     path.write_text(new_content)
 
 

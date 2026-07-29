@@ -76,6 +76,7 @@ ignore = [
 ]
 "src/__init__.py" = ["F401"]  # allow unused imports in __init__
 "src/execution/__init__.py" = ["F401"]  # allow unused imports in __init__
+"src/ingestion/candle_providers.py" = ["E741"]  # `l` is standard OHLCV convention
 
 [tool.ruff.format]
 quote-style = "double"

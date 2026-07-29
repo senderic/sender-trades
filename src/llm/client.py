@@ -273,7 +273,6 @@ class OpencodeLLMClient:
         in_tok = int(self.total_input_chars / 4) if self.total_input_chars else 0
         out_tok = int(self.total_output_chars / 4) if self.total_output_chars else 0
         cost = (in_tok * in_rate + out_tok * out_rate) / 1_000_000
-        total = self.total_calls + self.total_failures
 
         model_str = self.last_served_by or "—"
         if self.fallback_hits:

@@ -41,7 +41,7 @@ jobs:
       - name: Place site into branch subdirectory
         run: |
           BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          mkdir -p public
+          mkdir -p "public/$BRANCH"
           cp -r site/* "public/$BRANCH/"
           echo "$BRANCH" > public/.current-branch
 

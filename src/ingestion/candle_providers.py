@@ -274,9 +274,6 @@ class FinnhubProvider:
     async def fetch_daily_candle(self, symbol: str, target_date: date) -> dict | None:
         if not self.api_key:
             return None
-    async def fetch_daily_candle(self, symbol: str, target_date: date) -> dict | None:
-        if not self.api_key:
-            return None
         start_dt = datetime(target_date.year, target_date.month, target_date.day, tzinfo=ET_TZ)
         end_dt = start_dt + timedelta(days=1) - timedelta(seconds=1)
         url = "https://finnhub.io/api/v1/stock/candle"

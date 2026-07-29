@@ -8,13 +8,12 @@ and is always tested.
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 
 from src.ingestion.candle_providers import (
     AlphaVantageProvider,
-    CandleProviderChain,
     FinnhubProvider,
     YahooFinanceProvider,
     build_candle_chain,

@@ -204,7 +204,7 @@ class AlpacaBrokerClient:
             option_type = "C" if rec.direction.value == "CALL" else "P"
             occ_symbol = occ_option_symbol(rec.asset, expiry, rec.target_strike, option_type)
 
-        order_type = rec.order_type or self.exec_config.entry.order_type
+        order_type = self.exec_config.entry.order_type
         side = "buy"
 
         order: dict[str, Any] = {
@@ -216,9 +216,18 @@ class AlpacaBrokerClient:
         }
 
         if order_type == "limit":
-            order["limit_price"] = (
-                limit_price if limit_price else round(rec.target_strike * 0.005, 2)
-            )
+            if limit_price is not None:
+                order["limit_price"] = round(limit_price, 2)
+            else:
+                delta = rec.rationale.get("delta", 0.3) if isinstance(rec.rationale, dict) else 0.3
+                est_price = (
+                    abs(delta)
+                    * abs(rec.rationale.get("entry_price", rec.target_strike) - rec.target_strike)
+                    + 0.15
+                    if isinstance(rec.rationale, dict)
+                    else 3.0
+                )
+                order["limit_price"] = round(max(est_price, 1.0), 2)
 
         return order
 

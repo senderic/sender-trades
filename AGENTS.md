@@ -6,9 +6,9 @@ An intraday directional prediction engine with an optional 0DTE options executio
 
 ## Schedule
 
-Cron (America/Los_Angeles): `15 6 * * 1-5` — 6:15 AM Mon-Fri.
-Runs ~42 min after upstream `~/atlas-morning-briefing/` (5:30 AM).
-Pipeline runs at 9:15 AM ET, submits day limit orders to Alpaca queued for 9:30 AM ET open.
+Cron (America/Los_Angeles): `28 6 * * 1-5` — 6:28 AM Mon-Fri.
+Runs ~58 min after upstream `~/atlas-morning-briefing/` (5:30 AM).
+Pipeline runs at 9:28 AM ET, 2 min before market open (9:30 AM ET), to catch pre-market gap moves.
 
 ## Key Commands
 
@@ -119,6 +119,8 @@ Discovered during paper-trading verification. Do NOT repeat.
 | Gotcha | Root Cause | Fix Location |
 |--------|-----------|-------------|
 | OCC symbol 422 "not found" | `occ_option_symbol()` used 8-digit date (`20260729`); Alpaca requires 6-digit (`260729`) | `src/mcp/schemas.py` — strips century if 8-char date part |
+| Options market orders rejected pre-market | Alpaca rejects market orders before 9:30 AM ET: "options market orders are only allowed during market hours" | `src/execution/client.py` — always uses config's `order_type: limit`, ignores LLM's "market" |
+| Pre-market gap inverts prediction | Briefing at 5:30 AM PT misses overnight earnings/catalysts. Model needs live pre-market quotes. | Cron moved to 9:28 AM ET (2 min before open). Model reruns with real pre-market data. |
 | SDK returns `datetime`, not `str` | `alpaca-py` Order model has `datetime` fields; our `OrderResult` uses `str` — Pydantic crash | `src/execution/client.py:_order_to_result()` — `datetime.isoformat()` |
 | Two simultaneous sell orders rejected | Alpaca prohibits selling same contract twice; TP fill "held" the position | Engine places only TP at Alpaca; SL managed in-app |
 | Monitor loop hangs forever | No time-based exit in `_monitor_exits` when quotes unavailable | Time-deadline check at top of loop → force-close |

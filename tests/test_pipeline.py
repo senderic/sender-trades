@@ -1,13 +1,16 @@
 import json
 import subprocess
 import uuid
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from src.config import Settings
 from src.logging_setup import setup_logging
+from src.models.market import DataSource, MarketSnapshot, Quote
 from src.models.recommendation import (
     DecisionOutput,
     Direction,
@@ -16,7 +19,6 @@ from src.models.recommendation import (
     TradeRecommendation,
 )
 from src.pipeline import Pipeline
-
 
 _TS = __import__("datetime").datetime.now()
 
@@ -269,22 +271,7 @@ async def test_compute_forecast_falls_back_to_strategy_label_when_unset(
 
 
 class TestPreMarketGapGuardIntegration:
-    def _build_results(self, direction: Direction, conf: float) -> list[StrategyResult]:
-        if direction == Direction.PUT:
-            makers = [_qqq_put_rec] * 3 + [_qqq_call_rec]
-        else:
-            makers = [_qqq_call_rec] * 4
-        confidences = [conf - 0.20, conf - 0.15, conf - 0.10, conf]
-        results: list[StrategyResult] = []
-        labels = ["momentum", "mean_reversion", "event_driven", "llm_trade"]
-        for i, (maker, lbl) in enumerate(zip(makers, labels)):
-            rec = maker(strategy=lbl, conf=confidences[i])
-            results.append(StrategyResult(label=lbl, recommendation=rec, confidence=rec.confidence, duration_ms=1.0))
-        return results
-
     def _market_with_gap(self, asset: str, current: float, prev_close: float) -> dict:
-        from src.models.market import DataSource, Quote
-
         return {
             "quotes": {
                 asset: Quote(
@@ -305,14 +292,6 @@ class TestPreMarketGapGuardIntegration:
         }
 
     def test_gap_contradicts_trade_rejects(self, tmp_path) -> None:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        from unittest.mock import patch
-
-        from src.config import Settings
-        from src.logging_setup import setup_logging
-        from src.models.market import MarketSnapshot
-
         config = Settings()
         config.logging.json_dir = str(tmp_path / "logs")
         cid = uuid.uuid4().hex[:12]
@@ -356,14 +335,6 @@ class TestPreMarketGapGuardIntegration:
         assert "risk" in decision.rationale.lower() or "gap" in decision.rationale.lower()
 
     def test_gap_aligned_with_trade_passes(self, tmp_path) -> None:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        from unittest.mock import patch
-
-        from src.config import Settings
-        from src.logging_setup import setup_logging
-        from src.models.market import MarketSnapshot
-
         config = Settings()
         config.logging.json_dir = str(tmp_path / "logs")
         cid = uuid.uuid4().hex[:12]

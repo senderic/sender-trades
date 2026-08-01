@@ -8,7 +8,6 @@ from src.engine.risk import RiskEngine
 from src.models.market import DataSource, MarketSnapshot, Quote
 from src.models.recommendation import Direction, PositionIntent, TradeRecommendation
 
-
 _TS = __import__("datetime").datetime.now()
 
 ET_TZ = ZoneInfo("America/New_York")

@@ -118,7 +118,7 @@ class EntryConfig(BaseModel):
 
     order_type: Literal["market", "limit"] = "limit"
     limit_offset_pct: float = 5.0
-    entry_window_minutes: int = 5
+    entry_window_minutes: int = 15
 
 
 class ExitConfig(BaseModel):

@@ -137,8 +137,14 @@ class Pipeline:
             self.result.model_usage_text = llm_client.get_usage_summary_text()
 
         execution = None
-        if decision.recommendation is not None:
+        if decision.recommendation is not None and self.config.general.execute:
             execution = await self._phase_execute(decision)
+        elif decision.recommendation is not None:
+            logger.info(
+                "pipeline_execution_disabled",
+                asset=decision.recommendation.asset,
+                direction=decision.recommendation.direction.value,
+            )
         else:
             logger.info("pipeline_no_trade", rationale=decision.rationale)
 

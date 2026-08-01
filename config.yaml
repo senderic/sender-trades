@@ -90,7 +90,7 @@ execution:
   entry:
     order_type: limit
     limit_offset_pct: 5
-    entry_window_minutes: 5
+    entry_window_minutes: 15
   exit_strategy:
     take_profit_pct: 100
     stop_loss_pct: -50

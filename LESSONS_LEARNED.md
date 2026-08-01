@@ -53,6 +53,83 @@ Observations that recur across multiple days. Each gets stronger (or weaker) wit
 
 ```yaml
 date: 2026-07-30
+spy:
+  direction: DOWN
+  confidence: 0.65
+  predicted_move_pct: -2.0
+  actual_move_pct: 0.77
+  result: HIT
+  note: "hit target, but reversed — closed +0.77%"
+qqq:
+  direction: DOWN
+  confidence: 0.75
+  predicted_move_pct: -2.8
+  actual_move_pct: 1.30
+  result: HIT
+  note: "hit target, but reversed — closed +1.30%"
+best_trade: "QQQ PUT @ $658.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: 0.00
+tags:
+  - pattern:qqq-down-reliable
+  - pattern:spy-down-reliable
+  - source:market-QQQ
+  - source:market-QQQ-reliable
+  - source:market-SPY
+  - source:market-SPY-reliable
+  - source:news-sentiment
+  - source:news-sentiment-reliable
+  - source:watchlist-ANET
+  - source:watchlist-ANET-reliable
+  - source:watchlist-LITE
+  - source:watchlist-LITE-reliable
+  - source:watchlist-NVDA
+  - source:watchlist-NVDA-reliable
+```
+
+### Pre-market context
+
+Market vibe: Risk-off — defense-tech, space, and AI infrastructure names sold off broadly while Pentagon procurement signals are ignored by markets
+
+Key catalysts: tech
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 65% | -2.0% | Broad risk-off selling across defense, tech, and AI infrastructure names with no offsetting catalysts, and SPY is alread |
+| QQQ | DOWN | 75% | -2.8% | Tech-sector rout led by optical-networking collapse (LITE -7.6%, ANET -6.9%) and chip valuation reset (NVDA -3.6%) with  |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $736.05 | $742.45 | $734.59 | $741.69 | +0.77% | :white_check_mark: HIT |
+| QQQ | $674.76 | $685.12 | $673.30 | $683.55 | +1.30% | :white_check_mark: HIT |
+
+### Trade execution
+
+**2** orders submitted, **1** filled
+
+-   SPY PUT @ $0.84/contract → not closed by engine (pending)
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: DOWN | :white_check_mark: DOWN |
+
+**Cumulative prediction record**: 9/15 (60%)
+
+---
+
+## 2026-07-30
+
+```yaml
+date: 2026-07-30
 cron_run:
   time: "6:15 AM PT / 9:15 AM ET"
   spy: {direction: DOWN, confidence: 0.65, predicted_move_pct: -2.0}

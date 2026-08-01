@@ -8,7 +8,7 @@ import structlog
 
 from src.config import Settings
 from src.models.market import MarketSnapshot
-from src.models.recommendation import TradeRecommendation
+from src.models.recommendation import Direction, TradeRecommendation
 from src.timezone import ET_TZ, today_local
 
 logger = structlog.get_logger()
@@ -58,6 +58,7 @@ class RiskEngine:
         self._check_max_loss(rec)
         self._check_dte(rec)
         self._check_statistical_sanity(rec, market)
+        self._check_premarket_gap(rec, market)
         return rec
 
     def _check_time(self, rec: TradeRecommendation, _now: datetime | None = None) -> None:
@@ -182,6 +183,48 @@ class RiskEngine:
                 threshold_pct=2.0,
             )
             rec.confidence *= 0.5
+
+    def _check_premarket_gap(
+        self,
+        rec: TradeRecommendation,
+        market: MarketSnapshot,
+    ) -> None:
+        """Reject trades where pre-market gap contradicts the predicted direction.
+
+        If the pre-market gap exceeds 0.4% and moves opposite to the trade
+        direction (e.g. asset gapped UP but trade is PUT), the trade is
+        rejected because overnight catalysts have likely invalidated the
+        morning briefing's thesis.
+
+        Args:
+            rec: The trade recommendation to check.
+            market: Current market snapshot for price data.
+
+        Raises:
+            RiskError: If pre-market gap > 0.4% contradicts trade direction.
+        """
+        quote = market.quotes.get(rec.asset)
+        if quote is None:
+            return
+        if quote.previous_close <= 0:
+            return
+
+        gap_pct = (quote.current_price - quote.previous_close) / quote.previous_close * 100
+        if abs(gap_pct) <= 0.4:
+            return
+
+        gap_is_up = gap_pct > 0
+        trade_is_bullish = rec.direction == Direction.CALL
+        if gap_is_up == trade_is_bullish:
+            return
+
+        direction_word = "UP" if gap_is_up else "DOWN"
+        trade_word = "CALL" if trade_is_bullish else "PUT"
+        raise RiskError(
+            f"{rec.asset} pre-market gap {gap_pct:+.1f}% is {direction_word} but "
+            f"trade is {trade_word}. Pre-market gap contradicts prediction direction.",
+            guardrail="premarket_gap",
+        )
 
     @staticmethod
     def check_consensus(

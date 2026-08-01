@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from src.config import Settings
-from src.llm.trade_signal import LLMTradeStrategy, _normalise_sources, _parse_pick
+from src.llm.trade_signal import LLMTradeStrategy, _build_prompt, _normalise_sources, _parse_pick
 from src.models.briefing import BriefingData, BriefingQuality
 from src.models.market import DataSource, MarketSnapshot, Quote
 from src.models.recommendation import Direction
@@ -486,6 +486,27 @@ class TestLLMTradeStrategy:
         assert result.recommendation is not None
         assert result.debug_trace["paid_used"] is True
         assert result.debug_trace["served_by"] == "opencode-go/glm-5.2"
+
+
+class TestGapAwarenessInPrompt:
+    def test_prompt_includes_gap_warning_when_large_gap(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        market_with_quotes.quotes["QQQ"].current_price = 674.76
+        market_with_quotes.quotes["QQQ"].previous_close = 661.50
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "Pre-market gap alert" in prompt
+        assert "QQQ has gapped +2.0%" in prompt
+
+    def test_prompt_omits_gap_warning_when_gap_small(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        market_with_quotes.quotes["SPY"].current_price = 745.20
+        market_with_quotes.quotes["SPY"].previous_close = 744.00
+        market_with_quotes.quotes["QQQ"].current_price = 695.33
+        market_with_quotes.quotes["QQQ"].previous_close = 694.50
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "Pre-market gap alert" not in prompt
 
 
 if __name__ == "__main__":

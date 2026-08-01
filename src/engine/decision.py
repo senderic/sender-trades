@@ -43,6 +43,8 @@ class DecisionAggregator:
         valid_sorted = sorted(valid, key=lambda r: r.confidence, reverse=True)
         best = valid_sorted[0]
 
+        best = self._apply_consensus_scoring(best, results, valid_sorted)
+
         if best.confidence < self.config.strategies.momentum.min_confidence:
             return DecisionOutput(
                 selected_label=None,
@@ -116,6 +118,67 @@ class DecisionAggregator:
         rec_a.rationale = merged_rationale
         rec_a.strategy_label = f"{a.label}+{b.label}"
         return rec_a
+
+    def _apply_consensus_scoring(
+        self,
+        best: StrategyResult,
+        all_results: list[StrategyResult],
+        valid_sorted: list[StrategyResult],
+    ) -> StrategyResult:
+        """Adjust best strategy confidence based on cross-strategy consensus.
+
+        If 3+ strategies agree on the same (asset, direction), boost
+        confidence by 0.05. If all 4 strategies produced recommendations
+        and the vote is an equal split (2-2), penalise confidence by 0.05.
+
+        Args:
+            best: The highest-confidence strategy result (mutated in-place).
+            all_results: All strategy results (including those without recs).
+            valid_sorted: All results that produced a recommendation.
+
+        Returns:
+            The (potentially modified) best StrategyResult.
+        """
+        votes: dict[tuple[str, str], int] = {}
+        for r in valid_sorted:
+            rec = r.recommendation
+            if rec is None:
+                continue
+            key = (rec.asset, rec.direction.value)
+            votes[key] = votes.get(key, 0) + 1
+
+        if not votes:
+            return best
+
+        total_voting = sum(votes.values())
+        majority_count = max(votes.values())
+
+        if total_voting >= 2 and majority_count >= 3:
+            old = best.recommendation.confidence
+            new = min(1.0, old + 0.05)
+            best.recommendation.confidence = new
+            best.confidence = new
+            logger.info(
+                "consensus_boost",
+                strategies_majority=majority_count,
+                total_strategies=total_voting,
+                old_confidence=round(old, 4),
+                new_confidence=round(new, 4),
+            )
+        elif total_voting >= 3 and majority_count == total_voting // 2 and total_voting % 2 == 0:
+            old = best.recommendation.confidence
+            new = max(0.0, old - 0.05)
+            best.recommendation.confidence = new
+            best.confidence = new
+            logger.info(
+                "consensus_penalty",
+                strategies_per_side=majority_count,
+                total_strategies=total_voting,
+                old_confidence=round(old, 4),
+                new_confidence=round(new, 4),
+            )
+
+        return best
 
     @staticmethod
     def _build_rationale(

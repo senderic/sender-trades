@@ -215,6 +215,7 @@ def check_outcome(
         close_price=c_val,
         triggered_at=triggered_at_str,
         duration_hours=duration_h,
+        sources=pred.get("sources", []),
     )
 
 
@@ -249,6 +250,98 @@ def append_outcomes(log_dir: str | Path, outcomes: list[PredictionOutcome]) -> N
         logger.error("prediction_history_write_error", path=str(path), error=str(e))
 
 
+def _compute_per_asset_record(
+    history: list[dict],
+) -> dict[str, dict[str, int]]:
+    """Compute per-asset success/fail counts from prediction history.
+
+    Deduplicates by (date, asset) to avoid counting reruns multiple times.
+
+    Args:
+        history: List of prediction outcome dicts.
+
+    Returns:
+        Dict keyed by asset with ``success``, ``fail``, and ``total`` counts.
+        Also includes per-direction breakdowns (``up_success``, etc.).
+    """
+    seen: set[tuple[str, str, str]] = set()
+    records: dict[str, dict[str, int]] = {}
+
+    for entry in history:
+        asset = entry.get("asset", "?")
+        date_str = entry.get("date", "")
+        result = entry.get("result", "unknown")
+        direction = entry.get("predicted_direction", "")
+
+        dedup_key = (date_str, asset, direction)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        if asset not in records:
+            records[asset] = {
+                "success": 0,
+                "fail": 0,
+                "total": 0,
+                "up_success": 0,
+                "up_fail": 0,
+                "down_success": 0,
+                "down_fail": 0,
+            }
+        records[asset]["total"] += 1
+        if result == "success":
+            records[asset]["success"] += 1
+            if direction == "UP":
+                records[asset]["up_success"] += 1
+            elif direction == "DOWN":
+                records[asset]["down_success"] += 1
+        elif result == "fail":
+            records[asset]["fail"] += 1
+            if direction == "UP":
+                records[asset]["up_fail"] += 1
+            elif direction == "DOWN":
+                records[asset]["down_fail"] += 1
+
+    return records
+
+
+def _compute_source_reliability(
+    history: list[dict],
+) -> dict[str, dict[str, int]]:
+    """Compute per-source hit rate from prediction history.
+
+    Extracts ``sources`` from each entry, strips the ``llm:`` prefix,
+    and tallies correct/total per source tag.
+
+    Args:
+        history: List of prediction outcome dicts with ``sources`` field.
+
+    Returns:
+        Dict keyed by source tag with ``correct`` and ``total`` counts.
+        Only includes sources seen at least twice.
+    """
+    stats: dict[str, dict[str, int]] = {}
+
+    for entry in history:
+        result = entry.get("result", "unknown")
+        sources = entry.get("sources", [])
+        if not isinstance(sources, list):
+            continue
+        for src in sources:
+            if not isinstance(src, str):
+                continue
+            clean = src.removeprefix("llm:")
+            if not clean:
+                continue
+            if clean not in stats:
+                stats[clean] = {"correct": 0, "total": 0}
+            stats[clean]["total"] += 1
+            if result == "success":
+                stats[clean]["correct"] += 1
+
+    return {k: v for k, v in stats.items() if v["total"] >= 2}
+
+
 def format_history_for_prompt(
     history: list[dict],
     max_items: int = 5,
@@ -265,6 +358,36 @@ def format_history_for_prompt(
         if total > 0
         else "No prior predictions."
     ]
+
+    per_asset = _compute_per_asset_record(history)
+    if per_asset:
+        asset_lines: list[str] = []
+        for asset, counts in sorted(per_asset.items()):
+            pct = counts["total"]
+            up_total = counts["up_success"] + counts["up_fail"]
+            down_total = counts["down_success"] + counts["down_fail"]
+            bits: list[str] = [
+                f"{counts['success']}/{pct} ({counts['success'] / pct * 100:.0f}%)",
+            ]
+            if up_total > 0:
+                bits.append(f"UP {counts['up_success']}/{up_total}")
+            if down_total > 0:
+                bits.append(f"DOWN {counts['down_success']}/{down_total}")
+            asset_lines.append(f"  - {asset}: {' — '.join(bits)}")
+        parts.append("Per-asset prediction record:\n" + "\n".join(asset_lines))
+
+    source_rel = _compute_source_reliability(history)
+    if source_rel:
+        src_lines: list[str] = []
+        for src, counts in sorted(
+            source_rel.items(), key=lambda kv: kv[1]["total"], reverse=True
+        ):
+            pct = counts["total"]
+            corr = counts["correct"]
+            src_lines.append(
+                f"  - {src}: {corr}/{pct} ({corr / pct * 100:.0f}%)"
+            )
+        parts.append("Source reliability (from past predictions):\n" + "\n".join(src_lines))
 
     recent = sorted(history, key=lambda h: h.get("date", ""), reverse=True)
 

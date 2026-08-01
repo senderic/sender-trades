@@ -412,6 +412,27 @@ def _build_prompt(
     if quote_lines:
         sections.append("Target-asset quotes:\n" + "\n".join(quote_lines))
 
+    gap_alerts: list[str] = []
+    for asset in target_assets:
+        q = market.quotes.get(asset)
+        if q is None or q.previous_close <= 0:
+            continue
+        gap_pct = (q.current_price - q.previous_close) / q.previous_close * 100
+        if abs(gap_pct) > 0.5:
+            gap_alerts.append(
+                f"  - {q.symbol} has gapped {gap_pct:+.1f}% pre-market from "
+                f"yesterday's close (${q.previous_close:.2f})."
+            )
+    if gap_alerts:
+        alert_block = (
+            "Pre-market gap alert: the following assets show significant "
+            "gaps from yesterday's close. The briefing sections below were "
+            "built before these gaps were fully visible. Consider whether "
+            "each gap confirms or contradicts the briefing's thesis.\n"
+            + "\n".join(gap_alerts)
+        )
+        sections.append(alert_block)
+
     if market.news:
         top_news = market.news[:10]
         news_lines = [

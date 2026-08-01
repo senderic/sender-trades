@@ -12,7 +12,9 @@ from src.models.recommendation import (
 )
 
 
-def _make_rec(strategy: str, asset: str = "SPY", direction: Direction = Direction.CALL) -> TradeRecommendation:
+def _make_rec(
+    strategy: str, asset: str = "SPY", direction: Direction = Direction.CALL
+) -> TradeRecommendation:
     return TradeRecommendation(
         correlation_id="t1",
         strategy_label=strategy,
@@ -71,9 +73,13 @@ class TestConsensusScoring:
         qqq_put.confidence = 0.65
         results = [
             _make_result("momentum", _make_rec("m", asset="QQQ", direction=Direction.PUT), 0.45),
-            _make_result("mean_reversion", _make_rec("mr", asset="QQQ", direction=Direction.PUT), 0.50),
+            _make_result(
+                "mean_reversion", _make_rec("mr", asset="QQQ", direction=Direction.PUT), 0.50
+            ),
             _make_result("event_driven", qqq_put, 0.65),
-            _make_result("llm_trade", _make_rec("llm", asset="QQQ", direction=Direction.CALL), 0.40),
+            _make_result(
+                "llm_trade", _make_rec("llm", asset="QQQ", direction=Direction.CALL), 0.40
+            ),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
@@ -87,9 +93,13 @@ class TestConsensusScoring:
         spy_call.confidence = 0.55
         results = [
             _make_result("momentum", _make_rec("m", asset="SPY", direction=Direction.PUT), 0.45),
-            _make_result("mean_reversion", _make_rec("mr", asset="SPY", direction=Direction.PUT), 0.50),
+            _make_result(
+                "mean_reversion", _make_rec("mr", asset="SPY", direction=Direction.PUT), 0.50
+            ),
             _make_result("event_driven", spy_call, 0.55),
-            _make_result("llm_trade", _make_rec("llm", asset="SPY", direction=Direction.CALL), 0.40),
+            _make_result(
+                "llm_trade", _make_rec("llm", asset="SPY", direction=Direction.CALL), 0.40
+            ),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
@@ -112,7 +122,9 @@ class TestConsensusScoring:
         spy_call.confidence = 0.65
         results = [
             _make_result("momentum", _make_rec("m", asset="SPY", direction=Direction.CALL), 0.45),
-            _make_result("mean_reversion", _make_rec("mr", asset="SPY", direction=Direction.CALL), 0.50),
+            _make_result(
+                "mean_reversion", _make_rec("mr", asset="SPY", direction=Direction.CALL), 0.50
+            ),
             _make_result("event_driven", spy_call, 0.65),
             _make_result("llm_trade", _make_rec("llm", asset="QQQ", direction=Direction.PUT), 0.40),
         ]

@@ -428,8 +428,7 @@ def _build_prompt(
             "Pre-market gap alert: the following assets show significant "
             "gaps from yesterday's close. The briefing sections below were "
             "built before these gaps were fully visible. Consider whether "
-            "each gap confirms or contradicts the briefing's thesis.\n"
-            + "\n".join(gap_alerts)
+            "each gap confirms or contradicts the briefing's thesis.\n" + "\n".join(gap_alerts)
         )
         sections.append(alert_block)
 

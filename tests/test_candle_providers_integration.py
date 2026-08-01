@@ -141,7 +141,10 @@ class TestFinnhubIntegration:
             provider = FinnhubProvider(api_key=key)
             result = await provider.fetch_daily_candle("SPY", KNOWN_DATE)
         else:
-            with patch("src.ingestion.candle_providers.httpx.AsyncClient", return_value=_mock_httpx_get(_finnhub_candle_json())):
+            with patch(
+                "src.ingestion.candle_providers.httpx.AsyncClient",
+                return_value=_mock_httpx_get(_finnhub_candle_json()),
+            ):
                 provider = FinnhubProvider(api_key="ci-mock-key")
                 result = await provider.fetch_daily_candle("SPY", KNOWN_DATE)
 

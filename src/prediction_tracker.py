@@ -379,14 +379,10 @@ def format_history_for_prompt(
     source_rel = _compute_source_reliability(history)
     if source_rel:
         src_lines: list[str] = []
-        for src, counts in sorted(
-            source_rel.items(), key=lambda kv: kv[1]["total"], reverse=True
-        ):
+        for src, counts in sorted(source_rel.items(), key=lambda kv: kv[1]["total"], reverse=True):
             pct = counts["total"]
             corr = counts["correct"]
-            src_lines.append(
-                f"  - {src}: {corr}/{pct} ({corr / pct * 100:.0f}%)"
-            )
+            src_lines.append(f"  - {src}: {corr}/{pct} ({corr / pct * 100:.0f}%)")
         parts.append("Source reliability (from past predictions):\n" + "\n".join(src_lines))
 
     recent = sorted(history, key=lambda h: h.get("date", ""), reverse=True)

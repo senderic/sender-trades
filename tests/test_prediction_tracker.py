@@ -60,12 +60,11 @@ class TestComputePerAssetRecord:
 class TestComputeSourceReliability:
     def test_basic_counts(self) -> None:
         history = [
-            _entry("2026-07-29", "QQQ", "DOWN", "success",
-                   sources=["market:QQQ", "news-sentiment"]),
-            _entry("2026-07-30", "QQQ", "UP", "fail",
-                   sources=["market:QQQ", "news-sentiment"]),
-            _entry("2026-07-30", "SPY", "DOWN", "fail",
-                   sources=["market:SPY"]),
+            _entry(
+                "2026-07-29", "QQQ", "DOWN", "success", sources=["market:QQQ", "news-sentiment"]
+            ),
+            _entry("2026-07-30", "QQQ", "UP", "fail", sources=["market:QQQ", "news-sentiment"]),
+            _entry("2026-07-30", "SPY", "DOWN", "fail", sources=["market:SPY"]),
         ]
         rel = _compute_source_reliability(history)
         assert rel["market:QQQ"]["correct"] == 1
@@ -76,10 +75,14 @@ class TestComputeSourceReliability:
 
     def test_strips_llm_prefix(self) -> None:
         history = [
-            _entry("2026-07-29", "QQQ", "DOWN", "success",
-                   sources=["llm:market:QQQ", "llm:reuters:tech"]),
-            _entry("2026-07-30", "QQQ", "DOWN", "success",
-                   sources=["market:QQQ", "reuters:tech"]),
+            _entry(
+                "2026-07-29",
+                "QQQ",
+                "DOWN",
+                "success",
+                sources=["llm:market:QQQ", "llm:reuters:tech"],
+            ),
+            _entry("2026-07-30", "QQQ", "DOWN", "success", sources=["market:QQQ", "reuters:tech"]),
         ]
         rel = _compute_source_reliability(history)
         assert "market:QQQ" in rel
@@ -88,8 +91,7 @@ class TestComputeSourceReliability:
 
     def test_requires_minimum_two_occurrences(self) -> None:
         history = [
-            _entry("2026-07-29", "QQQ", "DOWN", "success",
-                   sources=["only-once"]),
+            _entry("2026-07-29", "QQQ", "DOWN", "success", sources=["only-once"]),
         ]
         rel = _compute_source_reliability(history)
         assert "only-once" not in rel
@@ -124,12 +126,13 @@ class TestFormatHistoryForPrompt:
 
     def test_includes_source_reliability_section(self) -> None:
         history = [
-            _entry("2026-07-29", "QQQ", "DOWN", "success",
-                   sources=["market:QQQ", "news-sentiment"]),
-            _entry("2026-07-30", "QQQ", "DOWN", "success",
-                   sources=["market:QQQ", "news-sentiment"]),
-            _entry("2026-07-30", "SPY", "UP", "fail",
-                   sources=["market:SPY", "news-sentiment"]),
+            _entry(
+                "2026-07-29", "QQQ", "DOWN", "success", sources=["market:QQQ", "news-sentiment"]
+            ),
+            _entry(
+                "2026-07-30", "QQQ", "DOWN", "success", sources=["market:QQQ", "news-sentiment"]
+            ),
+            _entry("2026-07-30", "SPY", "UP", "fail", sources=["market:SPY", "news-sentiment"]),
         ]
         prompt = format_history_for_prompt(history)
         assert "Source reliability" in prompt

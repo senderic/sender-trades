@@ -23,7 +23,9 @@ from src.pipeline import Pipeline
 _TS = __import__("datetime").datetime.now()
 
 
-def _qqq_put_rec(correlation_id: str = "", strategy: str = "event", conf: float = 0.75) -> TradeRecommendation:
+def _qqq_put_rec(
+    correlation_id: str = "", strategy: str = "event", conf: float = 0.75
+) -> TradeRecommendation:
     return TradeRecommendation(
         correlation_id=correlation_id,
         strategy_label=strategy,
@@ -40,7 +42,9 @@ def _qqq_put_rec(correlation_id: str = "", strategy: str = "event", conf: float 
     )
 
 
-def _qqq_call_rec(correlation_id: str = "", strategy: str = "llm_trade", conf: float = 0.55) -> TradeRecommendation:
+def _qqq_call_rec(
+    correlation_id: str = "", strategy: str = "llm_trade", conf: float = 0.55
+) -> TradeRecommendation:
     return TradeRecommendation(
         correlation_id=correlation_id,
         strategy_label=strategy,

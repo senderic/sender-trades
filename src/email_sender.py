@@ -6,7 +6,9 @@ import logging
 import os
 import smtplib
 from collections.abc import Sequence
+from datetime import date as _date
 from datetime import datetime
+from datetime import timedelta as _timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -88,6 +90,127 @@ th {
 """
 
 
+def _format_option_description(
+    asset: str,
+    direction: str,
+    strike: float,
+    expiry: str,
+    contracts: int,
+) -> str:
+    direction_label = "Call" if direction.upper() == "CALL" else "Put"
+    contract_label = "contract" if contracts == 1 else "contracts"
+    try:
+        exp_str = expiry.replace("T00:00:00", "").split("T")[0]
+        exp_date = _date.fromisoformat(exp_str)
+        today = _date.today()
+        if exp_date == today:
+            exp_label = "Today"
+        elif exp_date == today + _timedelta(days=1):
+            exp_label = "Tomorrow"
+        else:
+            exp_label = exp_date.strftime("%b %d")
+    except (ValueError, TypeError):
+        exp_label = expiry if expiry else "—"
+    return (
+        f"{asset} {direction_label} @ ${strike:,.2f} Exp {exp_label} ({contracts} {contract_label})"
+    )
+
+
+def _render_execution_section(execution_result: dict | None) -> str:
+    if not execution_result:
+        return ""
+
+    entries: list[dict] = execution_result.get("entries", [])
+
+    submitted = next((e for e in entries if e.get("event_type") == "entry_submitted"), None)
+    filled = next((e for e in entries if e.get("event_type") == "entry_filled"), None)
+    exits = next((e for e in entries if e.get("event_type") == "exits_placed"), None)
+
+    rec = execution_result.get("recommendation", {})
+    asset = execution_result.get("asset", rec.get("asset", "?"))
+    direction = execution_result.get("direction", rec.get("direction", "?"))
+    strike = execution_result.get("entry_strike", rec.get("target_strike", 0))
+    contracts = execution_result.get("contracts", rec.get("contracts", 1))
+    expiry = rec.get("expires_at", "")
+
+    trade_desc = _format_option_description(asset, direction, strike, expiry, contracts)
+
+    rows: list[str] = []
+    rows.append(
+        f'<tr><td style="font-weight:600;width:180px">Contract</td><td>{trade_desc}</td></tr>'
+    )
+
+    if submitted:
+        rows.append(
+            f'<tr><td style="font-weight:600">Order Submitted</td><td>{format_la(datetime.fromisoformat(submitted["timestamp"]))}</td></tr>'
+        )
+
+    filled_time = ""
+    filled_price_str = ""
+    if filled:
+        filled_time = format_la(datetime.fromisoformat(filled["timestamp"]))
+        filled_price = filled.get("avg_price", 0)
+        if filled_price:
+            filled_price_str = f" @ ${filled_price:,.2f} per contract"
+        rows.append(
+            f'<tr><td style="font-weight:600">Order Filled</td><td>{filled_time}{filled_price_str}</td></tr>'
+        )
+
+    if exits:
+        tp = exits.get("tp_level", 0)
+        sl = exits.get("sl_level", 0)
+        if tp or sl:
+            levels = []
+            if tp:
+                levels.append(f"TP: ${tp:,.2f}")
+            if sl:
+                levels.append(f"SL: ${sl:,.2f}")
+            rows.append(
+                f'<tr><td style="font-weight:600">Exit Levels</td><td>{" &middot; ".join(levels)}</td></tr>'
+            )
+
+    exit_reason = execution_result.get("exit_reason", "unknown")
+    exit_label_map = {
+        "pending": "Active — exits placed, monitoring",
+        "rejected": "Rejected by broker",
+        "expired": "Expired unfilled",
+        "error": "Error during execution",
+        "take_profit": "Take-profit filled",
+        "stop_loss": "Stop-loss triggered",
+        "force_close": "Force-closed at deadline",
+        "safety_close": "Safety-close at deadline",
+    }
+    exit_label = exit_label_map.get(exit_reason, exit_reason)
+    status_class = {
+        "pending": "outcome-unknown",
+        "rejected": "outcome-fail",
+        "expired": "outcome-fail",
+        "error": "outcome-fail",
+        "take_profit": "outcome-success",
+        "stop_loss": "outcome-fail",
+        "force_close": "outcome-fail",
+        "safety_close": "outcome-unknown",
+    }.get(exit_reason, "outcome-unknown")
+
+    pnl_str = ""
+    pnl = execution_result.get("final_pnl", 0) or 0
+    pnl_pct = execution_result.get("final_pnl_pct", 0)
+    if pnl != 0 or pnl_pct != 0:
+        sign = "+" if pnl >= 0 else ""
+        pnl_str = f" &mdash; PnL: <strong>{sign}${pnl:,.2f}</strong> ({sign}{pnl_pct:+.1f}%)"
+
+    rows.append(f'<tr><td style="font-weight:600">Status</td><td>{exit_label}{pnl_str}</td></tr>')
+
+    return f"""<h2>Trade Execution</h2>
+<div class="outcome-card {status_class}">
+<table>
+<tbody>
+{"".join(rows)}
+</tbody>
+</table>
+</div>"""
+
+
 def format_duration(seconds: float) -> str:
     minutes = int(seconds // 60)
     secs = int(seconds % 60)
@@ -108,6 +231,7 @@ def render_forecast_html(
     model_usage_html: str = "",
     start_time: datetime | None = None,
     end_time: datetime | None = None,
+    execution_result: dict | None = None,
 ) -> str:
     rows = ""
     for f in forecast.forecasts:
@@ -141,6 +265,7 @@ def render_forecast_html(
         vibe = f'<p class="vibe"><strong>Market Vibe:</strong> {forecast.market_vibe}</p>'
 
     yesterday_html = _render_yesterday_section(yesterday_outcomes)
+    execution_html = _render_execution_section(execution_result)
 
     model_html = f"\n{model_usage_html}\n" if model_usage_html else ""
 
@@ -168,6 +293,7 @@ def render_forecast_html(
 {rows}
 </tbody>
 </table>
+{execution_html}
 {yesterday_html}
 {model_html}
 {runtime_html}
@@ -189,7 +315,7 @@ def _render_yesterday_section(
     cards = ""
     for o in outcomes:
         if o.result == "success":
-            badge = '<span class="badge-success">SUCCESS</span>'
+            badge = '<span class="badge-success">Prediction hit</span>'
             card_class = "outcome-success"
         elif o.result == "fail":
             badge = '<span class="badge-fail">FAIL</span>'
@@ -222,6 +348,7 @@ def send_email(
     model_usage_text: str = "",
     start_time: datetime | None = None,
     end_time: datetime | None = None,
+    execution_result: dict | None = None,
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -248,13 +375,14 @@ def send_email(
         model_usage_html=model_usage_html,
         start_time=start_time,
         end_time=end_time,
+        execution_result=execution_result,
     )
 
     plain_parts = [f"sender-trades Directional Forecast\n\n{forecast.table()}"]
     if yesterday_outcomes:
         plain_parts.append("\n\nYesterday's Prediction Recap:")
         for o in yesterday_outcomes:
-            result_label = {"success": "SUCCESS", "fail": "FAIL", "unknown": "UNKNOWN"}.get(
+            result_label = {"success": "Prediction hit", "fail": "FAIL", "unknown": "UNKNOWN"}.get(
                 o.result, "?"
             )
             plain_parts.append(

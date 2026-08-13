@@ -53,7 +53,7 @@ def _today_pacific() -> date:
 def _legacy_outcome_label(forecast: dict, daily_ohlc: dict | None) -> str:
     if daily_ohlc is None:
         return "unknown"
-    direction = forecast.get("direction", "").upper()
+    direction = (forecast.get("direction") or "").upper()
     move_pct = abs(forecast.get("predicted_move_pct", 0) or 0)
     o = float(daily_ohlc["o"])
     h = float(daily_ohlc["h"])
@@ -289,7 +289,7 @@ def _vibe_context(summary: dict) -> str:
 
     for f in forecast_list:
         asset = f.get("asset", "?")
-        direction = f.get("direction", "?").upper()
+        direction = (f.get("direction") or "?").upper()
         move_pct = _format_move_pct(f)
         rationale = f.get("rationale", "")
         lines.append(f"  **{asset}**: predicted {direction} {move_pct}")
@@ -327,7 +327,7 @@ def build_lessons_md(
             f = _forecast_for_asset(forecast_list, asset)
             if not f:
                 continue
-            direction = f.get("direction", "?").upper()
+            direction = (f.get("direction") or "?").upper()
             confidence = f.get("confidence", 0)
             predicted = _raw_move_pct(f)
             ohlc = market_data.get(asset)
@@ -431,7 +431,7 @@ def build_lessons_md(
         forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
         for f in forecast_list:
             asset = f.get("asset", "?")
-            direction = f.get("direction", "?").upper()
+            direction = (f.get("direction") or "?").upper()
             confidence = f"{f.get('confidence', 0):.0%}"
             move = _format_move_pct(f)
             rationale = f.get("rationale", "")[:120]
@@ -447,7 +447,7 @@ def build_lessons_md(
         forecast_list = summary.get("decision", {}).get("forecast", {}).get("forecasts", [])
         for f in forecast_list:
             asset = f.get("asset", "?")
-            direction = f.get("direction", "?").upper()
+            direction = (f.get("direction") or "?").upper()
             ohlc = market_data.get(asset)
             if ohlc:
                 outcome = _legacy_outcome_label(f, ohlc)
@@ -534,7 +534,7 @@ def _strategy_accuracy_compact(summary: dict, market_data: dict[str, dict | None
         for asset in ASSETS:
             pred = predictions.get(asset)
             if isinstance(pred, dict):
-                direction = pred.get("direction", "?").upper()
+                direction = (pred.get("direction") or "?").upper()
                 outcome = _legacy_outcome_label(pred, market_data.get(asset))
                 icon = ":white_check_mark:" if outcome == "success" else ":x:"
                 cols.append(f"{icon} {direction}")

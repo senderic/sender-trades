@@ -46,9 +46,11 @@ class AlpacaBrokerClient:
         self.exec_config = config or ExecutionConfig()
         self._trading: TradingClient | None = None
         self._http: httpx.AsyncClient | None = None
+        self._data_http: httpx.AsyncClient | None = None
         self._base_url = (
             "https://paper-api.alpaca.markets" if paper else "https://api.alpaca.markets"
         )
+        self._data_url = "https://data.alpaca.markets"
 
     @property
     def trading(self) -> TradingClient:
@@ -65,6 +67,16 @@ class AlpacaBrokerClient:
                 timeout=30.0,
             )
         return self._http
+
+    @property
+    def data_http(self) -> httpx.AsyncClient:
+        if self._data_http is None:
+            self._data_http = httpx.AsyncClient(
+                base_url=self._data_url,
+                auth=httpx.BasicAuth(self.api_key, self.secret_key),
+                timeout=30.0,
+            )
+        return self._data_http
 
     async def _with_retry(self, fn: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
         cfg = self.exec_config.tenacity
@@ -170,16 +182,16 @@ class AlpacaBrokerClient:
     async def get_option_quote(self, occ_symbol: str) -> dict[str, Any] | None:
         async def _do() -> dict[str, Any] | None:
             try:
-                response = await self.http.get(
-                    "/v2/options/snapshots",
+                response = await self.data_http.get(
+                    "/v1beta1/options/snapshots",
                     params={"symbols": occ_symbol},
                 )
                 response.raise_for_status()
                 data = response.json()
                 snapshots = data.get("snapshots", {})
                 snap = snapshots.get(occ_symbol)
-                if snap and snap.get("latest_quote"):
-                    q = snap["latest_quote"]
+                if snap and snap.get("latestQuote"):
+                    q = snap["latestQuote"]
                     return {
                         "symbol": occ_symbol,
                         "bid": float(q["bp"]) if q.get("bp") else None,
@@ -193,11 +205,51 @@ class AlpacaBrokerClient:
 
         return await self._with_retry(_do)
 
+    async def get_underlying_quote(self, symbol: str) -> dict[str, Any] | None:
+        """Fetch a live equity quote for the option's underlying.
+
+        Options don't trade pre-market, so an option quote is typically
+        unavailable at the 9:28 AM ET submission window. Equities do have
+        pre-market quotes, so the underlying spot is used to price the
+        entry limit in that window.
+
+        Args:
+            symbol: Underlying symbol (e.g. ``SPY``).
+
+        Returns:
+            Dict with ``last``/``bid``/``ask``, or None if unavailable.
+        """
+
+        async def _do() -> dict[str, Any] | None:
+            try:
+                response = await self.data_http.get(
+                    "/v2/stocks/snapshots",
+                    params={"symbols": symbol},
+                )
+                response.raise_for_status()
+                data = response.json()
+                snap = data.get(symbol)
+                if not snap:
+                    return None
+                quote = snap.get("latestQuote") or {}
+                trade = snap.get("latestTrade") or {}
+                bid = float(quote["bp"]) if quote.get("bp") else None
+                ask = float(quote["ap"]) if quote.get("ap") else None
+                last = float(trade["p"]) if trade.get("p") else None
+                return {"symbol": symbol, "last": last, "bid": bid, "ask": ask}
+            except Exception:
+                logger.debug("underlying_quote_unavailable", symbol=symbol)
+                return None
+
+        return await self._with_retry(_do)
+
     def build_entry_order(
         self,
         rec: TradeRecommendation,
         occ_symbol: str | None = None,
         limit_price: float | None = None,
+        quote: dict[str, Any] | None = None,
+        spot: float | None = None,
     ) -> dict[str, Any]:
         if occ_symbol is None:
             expiry = rec.expires_at
@@ -218,6 +270,26 @@ class AlpacaBrokerClient:
         if order_type == "limit":
             if limit_price is not None:
                 order["limit_price"] = round(limit_price, 2)
+            elif quote and quote.get("ask"):
+                # Price off the live ask and lean slightly into the spread so a
+                # bullish buy-to-open actually fills instead of expiring unfilled.
+                offset = self.exec_config.entry.limit_offset_pct / 100.0
+                order["limit_price"] = round(quote["ask"] * (1 + offset), 2)
+            elif spot and spot > 0:
+                # No live option quote (options don't trade pre-market). Use the
+                # underlying spot to estimate a marketable premium: intrinsic
+                # value plus a generous 0.5% of spot as 0DTE time value. Since
+                # this is a BUY limit, it fills at the ask and never pays above
+                # it; the price is a ceiling, so being generous guarantees entry
+                # at the open without overpaying.
+                offset = self.exec_config.entry.limit_offset_pct / 100.0
+                intrinsic = (
+                    max(0.0, spot - rec.target_strike)
+                    if rec.direction.value == "CALL"
+                    else max(0.0, rec.target_strike - spot)
+                )
+                est_price = intrinsic + (spot * 0.005)
+                order["limit_price"] = round(est_price * (1 + offset), 2)
             else:
                 delta = rec.rationale.get("delta", 0.3) if isinstance(rec.rationale, dict) else 0.3
                 est_price = (

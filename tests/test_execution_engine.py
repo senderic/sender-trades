@@ -65,6 +65,7 @@ def _make_engine(client: AlpacaBrokerClient, tmp_path: Path) -> ExecutionEngine:
     config.exit_strategy.time_deadline_est = "23:59"
     engine = ExecutionEngine(client, config, log_dir=str(tmp_path))
     engine._monitor_interval = 0.01
+    engine._wait_for_option_open = False
     return engine
 
 
@@ -78,6 +79,79 @@ class TestExecutionEngineEntryRejected:
         result = await engine.execute(_rec(), "test-corr")
         assert result["exit_reason"] == "rejected"
         assert result["final_pnl"] == 0.0
+
+
+class TestExecutionEngineAwaitOptionQuote:
+    @pytest.mark.asyncio
+    async def test_returns_quote_when_ask_present_immediately(self, tmp_path: Path) -> None:
+        client = _make_client()
+        client.get_option_quote = AsyncMock(
+            return_value={"symbol": "SPY250728C00600000", "bid": 0.48, "ask": 0.52}
+        )
+        engine = _make_engine(client, tmp_path)
+
+        quote = await engine._await_option_quote("SPY250728C00600000")
+        assert quote is not None
+        assert quote["ask"] == 0.52
+        assert client.get_option_quote.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_after_open_when_quote_missing(self, tmp_path: Path) -> None:
+        client = _make_client()
+        client.get_option_quote = AsyncMock(
+            side_effect=[
+                None,
+                {"symbol": "SPY250728C00600000", "bid": 0.48, "ask": 0.52},
+            ]
+        )
+        engine = _make_engine(client, tmp_path)
+        engine._wait_for_option_open = True
+        engine._option_open_wait_cap_sec = 60.0
+        engine._option_open_buffer_sec = 0.0
+
+        from unittest.mock import patch
+
+        from src.timezone import ET_TZ
+
+        fixed_now = datetime(2026, 8, 5, 9, 29, 40, tzinfo=ET_TZ)
+        with (
+            patch("src.execution.engine.datetime") as mock_dt,
+            patch("src.execution.engine.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_dt.now.side_effect = lambda tz=None: fixed_now if tz else fixed_now.astimezone(UTC)
+            mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
+            quote = await engine._await_option_quote("SPY250728C00600000")
+
+        assert quote is not None
+        assert quote["ask"] == 0.52
+        assert client.get_option_quote.await_count == 2
+        assert mock_sleep.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_still_missing_after_open(self, tmp_path: Path) -> None:
+        client = _make_client()
+        client.get_option_quote = AsyncMock(side_effect=[None, None])
+        engine = _make_engine(client, tmp_path)
+        engine._wait_for_option_open = True
+        engine._option_open_wait_cap_sec = 60.0
+        engine._option_open_buffer_sec = 0.0
+
+        from unittest.mock import patch
+
+        from src.timezone import ET_TZ
+
+        fixed_now = datetime(2026, 8, 5, 9, 29, 40, tzinfo=ET_TZ)
+        with (
+            patch("src.execution.engine.datetime") as mock_dt,
+            patch("src.execution.engine.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_dt.now.side_effect = lambda tz=None: fixed_now if tz else fixed_now.astimezone(UTC)
+            mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
+            quote = await engine._await_option_quote("SPY250728C00600000")
+
+        assert quote is None
+        assert client.get_option_quote.await_count == 2
+        assert mock_sleep.await_count == 1
 
 
 class TestExecutionEngineEntryExpired:
@@ -102,6 +176,9 @@ class TestExecutionEngineEntryFilled:
         client.submit_order = AsyncMock(return_value=_make_result(status="new"))
         client.cancel_order = AsyncMock()
         client.get_option_quote = AsyncMock(return_value=None)
+        client.get_underlying_quote = AsyncMock(
+            return_value={"symbol": "SPY", "last": 600.0, "bid": 599.0, "ask": 600.1}
+        )
         engine = _make_engine(client, tmp_path)
         engine._wait_for_fill = AsyncMock(return_value=fill_result)
         engine._monitor_exits = AsyncMock(
@@ -148,6 +225,9 @@ class TestExecutionEngineExceptionHandling:
         client.submit_order = AsyncMock(return_value=_make_result(status="new"))
         client.cancel_order = AsyncMock()
         client.get_option_quote = AsyncMock(return_value=None)
+        client.get_underlying_quote = AsyncMock(
+            return_value={"symbol": "SPY", "last": 600.0, "bid": 599.0, "ask": 600.1}
+        )
         engine = _make_engine(client, tmp_path)
         partial = _make_result(status="partially_filled", filled_qty="1", filled_avg_price="0.50")
         engine._wait_for_fill = AsyncMock(return_value=partial)

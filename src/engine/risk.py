@@ -59,6 +59,7 @@ class RiskEngine:
         self._check_dte(rec)
         self._check_statistical_sanity(rec, market)
         self._check_premarket_gap(rec, market)
+        self._check_gap_fade_risk(rec, market)
         return rec
 
     def _check_time(self, rec: TradeRecommendation, _now: datetime | None = None) -> None:
@@ -225,6 +226,44 @@ class RiskEngine:
             f"trade is {trade_word}. Pre-market gap contradicts prediction direction.",
             guardrail="premarket_gap",
         )
+
+    def _check_gap_fade_risk(
+        self,
+        rec: TradeRecommendation,
+        market: MarketSnapshot,
+    ) -> None:
+        """Flag trades where the pre-market gap is disproportionately large
+        relative to catalyst strength — a gap-fade reversal risk.
+
+        When SPY gaps >1.5% or QQQ gaps >2.0% but news sentiment magnitude
+        is below 0.20, the overnight move often exhausts and reverses during
+        the session (e.g. Aug 5 2026: SPY +1.8% gap closed -0.8%, QQQ +3.4%
+        gap closed -1.2%). This check reduces confidence rather than
+        rejecting outright, since the fade is a risk, not a certainty.
+
+        Args:
+            rec: The trade recommendation to check.
+            market: Current market snapshot for price data.
+        """
+        quote = market.quotes.get(rec.asset)
+        if quote is None or quote.previous_close <= 0:
+            return
+
+        gap_pct = (quote.current_price - quote.previous_close) / quote.previous_close * 100
+        gap_threshold = 1.5 if rec.asset == "SPY" else 2.0
+        sentiment_mag = abs(market.avg_sentiment_polarity())
+
+        if abs(gap_pct) > gap_threshold and sentiment_mag < 0.20 and gap_pct > 0:
+            original = rec.confidence
+            rec.confidence *= 0.6
+            logger.warning(
+                "gap_fade_risk_flagged",
+                asset=rec.asset,
+                gap_pct=round(gap_pct, 2),
+                sentiment_mag=round(sentiment_mag, 3),
+                confidence_before=round(original, 4),
+                confidence_after=round(rec.confidence, 4),
+            )
 
     @staticmethod
     def check_consensus(

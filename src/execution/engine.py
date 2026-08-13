@@ -65,6 +65,41 @@ class ExecutionEngine:
         self.exec_config = exec_config
         self.log_dir = log_dir or "logs"
         self._monitor_interval: float = 30.0
+        self._wait_for_option_open: bool = True
+        self._option_open_wait_cap_sec: float = 240.0
+        self._option_open_buffer_sec: float = 5.0
+
+    async def _await_option_quote(self, occ_symbol: str) -> dict[str, Any] | None:
+        """Fetch a live option quote, waiting for the market open if needed.
+
+        Options only trade during RTH (9:30 AM ET), so a quote requested at
+        the 9:28 AM ET submission window is unavailable. This retries once
+        the market opens so the entry limit is priced off the live option
+        ask rather than the underlying-spot fallback when possible.
+
+        Args:
+            occ_symbol: OCC option symbol to quote.
+
+        Returns:
+            The option quote dict (bid/ask), or None if still unavailable.
+        """
+        quote = await self.client.get_option_quote(occ_symbol)
+        if quote and quote.get("ask"):
+            return quote
+
+        if not self._wait_for_option_open:
+            return quote
+
+        now = datetime.now(ET_TZ)
+        open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        seconds_to_open = (open_time - now).total_seconds()
+        if 0 < seconds_to_open <= self._option_open_wait_cap_sec:
+            await asyncio.sleep(seconds_to_open + self._option_open_buffer_sec)
+            quote = await self.client.get_option_quote(occ_symbol)
+            if quote and quote.get("ask"):
+                return quote
+
+        return quote
 
     async def execute(self, rec: TradeRecommendation, correlation_id: str) -> dict[str, Any]:
         """Execute a trade recommendation through the full lifecycle.
@@ -95,7 +130,23 @@ class ExecutionEngine:
             option_type = "C" if rec.direction.value == "CALL" else "P"
             expiry = rec.expires_at
             occ_sym = occ_option_symbol(rec.asset, expiry, rec.target_strike, option_type)
-            order_data = self.client.build_entry_order(rec, occ_symbol=occ_sym)
+            quote = await self._await_option_quote(occ_sym)
+            spot = None
+            if not quote or not quote.get("ask"):
+                underlying = await self.client.get_underlying_quote(rec.asset)
+                if underlying:
+                    last = underlying.get("last")
+                    bid = underlying.get("bid")
+                    ask = underlying.get("ask")
+                    if last and last > 0:
+                        spot = last
+                    elif bid and ask and bid > 0 and ask > 0:
+                        spot = (bid + ask) / 2.0
+                    elif ask and ask > 0:
+                        spot = ask
+            order_data = self.client.build_entry_order(
+                rec, occ_symbol=occ_sym, quote=quote, spot=spot
+            )
 
             ctx.record_entry(
                 "entry_submitted",

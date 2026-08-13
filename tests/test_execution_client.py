@@ -95,6 +95,55 @@ class TestBuildEntryOrder:
         order = client.build_entry_order(rec)
         assert "P" in order["symbol"]
 
+    def test_limit_priced_off_live_ask_with_offset(self) -> None:
+        client = AlpacaBrokerClient("key", "secret")
+        rec = _rec()
+        quote = {"symbol": "SPY250728C00600000", "bid": 0.48, "ask": 0.52}
+        order = client.build_entry_order(rec, quote=quote)
+        offset = 5.0 / 100.0
+        expected = round(0.52 * (1 + offset), 2)
+        assert order["limit_price"] == expected
+        assert order["limit_price"] > 0.52
+
+    def test_limit_uses_passed_limit_price_over_quote(self) -> None:
+        client = AlpacaBrokerClient("key", "secret")
+        rec = _rec()
+        quote = {"symbol": "SPY250728C00600000", "bid": 0.48, "ask": 0.52}
+        order = client.build_entry_order(rec, limit_price=0.55, quote=quote)
+        assert order["limit_price"] == 0.55
+
+    def test_limit_falls_back_to_delta_estimate_without_quote(self) -> None:
+        client = AlpacaBrokerClient("key", "secret")
+        rec = _rec()
+        order = client.build_entry_order(rec)
+        assert order["limit_price"] >= 1.0
+
+    def test_limit_priced_from_spot_when_no_option_quote(self) -> None:
+        client = AlpacaBrokerClient("key", "secret")
+        rec = _rec()
+        spot = 600.0
+        order = client.build_entry_order(rec, spot=spot)
+        offset = 5.0 / 100.0
+        intrinsic = max(0.0, spot - rec.target_strike)
+        expected = round((intrinsic + spot * 0.005) * (1 + offset), 2)
+        assert order["limit_price"] == expected
+        assert order["limit_price"] > 0
+
+    def test_spot_estimate_is_generous_ceiling(self) -> None:
+        client = AlpacaBrokerClient("key", "secret")
+        rec = _rec()
+        order = client.build_entry_order(rec, spot=600.0)
+        assert order["limit_price"] >= 600.0 * 0.005
+
+    def test_spot_estimate_for_itm_call_adds_intrinsic(self) -> None:
+        client = AlpacaBrokerClient("key", "secret")
+        rec = _rec()
+        order = client.build_entry_order(rec, spot=610.0)
+        offset = 5.0 / 100.0
+        intrinsic = 610.0 - rec.target_strike
+        expected = round((intrinsic + 610.0 * 0.005) * (1 + offset), 2)
+        assert order["limit_price"] == expected
+
 
 class TestAlpacaBrokerClientSubmit:
     @pytest.mark.asyncio
@@ -188,15 +237,49 @@ class TestAlpacaBrokerClientSubmit:
         mock_resp.json.return_value = {
             "snapshots": {
                 "SPY250728C00600000": {
-                    "latest_quote": {"bp": "0.48", "ap": "0.52", "bs": 100, "as": 100}
+                    "latestQuote": {"bp": "0.48", "ap": "0.52", "bs": 100, "as": 100},
+                    "latestTrade": {},
                 }
             }
         }
         mock_http = AsyncMock()
         mock_http.get.return_value = mock_resp
-        client._http = mock_http
+        client._data_http = mock_http
 
         result = await client.get_option_quote("SPY250728C00600000")
         assert result is not None
         assert result["bid"] == 0.48
         assert result["ask"] == 0.52
+
+    @pytest.mark.asyncio
+    async def test_get_underlying_quote(self) -> None:
+        client = AlpacaBrokerClient("key", "secret", paper=True)
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "SPY": {
+                "latestQuote": {"bp": "599.0", "ap": "600.1", "bs": 100, "as": 100},
+                "latestTrade": {"p": "600.0", "s": 100, "t": "2026-08-05T09:28:00Z"},
+            }
+        }
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+        client._data_http = mock_http
+
+        result = await client.get_underlying_quote("SPY")
+        assert result is not None
+        assert result["symbol"] == "SPY"
+        assert result["last"] == 600.0
+        assert result["bid"] == 599.0
+        assert result["ask"] == 600.1
+
+    @pytest.mark.asyncio
+    async def test_get_underlying_quote_missing_symbol_returns_none(self) -> None:
+        client = AlpacaBrokerClient("key", "secret", paper=True)
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"SPY": {}}
+        mock_http = AsyncMock()
+        mock_http.get.return_value = mock_resp
+        client._data_http = mock_http
+
+        result = await client.get_underlying_quote("SPY")
+        assert result is None

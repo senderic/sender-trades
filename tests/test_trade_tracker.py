@@ -91,8 +91,34 @@ class TestTradeOutcome:
             pnl=0.0,
             pnl_pct=0.0,
         )
+        _write_trade(
+            tmp_path,
+            "2026-08-09",
+            "unfilled1",
+            exit_reason="unfilled",
+            exit_price=0.0,
+            pnl=0.0,
+            pnl_pct=0.0,
+        )
         outcomes = load_trade_outcomes(tmp_path)
         assert outcomes == []
+
+    def test_expired_worthless_is_a_learnable_loss(self, tmp_path) -> None:
+        # Bought a 0DTE option that expired OTM — a real loss, must be counted.
+        _write_trade(
+            tmp_path,
+            "2026-08-11",
+            "ew1",
+            entry_price=0.73,
+            exit_price=0.0,
+            exit_reason="expired_worthless",
+            pnl=-73.0,
+            pnl_pct=-100.0,
+        )
+        outcomes = load_trade_outcomes(tmp_path)
+        assert len(outcomes) == 1
+        assert outcomes[0].lost is True
+        assert outcomes[0].pnl == pytest.approx(-73.0)
 
 
 class TestStrategyStats:

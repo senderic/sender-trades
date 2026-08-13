@@ -23,9 +23,11 @@ import structlog
 logger = structlog.get_logger()
 
 # Dispositions that produced no actual fill → no PnL to learn from.
-# "pending"/empty means never resolved; "expired"/"rejected" mean the
-# entry never filled (no capital at risk, not a loss).
-UNRESOLVED_DISPOSITIONS = frozenset({None, "", "pending", "expired", "rejected"})
+# "pending"/empty means never resolved; "expired"/"rejected"/"unfilled"
+# mean the entry never filled (no capital at risk, not a loss).
+# NOTE: "expired_worthless" is NOT here — that is a real loss (bought,
+# expired OTM) and must be learned from.
+UNRESOLVED_DISPOSITIONS = frozenset({None, "", "pending", "expired", "rejected", "unfilled"})
 
 
 class TradeOutcome:

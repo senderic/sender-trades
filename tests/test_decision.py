@@ -13,6 +13,13 @@ from src.models.recommendation import (
 )
 
 
+def _make_settings(tmp_path) -> Settings:
+    """Build Settings isolated from real logs so streak dampening has no data."""
+    settings = Settings()
+    settings.logging.json_dir = str(tmp_path)
+    return settings
+
+
 def _make_rec(
     strategy: str, asset: str = "SPY", direction: Direction = Direction.CALL
 ) -> TradeRecommendation:
@@ -37,14 +44,14 @@ def _make_result(label: str, rec: TradeRecommendation, confidence: float) -> Str
 
 
 class TestDecisionAggregator:
-    def test_no_valid_results_returns_empty(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_no_valid_results_returns_empty(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         result = agg.aggregate([])
         assert result.recommendation is None
         assert result.selected_label is None
 
-    def test_picks_highest_confidence(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_picks_highest_confidence(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
             StrategyResult(
                 label="a", recommendation=_make_rec("a"), confidence=0.3, duration_ms=1.0
@@ -56,8 +63,8 @@ class TestDecisionAggregator:
         result = agg.aggregate(results)
         assert result.selected_label == "b"
 
-    def test_below_threshold_returns_none(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_below_threshold_returns_none(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
             StrategyResult(
                 label="a", recommendation=_make_rec("a"), confidence=0.1, duration_ms=1.0
@@ -68,8 +75,8 @@ class TestDecisionAggregator:
 
 
 class TestConsensusScoring:
-    def test_three_way_consensus_boosts_confidence(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_three_way_consensus_boosts_confidence(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         qqq_put = _make_rec("event", asset="QQQ", direction=Direction.PUT)
         qqq_put.confidence = 0.65
         results = [
@@ -88,8 +95,8 @@ class TestConsensusScoring:
         assert decision.recommendation.direction == Direction.PUT
         assert decision.recommendation.confidence == pytest.approx(0.70)
 
-    def test_four_way_split_penalizes_confidence(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_four_way_split_penalizes_confidence(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         spy_call = _make_rec("event", asset="SPY", direction=Direction.CALL)
         spy_call.confidence = 0.55
         results = [
@@ -106,8 +113,8 @@ class TestConsensusScoring:
         assert decision.recommendation is not None
         assert decision.recommendation.confidence == pytest.approx(0.50)
 
-    def test_single_strategy_no_consensus_effect(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_single_strategy_no_consensus_effect(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         rec = _make_rec("event", asset="SPY", direction=Direction.CALL)
         rec.confidence = 0.60
         results = [
@@ -117,8 +124,8 @@ class TestConsensusScoring:
         assert decision.recommendation is not None
         assert decision.recommendation.confidence == pytest.approx(0.60)
 
-    def test_different_assets_no_split_penalty(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_different_assets_no_split_penalty(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         spy_call = _make_rec("event", asset="SPY", direction=Direction.CALL)
         spy_call.confidence = 0.65
         results = [
@@ -157,8 +164,8 @@ class TestForecastAlignment:
             duration_ms=1.0,
         )
 
-    def test_call_blocked_when_llm_forecasts_down(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_call_blocked_when_llm_forecasts_down(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
             _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
             self._llm_prediction(asset="SPY", direction="DOWN", confidence=0.52),
@@ -167,8 +174,8 @@ class TestForecastAlignment:
         assert decision.recommendation is None
         assert "conflicts with LLM forecast" in decision.rationale
 
-    def test_put_blocked_when_llm_forecasts_up(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_put_blocked_when_llm_forecasts_up(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
             _make_result("event_driven", _make_rec("event", asset="QQQ", direction=Direction.PUT), 0.70),
             self._llm_prediction(asset="QQQ", direction="UP", confidence=0.60),
@@ -176,8 +183,8 @@ class TestForecastAlignment:
         decision = agg.aggregate(results)
         assert decision.recommendation is None
 
-    def test_call_allowed_when_llm_forecasts_up(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_call_allowed_when_llm_forecasts_up(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
             _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
             self._llm_prediction(asset="SPY", direction="UP", confidence=0.60),
@@ -186,16 +193,16 @@ class TestForecastAlignment:
         assert decision.recommendation is not None
         assert decision.recommendation.direction == Direction.CALL
 
-    def test_no_llm_prediction_allows_trade(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_no_llm_prediction_allows_trade(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
             _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
 
-    def test_different_asset_prediction_does_not_conflict(self) -> None:
-        agg = DecisionAggregator(Settings())
+    def test_different_asset_prediction_does_not_conflict(self, tmp_path) -> None:
+        agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
             _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
             self._llm_prediction(asset="QQQ", direction="DOWN", confidence=0.60),
@@ -203,8 +210,8 @@ class TestForecastAlignment:
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
 
-    def test_alignment_can_be_disabled(self) -> None:
-        settings = Settings()
+    def test_alignment_can_be_disabled(self, tmp_path) -> None:
+        settings = _make_settings(tmp_path)
         settings.general.require_forecast_alignment = False
         agg = DecisionAggregator(settings)
         results = [

@@ -6,6 +6,7 @@ import structlog
 
 from src.config import Settings
 from src.models.recommendation import DecisionOutput, Direction, StrategyResult
+from src.trade_tracker import compute_direction_stats, compute_strategy_stats, load_trade_outcomes
 
 logger = structlog.get_logger()
 
@@ -44,6 +45,7 @@ class DecisionAggregator:
         best = valid_sorted[0]
 
         best = self._apply_consensus_scoring(best, results, valid_sorted)
+        best = self._apply_streak_dampening(best)
 
         if best.confidence < self.config.strategies.momentum.min_confidence:
             return DecisionOutput(
@@ -198,6 +200,80 @@ class DecisionAggregator:
                 new_confidence=round(new, 4),
             )
 
+        return best
+
+    def _apply_streak_dampening(self, best: StrategyResult) -> StrategyResult:
+        """Reduce confidence for strategies on a losing streak.
+
+        Loads resolved trade outcomes and applies a confidence penalty
+        when the selected strategy (or asset + direction) has been losing
+        consecutively. A longer losing streak produces a larger penalty,
+        capped at -0.25. Strategies that are winning are left untouched
+        (no boost — consensus scoring already handles that).
+
+        Args:
+            best: The highest-confidence strategy result (mutated in-place).
+
+        Returns:
+            The (potentially penalised) best StrategyResult.
+        """
+        rec = best.recommendation
+        if rec is None:
+            return best
+
+        try:
+            outcomes = load_trade_outcomes(self.config.logging.json_dir)
+        except Exception:
+            return best
+        if not outcomes:
+            return best
+
+        penalties: list[tuple[float, str]] = []
+
+        # Per-strategy streak
+        strategy_stats = compute_strategy_stats(outcomes)
+        sstat = strategy_stats.get(rec.strategy_label)
+        if sstat and sstat["current_streak"] < 0:
+            streak_len = abs(sstat["current_streak"])
+            if streak_len >= 2:
+                penalties.append(
+                    (min(0.25, 0.05 * streak_len), f"{rec.strategy_label} on {streak_len}-loss streak")
+                )
+
+        # Per-asset + direction streak
+        direction_stats = compute_direction_stats(outcomes)
+        dkey = f"{rec.asset}:{rec.direction.value}"
+        dstat = direction_stats.get(dkey)
+        if dstat and dstat["current_streak"] < 0:
+            streak_len = abs(dstat["current_streak"])
+            if streak_len >= 2:
+                penalties.append(
+                    (min(0.25, 0.05 * streak_len), f"{dkey} on {streak_len}-loss streak")
+                )
+
+        if not penalties:
+            return best
+
+        # Use the MAX penalty, not the sum: strategy and direction streaks
+        # usually describe the same underlying losing trades (e.g. every
+        # "momentum" trade is also "SPY:CALL"), so summing would double-count.
+        penalty = max(p for p, _ in penalties)
+        reasons = [r for _, r in penalties]
+
+        old = rec.confidence
+        new = max(0.0, round(old - penalty, 4))
+        rec.confidence = new
+        best.confidence = new
+        logger.warning(
+            "streak_dampening",
+            strategy=rec.strategy_label,
+            asset=rec.asset,
+            direction=rec.direction.value,
+            old_confidence=round(old, 4),
+            new_confidence=round(new, 4),
+            penalty=round(penalty, 4),
+            reasons=reasons,
+        )
         return best
 
     @staticmethod

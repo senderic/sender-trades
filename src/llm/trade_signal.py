@@ -62,6 +62,7 @@ from src.models.recommendation import (
 )
 from src.prediction_tracker import format_history_for_prompt, load_history
 from src.timezone import today_local
+from src.trade_tracker import format_outcomes_for_prompt, load_trade_outcomes
 
 logger = structlog.get_logger()
 
@@ -88,7 +89,20 @@ SYSTEM_PROMPT = (
     '  - "best_trade": (optional) an object with exactly the same shape '
     'as the old single-trade format — asset, direction ("CALL" or '
     '"PUT"), confidence, rationale, sources — if the data clearly '
-    "points to a specific executable trade today\n\n"
+    "points to a specific executable trade today. Omit this key "
+    "entirely when conditions are mixed, unclear, or when no trade "
+    "has a strong edge. It is better to pass than to force a "
+    "low-conviction trade.\n\n"
+    "Gap-fade pattern (important): when a pre-market gap exceeds +1.5% "
+    "for SPY or +2.0% for QQQ and the news sentiment magnitude is "
+    "proportionally small (below 0.20 absolute), extreme caution is "
+    "warranted. These large gaps often fade during the session — the "
+    "overnight move exhausts before or shortly after the open and the "
+    "market reverses. Aug 5 2026 was a textbook example: SPY gapped "
+    "+1.8% and QQQ +3.4% on AI/space news with only +0.128 sentiment, "
+    "both predicted UP, but both closed DOWN (-0.8% SPY, -1.2% QQQ). "
+    "Do not blindly follow the gap direction when the catalyst strength "
+    "is disproportionate to the gap size.\n\n"
     "Cite root provenance using these forms (prefer the MOST PRIMARY "
     "source available):\n"
     '  - "<publisher>:<short-slug>" for market news feed items (e.g. '
@@ -174,7 +188,12 @@ class LLMTradeStrategy(TradingStrategy):
         history_str = format_history_for_prompt(
             load_history(self.config.logging.json_dir),
         )
-        prompt = _build_prompt(briefing, market, self.config.general.target_assets, history_str)
+        trade_outcomes_str = format_outcomes_for_prompt(
+            load_trade_outcomes(self.config.logging.json_dir),
+        )
+        prompt = _build_prompt(
+            briefing, market, self.config.general.target_assets, history_str, trade_outcomes_str
+        )
         response = self._client.invoke(prompt=prompt, system_prompt=SYSTEM_PROMPT)
 
         trace["served_by"] = self._client.last_served_by
@@ -357,6 +376,7 @@ def _build_prompt(
     market: MarketSnapshot,
     target_assets: list[str],
     prediction_history: str = "",
+    trade_outcomes: str = "",
 ) -> str:
     """Assemble the LLM prediction prompt from briefing + market data.
 
@@ -364,6 +384,8 @@ def _build_prompt(
         briefing: Parsed morning briefing.
         market: Current market snapshot.
         target_assets: Configured asset universe (e.g. ``["SPY", "QQQ"]``).
+        prediction_history: Formatted string of past prediction outcomes.
+        trade_outcomes: Formatted string of actual trade PnL outcomes.
 
     Returns:
         A prompt string suitable for the opencode CLI single-positional
@@ -413,6 +435,7 @@ def _build_prompt(
         sections.append("Target-asset quotes:\n" + "\n".join(quote_lines))
 
     gap_alerts: list[str] = []
+    gap_fade_risk: list[str] = []
     for asset in target_assets:
         q = market.quotes.get(asset)
         if q is None or q.previous_close <= 0:
@@ -423,6 +446,24 @@ def _build_prompt(
                 f"  - {q.symbol} has gapped {gap_pct:+.1f}% pre-market from "
                 f"yesterday's close (${q.previous_close:.2f})."
             )
+        gap_threshold = 1.5 if q.symbol == "SPY" else 2.0
+        sentiment_mag = abs(market.avg_sentiment_polarity())
+        if abs(gap_pct) > gap_threshold and sentiment_mag < 0.20:
+            gap_fade_risk.append(
+                f"  - {q.symbol} gap ({gap_pct:+.1f}%) is large relative to "
+                f"catalyst strength (sentiment {sentiment_mag:+.3f}). "
+                f"This is a gap-fade risk — the overnight move may exhaust and "
+                f"reverse during the session, as it did on Aug 5 2026 "
+                f"(SPY +1.8% gap -> -0.8% close, QQQ +3.4% gap -> -1.2% close)."
+            )
+    if gap_fade_risk:
+        sections.append(
+            "Gap-fade risk warning: the following assets show pre-market gaps "
+            "that are disproportionately large compared to news catalyst "
+            "strength. Consider whether the gap is sustainable or likely to "
+            "fade. On Aug 5 2026, both SPY and QQQ showed this pattern and "
+            "reversed hard.\n" + "\n".join(gap_fade_risk)
+        )
     if gap_alerts:
         alert_block = (
             "Pre-market gap alert: the following assets show significant "
@@ -446,6 +487,9 @@ def _build_prompt(
         sections.append(
             f"Recent prediction history (learn from past outcomes):\n{prediction_history}"
         )
+
+    if trade_outcomes:
+        sections.append(trade_outcomes)
 
     return "\n\n".join(sections)
 

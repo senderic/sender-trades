@@ -4,6 +4,7 @@ general:
     - SPY
     - QQQ
   execute: true
+  require_forecast_alignment: true
 
 atlas_briefing:
   directory: ~/atlas-morning-briefing
@@ -89,6 +90,7 @@ logging:
 execution:
   entry:
     order_type: limit
+    # % lean above live ask for buy entries to guarantee a fill (avoids expiring unfilled)
     limit_offset_pct: 5
     entry_window_minutes: 15
   exit_strategy:

@@ -61,6 +61,26 @@ class DecisionAggregator:
                 merged = self._merge_recommendations(best, second)
 
         selected = merged if merged else best.recommendation
+
+        if self.config.general.require_forecast_alignment:
+            conflict = self._forecast_conflict(selected, results)
+            if conflict:
+                logger.warning(
+                    "decision_blocked_direction_mismatch",
+                    asset=selected.asset,
+                    trade_direction=selected.direction.value,
+                    conflict=conflict,
+                )
+                return DecisionOutput(
+                    selected_label=None,
+                    recommendation=None,
+                    all_results=results,
+                    rationale=(
+                        f"Blocked {selected.strategy_label} {selected.direction.value} "
+                        f"on {selected.asset}: {conflict}"
+                    ),
+                )
+
         if merged:
             logger.info(
                 "decision_merge",
@@ -179,6 +199,47 @@ class DecisionAggregator:
             )
 
         return best
+
+    @staticmethod
+    def _forecast_conflict(
+        selected: StrategyResult.recommendation,
+        results: list[StrategyResult],
+    ) -> str | None:
+        """Return a conflict description if the selected trade direction
+        disagrees with the LLM per-asset forecast, else None.
+
+        Maps the option direction to a forecast direction (CALL→UP,
+        PUT→DOWN) and compares against the LLM strategy's per-asset
+        prediction for the same asset. A ``None`` result means either
+        there is no LLM prediction for the asset (no conflict) or the
+        directions agree.
+
+        Args:
+            selected: The selected TradeRecommendation.
+            results: All strategy results (including LLM strategy).
+
+        Returns:
+            Human-readable conflict string, or None when aligned.
+        """
+        llm_result = next((r for r in results if r.predictions is not None), None)
+        if llm_result is None or llm_result.predictions is None:
+            return None
+
+        pred = llm_result.predictions.get(selected.asset)
+        if pred is None:
+            return None
+
+        trade_up = selected.direction == Direction.CALL
+        pred_up = pred.direction == "UP"
+        if trade_up == pred_up:
+            return None
+
+        trade_label = "UP" if trade_up else "DOWN"
+        return (
+            f"trade direction {selected.direction.value} (implying {trade_label}) "
+            f"conflicts with LLM forecast {pred.direction} "
+            f"(confidence {pred.confidence:.0%})"
+        )
 
     @staticmethod
     def _build_rationale(

@@ -178,6 +178,7 @@ class GeneralConfig(BaseModel):
     env_mode: Literal["PAPER_ALPACA", "LIVE_ROBINHOOD"] = "PAPER_ALPACA"
     target_assets: list[str] = Field(default_factory=lambda: ["SPY", "QQQ"])
     execute: bool = False
+    require_forecast_alignment: bool = True
 
 
 class LLMConfig(BaseModel):
@@ -224,7 +225,7 @@ class LLMConfig(BaseModel):
             "opencode-go/qwen3.7-max",
         ]
     )
-    timeout_sec: int = 60
+    timeout_sec: int = 30
     max_calls_per_run: int = 5
     # LLM-driven trade-signal strategy. When enabled, an
     # ``LLMTradeStrategy`` runs alongside Momentum / MeanReversion /

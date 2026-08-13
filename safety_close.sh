@@ -23,9 +23,9 @@ mkdir -p "$DIR/logs/cron"
 
 uv run python -c "
 from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
+from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, QueryOrderStatus
-import structlog, os, sys, json, pytz
+import structlog, os, sys, json, pytz, time
 from datetime import timezone
 
 logger = structlog.get_logger()
@@ -49,7 +49,7 @@ LOGS_DIR = os.path.join(os.getcwd(), 'logs')
 
 for p in positions:
     # Cancel any open orders for this symbol FIRST
-    for o in tc.get_orders():
+    for o in tc.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[str(p.symbol)])):
         status = str(o.status)
         if str(o.symbol) == str(p.symbol) and status not in ('filled', 'canceled', 'expired', 'rejected', 'done_for_day'):
             tc.cancel_order_by_id(str(o.id))
@@ -73,6 +73,10 @@ for p in positions:
         logger.error('safety_close_failed', symbol=p.symbol, error=str(e))
 
 # --- Audit writeback: mark safety-close fills in trade JSONs ---
+# Give the aggressive limit sells a moment to fill before scanning for
+# filled orders (Alpaca fills asynchronously after submit_order returns).
+time.sleep(8)
+
 import datetime as _dt
 la_tz = pytz.timezone('America/Los_Angeles')
 today_str = _dt.datetime.now(la_tz).strftime('%Y-%m-%d')
@@ -104,8 +108,10 @@ if os.path.isdir(log_date_dir):
 
         exit_price = None
         sell_order_id = None
-        for o in tc.get_orders():
-            if str(o.symbol) == occ_symbol and str(o.side) == 'sell' and str(o.status) == 'filled':
+        # status=ALL required: bare get_orders() returns only OPEN orders,
+        # so the FILLED safety-close sell would never be found.
+        for o in tc.get_orders(GetOrdersRequest(status=QueryOrderStatus.ALL, symbols=[occ_symbol])):
+            if str(o.side) == 'sell' and str(o.status) == 'filled':
                 fp = float(o.filled_avg_price) if o.filled_avg_price and float(o.filled_avg_price) > 0 else None
                 if fp:
                     exit_price = fp

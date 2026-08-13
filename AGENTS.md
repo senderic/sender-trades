@@ -1,5 +1,14 @@
 # sender-trades — Agent Context
 
+## Working Principles
+
+When asked to do anything, check the **quality and spirit** of the request —
+not just the literal instruction. Look for the underlying goal the user is
+trying to achieve (e.g. "trades should actually make money", "emails should
+reflect reality"), and verify the work delivers that, not just that it
+compiles or matches the letter of the ask. Push back or flag gaps when the
+literal request would undermine its own intent.
+
 ## What This Is
 
 An intraday directional prediction engine with an optional 0DTE options execution module for SPY and QQQ. Ingests the Atlas Morning Briefing + market snapshots, runs an LLM research pass via opencode, produces per-asset directional predictions with estimated move %, confidence, and cited evidence, and optionally executes trades via Alpaca with automatic exit management.
@@ -126,6 +135,8 @@ Discovered during paper-trading verification. Do NOT repeat.
 | Monitor loop hangs forever | No time-based exit in `_monitor_exits` when quotes unavailable | Time-deadline check at top of loop → force-close |
 | Finnhub 502 → no market data → no trade | Atlas snapshots can have Finnhub errors for all symbols | Yahoo Finance fallback in `src/ingestion/snapshot_loader.py` |
 | Paper chain truncates contracts | Default chain endpoint returns only calls (100 limit); puts exist separately | Always pass `type: put` filter when looking for puts |
+| 0DTE entry limit never fills (expired) | Options don't trade pre-market, so no option ask at 9:28 AM ET submission; old delta fallback priced a $1.00 limit for an ATM option → never filled | `src/execution/engine.py:_await_option_quote()` waits for 9:30 AM ET open then retries the live option ask; `build_entry_order()` prices buy limit as a generous ceiling (intrinsic + 0.5%·spot, +`limit_offset_pct`) from `get_underlying_quote()` fallback so it fills at the open |
+| Quote endpoints 404 / return None | `/v2/options/snapshots` and `/v2/stocks/snapshots` are **data-API** endpoints on `data.alpaca.markets`, not the trading host; options snapshots live under `/v1beta1/`; field is `latestQuote`/`bp`/`ap` (capital Q), and stocks response is `{SYMBOL: {...}}` with no `snapshots` wrapper | `src/execution/client.py` — separate `data_http` client (`https://data.alpaca.markets`); option quote hits `/v1beta1/options/snapshots?symbols=`, underlying hits `/v2/stocks/snapshots?symbols=` and reads `{symbol}.latestQuote` |
 
 ## Key Architecture Notes
 

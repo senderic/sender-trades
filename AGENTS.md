@@ -86,18 +86,25 @@ The daily LLM research pass is a **graph of narrow-scope opencode subagents** (`
 | `research-spy` / `research-qqq` | Parse briefing + market into structured catalysts, gap, sentiment, news | In parallel |
 | `predict-spy` / `predict-qqq` | Turn research output into direction, confidence, move %, evidence | In parallel, after research |
 | `checker` | Validates ALL outputs (LLM + deterministic), flags contradictions, adjusts confidence | Serial, after all outputs |
-| `pick-trade` | Chooses best trade or passes, given meated predictions, history, trade outcomes | Serial, last |
+| `pick-trade` | Chooses best trade or passes, given validated predictions, history, trade outcomes | Serial, last |
 
 ### Behavior
 
 - **Enabled** via `graph.enabled` in `config.yaml` (currently `true`). When false, the legacy monolithic `LLMTradeStrategy` call is used.
-- **Timeout budget** — research 45s, predict 30s, checker 30s, pick-trade 30s (configurable in `graph:`).
-- **Checker authority** — `checker_contradiction_action: veto` lets the checker veto the LLM prediction when it disagrees with deterministic strategies; `checker_confidence_penalty: 0.15` reduces confidence on contradictions. Its adjusted predictions feed the DecisionAggregator.
-- **Deterministic feed** — Momentum, MeanReversion, EventDriven strategy outputs (which run in parallel with the graph) feed into the checker node so the LLM validates against them.
+- **Ordering** — `src/pipeline.py::_phase_analyze` runs the three deterministic strategies **first** (pure local computation), serializes their results, and injects them into `LLMTradeStrategy(deterministic_results=...)`. The graph therefore validates against real deterministic signals, and the checker runs **exactly once** per pipeline run, inside the graph.
+- **Timeout budget** — per *attempt*: research 45s, predict 30s, checker 30s, pick-trade 30s. Separately, `graph.total_deadline_sec` (240s) is a wall-clock ceiling on the whole graph, checked before each phase and threaded into every `invoke_agent` call as an absolute deadline. This matters because the model fallback chain is 7 models deep, so an unbounded node's worst case (7 × 45s) would overrun the 15-minute `entry_window_minutes` on a pipeline that starts ~2 min before the open.
+- **Call budget** — `graph.reserved_calls_for_fallback` (1) is held back from `llm.max_calls_per_run`, so the graph path (`invoke_agent`) cannot exhaust the budget that the monolithic fallback (`invoke`) needs.
+- **Checker authority** — the checker returns `can_proceed`. When it is false and `checker_contradiction_action: veto`, `LLMTradeStrategy` sets **both** `recommendation=None` and `StrategyResult.confidence=0.0`. Both are required: `DecisionAggregator.aggregate` filters on `recommendation is not None` and ranks/thresholds on `StrategyResult.confidence`, and never reads `recommendation.confidence`. Under `penalize`, `checker_confidence_penalty` (0.15) is subtracted from both fields together. The checker's `adjusted_confidence` values are applied to the per-asset predictions.
+- **Gap-fade thresholds** — single source of truth in `config.gap_fade` (`threshold_for(asset)`, `sentiment_magnitude_max`), consumed by the risk engine, the strategies, and the prompt builders. The agent `.md` files deliberately contain **no** threshold numbers; the applicable values are stated in the prompt text at call time.
 - **History awareness** — pick-trade sees prediction history + trade outcomes (`format_history_for_prompt`, `format_outcomes_for_prompt`) to avoid repeating losing calls.
-- **Failure fallback** — if any node or phase fails (e.g. both research nodes, checker, or pick-trade), the orchestrator returns `graph_failed: true` in its trace and `trade_signal.py` falls back to the monolithic call (`graph.fallback_to_monolithic: true`).
-- **Phase check** — `src/pipeline.py::_phase_check` runs the checker agent between analyze and decide over all 4 strategy outputs; if it returns a veto, the pipeline skips that asset.
-- **JSON contracts** — each agent returns a JSON object (extracted by `src/llm/graph.py::_extract_json`, tolerant of fenced/mixed text). Node contracts: research → `{catalysts, gap_fade, ...}`; predict → `{asset, direction, confidence, move_pct, evidence}`; checker → `{asset_adjustments, contradiction_flags, overall_assessment, veto}`; pick-trade → `{best_trade, rationale, pass_reason}`.
+- **Failure fallback** — if both research nodes, the checker, or the pick-trade node fails, or the wall-clock deadline expires, or any unexpected exception is raised, the orchestrator returns `graph_failed: true` in its trace and `trade_signal.py` falls back to the monolithic call (`graph.fallback_to_monolithic: true`). A pick-trade node that *returns* `best_trade: null` is a legitimate pass, not a failure.
+- **Malformed output is never fatal** — every value read out of parsed checker JSON is defensively coerced and containers are type-checked before iteration. A bad `adjusted_confidence` degrades to "no adjustment applied"; it must never raise, because nothing above `Pipeline.run` catches (see `src/main.py`) and a crash means no forecast and no email.
+- **JSON contracts** — each agent returns a JSON object (extracted by `src/llm/trade_signal.py::_parse_pick`, a balanced-brace scanner re-exported as `graph._extract_json`, tolerant of fenced/mixed text). Node contracts, matching `.opencode/agent/*.md` exactly:
+  - research → `{asset, catalysts[], risks[], sentiment{}, technical_context{}, watchlist_signals[], key_theme}`
+  - predict → `{asset, direction, confidence, predicted_move_pct, rationale, sources[]}`
+  - checker → `{validated_predictions[], contradictions[], flags[], overall_assessment, can_proceed}`
+  - pick-trade → `{best_trade|null, rationale, pass_reason, alternatives_considered}`
+- **Prediction identity** — predictions are keyed by the **node** that produced them, never by the agent's self-reported `asset` field; a mismatch is rejected and logged, so a confused `predict-spy` cannot overwrite the QQQ prediction.
 
 ### Extending the Graph
 

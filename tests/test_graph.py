@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import GraphConfig, Settings
+from src.config import GapFadeConfig, Settings
 from src.llm.graph import (
     _build_checker_prompt,
     _build_predict_prompt,
@@ -41,6 +41,35 @@ class TestExtractJson:
         assert _extract_json("[1, 2, 3]") is None
         assert _extract_json('"string"') is None
 
+    def test_two_json_objects_extracts_first_only(self) -> None:
+        """The old greedy `\\{[\\s\\S]*\\}` regex spanned from the first `{`
+        to the LAST `}`, which would swallow a second JSON object (or
+        trailing braced prose) into one unparseable blob. The balanced
+        scan must isolate just the first valid object."""
+        text = '{"a": 1} some separator text {"b": 2}'
+        result = _extract_json(text)
+        assert result == {"a": 1}
+
+    def test_trailing_braced_prose_does_not_break_extraction(self) -> None:
+        text = 'Here is the JSON: {"pick": "SPY"} — and a note {like this}.'
+        result = _extract_json(text)
+        assert result == {"pick": "SPY"}
+
+    def test_nested_braces_stay_balanced(self) -> None:
+        text = '{"outer": {"inner": {"deep": 1}}, "sibling": 2}'
+        result = _extract_json(text)
+        assert result == {"outer": {"inner": {"deep": 1}}, "sibling": 2}
+
+    def test_brace_inside_string_value_does_not_confuse_scan(self) -> None:
+        text = '{"note": "use a { in prose", "value": 1}'
+        result = _extract_json(text)
+        assert result == {"note": "use a { in prose", "value": 1}
+
+    def test_shares_implementation_with_trade_signal_parse_pick(self) -> None:
+        from src.llm.trade_signal import _parse_pick
+
+        assert _extract_json is _parse_pick
+
 
 class TestBuildResearchPrompt:
     def test_includes_asset_and_quote(self) -> None:
@@ -67,11 +96,12 @@ class TestBuildResearchPrompt:
         from src.models.briefing import BriefingData
 
         briefing = BriefingData(briefing_date=dt_date.today(), executive_summary="Bullish market")
-        prompt = _build_research_prompt(briefing, market, "SPY")
+        prompt = _build_research_prompt(briefing, market, "SPY", GapFadeConfig())
         assert "Research target: SPY" in prompt
         assert "Bullish market" in prompt
         assert "$745.00" in prompt
         assert "+0.68%" in prompt
+        assert "Gap-fade threshold for SPY: 1.5%" in prompt
 
     def test_includes_news(self) -> None:
 
@@ -91,7 +121,7 @@ class TestBuildResearchPrompt:
         from src.models.briefing import BriefingData
 
         briefing = BriefingData(briefing_date=dt_date3.today())
-        prompt = _build_research_prompt(briefing, market, "QQQ")
+        prompt = _build_research_prompt(briefing, market, "QQQ", GapFadeConfig())
         assert "Tech Stocks Rally" in prompt
 
 
@@ -109,10 +139,11 @@ class TestBuildPredictPrompt:
             ],
             "key_theme": "AI momentum",
         }
-        prompt = _build_predict_prompt(research, "SPY")
+        prompt = _build_predict_prompt(research, "SPY", GapFadeConfig())
         assert '"asset": "SPY"' in prompt
         assert '"AI rally"' in prompt
         assert "directional prediction JSON" in prompt
+        assert "Gap-fade threshold for SPY: 1.5%" in prompt
 
 
 class TestBuildCheckerPrompt:
@@ -175,10 +206,8 @@ class TestBuildCheckerPrompt:
                 ),
             },
         )
-        graph_config = GraphConfig()
-        prompt = _build_checker_prompt(
-            predict_spy, predict_qqq, deterministic, market, graph_config
-        )
+        config = Settings()
+        prompt = _build_checker_prompt(predict_spy, predict_qqq, deterministic, market, config)
         assert "SPY prediction" in prompt
         assert "QQQ prediction" in prompt
         assert "event_driven" in prompt
@@ -205,8 +234,8 @@ class TestBuildCheckerPrompt:
                 ),
             },
         )
-        graph_config = GraphConfig()
-        prompt = _build_checker_prompt(None, None, deterministic, market, graph_config)
+        config = Settings()
+        prompt = _build_checker_prompt(None, None, deterministic, market, config)
         assert "FAILED" in prompt
 
 
@@ -234,7 +263,223 @@ class TestGraphFailureResult:
         assert trace["graph_failed"] is True
 
 
+class TestValidateNodeAsset:
+    def test_matching_asset_passes_through(self) -> None:
+        from src.llm.graph import _validate_node_asset
+
+        raw = {"asset": "SPY", "direction": "UP"}
+        assert _validate_node_asset(raw, "SPY") == raw
+
+    def test_none_stays_none(self) -> None:
+        from src.llm.graph import _validate_node_asset
+
+        assert _validate_node_asset(None, "SPY") is None
+
+    def test_missing_asset_field_passes_through(self) -> None:
+        from src.llm.graph import _validate_node_asset
+
+        raw = {"direction": "UP"}
+        assert _validate_node_asset(raw, "SPY") == raw
+
+    def test_mismatched_self_reported_asset_is_rejected(self) -> None:
+        """Regression test: predict-spy echoing "asset": "QQQ" must not
+        silently overwrite the real QQQ prediction slot. The dict is
+        keyed by the NODE that produced it, and a disagreeing
+        self-report is rejected rather than trusted."""
+        from src.llm.graph import _validate_node_asset
+
+        raw = {"asset": "QQQ", "direction": "UP"}
+        assert _validate_node_asset(raw, "SPY") is None
+
+
+class TestCoerceCheckerVerdict:
+    def test_well_formed_values_pass_through(self) -> None:
+        from src.llm.graph import _coerce_checker_verdict
+
+        can_proceed, contradictions, flags, overall = _coerce_checker_verdict(
+            {
+                "can_proceed": False,
+                "contradictions": [{"description": "x"}],
+                "flags": ["low_evidence"],
+                "overall_assessment": "Mixed.",
+            }
+        )
+        assert can_proceed is False
+        assert contradictions == [{"description": "x"}]
+        assert flags == ["low_evidence"]
+        assert overall == "Mixed."
+
+    def test_malformed_types_degrade_to_safe_defaults(self) -> None:
+        """A checker returning wrong-typed verdict fields must not raise
+        — everything degrades to a safe default instead."""
+        from src.llm.graph import _coerce_checker_verdict
+
+        can_proceed, contradictions, flags, overall = _coerce_checker_verdict(
+            {
+                "can_proceed": "false",  # string, not bool
+                "contradictions": {"not": "a list"},
+                "flags": None,
+                "overall_assessment": 12345,
+            }
+        )
+        assert can_proceed is True
+        assert contradictions == []
+        assert flags == []
+        assert overall == ""
+
+    def test_missing_keys_default_can_proceed_true(self) -> None:
+        from src.llm.graph import _coerce_checker_verdict
+
+        can_proceed, contradictions, flags, overall = _coerce_checker_verdict({})
+        assert can_proceed is True
+        assert contradictions == []
+        assert flags == []
+        assert overall == ""
+
+
+class TestApplyCheckerAdjustments:
+    def test_numeric_adjustment_applied_and_clamped(self) -> None:
+        from src.llm.graph import _apply_checker_adjustments
+
+        predictions_by_node = {
+            "SPY": {"asset": "SPY", "confidence": 0.6},
+            "QQQ": {"asset": "QQQ", "confidence": 0.5},
+        }
+        checker_output = {
+            "validated_predictions": [
+                {"asset": "SPY", "adjusted_confidence": 0.3},
+                {"asset": "QQQ", "adjusted_confidence": 1.5},  # out of range -> clamped
+            ]
+        }
+        _apply_checker_adjustments(predictions_by_node, checker_output)
+        assert predictions_by_node["SPY"]["confidence"] == 0.3
+        assert predictions_by_node["QQQ"]["confidence"] == 1.0
+
+    def test_non_numeric_adjustment_ignored(self) -> None:
+        """A checker returning `"adjusted_confidence": "high"` must not
+        raise — the original confidence is left untouched."""
+        from src.llm.graph import _apply_checker_adjustments
+
+        predictions_by_node = {"SPY": {"asset": "SPY", "confidence": 0.6}}
+        checker_output = {
+            "validated_predictions": [{"asset": "SPY", "adjusted_confidence": "high"}]
+        }
+        _apply_checker_adjustments(predictions_by_node, checker_output)
+        assert predictions_by_node["SPY"]["confidence"] == 0.6
+
+    def test_non_list_validated_predictions_ignored(self) -> None:
+        """A checker returning `validated_predictions` as something
+        other than a list must not raise."""
+        from src.llm.graph import _apply_checker_adjustments
+
+        predictions_by_node = {"SPY": {"asset": "SPY", "confidence": 0.6}}
+        checker_output = {"validated_predictions": "not-a-list"}
+        _apply_checker_adjustments(predictions_by_node, checker_output)
+        assert predictions_by_node["SPY"]["confidence"] == 0.6
+
+    def test_unknown_asset_entry_ignored(self) -> None:
+        from src.llm.graph import _apply_checker_adjustments
+
+        predictions_by_node = {"SPY": {"asset": "SPY", "confidence": 0.6}, "QQQ": None}
+        checker_output = {
+            "validated_predictions": [
+                {"asset": "AAPL", "adjusted_confidence": 0.9},
+                {"asset": "QQQ", "adjusted_confidence": 0.9},  # node failed -> stays None
+            ]
+        }
+        _apply_checker_adjustments(predictions_by_node, checker_output)
+        assert predictions_by_node["SPY"]["confidence"] == 0.6
+        assert predictions_by_node["QQQ"] is None
+
+
 class TestGraphOrchestratorRun:
+    @pytest.mark.asyncio
+    async def test_pick_trade_node_failure_is_a_graph_failure(self) -> None:
+        """A dead pick-trade node (no parseable output at all) must be
+        treated as a graph failure so the caller falls back — distinct
+        from a working node that legitimately returns
+        ``{"best_trade": null}`` to pass on a trade."""
+        from src.llm.client import OpencodeLLMClient
+        from src.llm.graph import GraphOrchestrator
+
+        config = Settings()
+        config.llm.opencode_path = "opencode"
+        client = OpencodeLLMClient(config.llm)
+
+        research_spy = json.dumps(
+            {
+                "asset": "SPY",
+                "catalysts": [
+                    {"type": "bullish", "description": "x", "source": "r", "strength": 0.5}
+                ],
+                "risks": [],
+                "sentiment": {
+                    "aggregate_polarity": 0.3,
+                    "briefing_level": 1.0,
+                    "news_consensus": "bullish",
+                },
+                "technical_context": {
+                    "gap_from_previous_close_pct": 0.2,
+                    "gap_direction": "UP",
+                    "gap_significance": "minor",
+                    "pre_market_momentum": "holding",
+                },
+                "watchlist_signals": [],
+                "key_theme": "x",
+            }
+        )
+        predict_spy = json.dumps(
+            {
+                "asset": "SPY",
+                "direction": "UP",
+                "confidence": 0.6,
+                "predicted_move_pct": 0.4,
+                "rationale": "x",
+                "sources": ["r"],
+            }
+        )
+        checker = json.dumps(
+            {
+                "validated_predictions": [],
+                "contradictions": [],
+                "flags": [],
+                "overall_assessment": "ok",
+                "can_proceed": True,
+            }
+        )
+
+        orchestrator = GraphOrchestrator(config, client)
+
+        def side_effect(cmd, **kwargs):
+            import subprocess as sp
+
+            cmd_str = " ".join(cmd)
+            if "research-spy" in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap(research_spy), "")
+            if "research-qqq" in cmd_str:
+                return sp.CompletedProcess(cmd, 1, "", "fail")
+            if "predict-spy" in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap(predict_spy), "")
+            if "checker" in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap(checker), "")
+            if "pick-trade" in cmd_str:
+                # Dead node: every model fails to produce a response.
+                return sp.CompletedProcess(cmd, 1, "", "boom")
+            return sp.CompletedProcess(cmd, 1, "", "unknown agent")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=side_effect),
+        ):
+            result = await orchestrator.run(
+                briefing=_empty_briefing(),
+                market=_market_with_spy_qqq(),
+                deterministic_results=[],
+            )
+
+        assert result["trace"].get("graph_failed") is True
+        assert result["trace"].get("skip_reason") == "pick_trade_failed"
+
     @pytest.mark.asyncio
     async def test_all_research_fails_returns_failure(self) -> None:
         from src.llm.client import OpencodeLLMClient
@@ -412,10 +657,204 @@ class TestGraphOrchestratorRun:
         assert "best_trade" in result
         assert result["trace"].get("graph_failed") is not True
 
+    @pytest.mark.asyncio
+    async def test_unexpected_exception_becomes_a_graph_failure(self) -> None:
+        """The crash-safety net: nothing above ``Pipeline.run`` catches
+        (see ``src/main.py``), so an unexpected exception anywhere in the
+        graph must degrade to a fallback, not kill the morning run."""
+        from src.llm.client import OpencodeLLMClient
+        from src.llm.graph import GraphOrchestrator
+
+        config = Settings()
+        config.llm.opencode_path = "opencode"
+        orchestrator = GraphOrchestrator(config, OpencodeLLMClient(config.llm))
+
+        with patch.object(
+            GraphOrchestrator,
+            "_run_inner",
+            side_effect=RuntimeError("something nobody anticipated"),
+        ):
+            result = await orchestrator.run(
+                briefing=_empty_briefing(),
+                market=_market_with_spy_qqq(),
+                deterministic_results=[],
+            )
+
+        assert result["graph_failed"] is True
+        assert result["trace"]["skip_reason"] == "unexpected_exception"
+        assert "RuntimeError" in result["trace"]["graph_fail_reason"]
+        # And the shape stays consumable by the caller.
+        assert result["predictions"] == {}
+        assert result["best_trade"] is None
+
+    @pytest.mark.asyncio
+    async def test_all_predictions_failing_is_a_graph_failure(self) -> None:
+        """Research can succeed while both predict nodes die."""
+        from src.llm.client import OpencodeLLMClient
+        from src.llm.graph import GraphOrchestrator
+
+        config = Settings()
+        config.llm.opencode_path = "opencode"
+        orchestrator = GraphOrchestrator(config, OpencodeLLMClient(config.llm))
+
+        def side_effect(cmd, **kwargs):
+            import subprocess as sp
+
+            cmd_str = " ".join(cmd)
+            if "research-" in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap(_research_json("SPY")), "")
+            return sp.CompletedProcess(cmd, 1, "", "predict died")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=side_effect),
+        ):
+            result = await orchestrator.run(
+                briefing=_empty_briefing(),
+                market=_market_with_spy_qqq(),
+                deterministic_results=[],
+            )
+
+        assert result["trace"].get("graph_failed") is True
+        assert result["trace"].get("skip_reason") == "all_predictions_failed"
+
+    @pytest.mark.asyncio
+    async def test_unparseable_checker_is_a_graph_failure(self) -> None:
+        """A checker that responds with pure prose (no JSON at all) is a
+        dead node — distinct from a checker returning malformed *fields*,
+        which degrades to 'no adjustment' instead."""
+        from src.llm.client import OpencodeLLMClient
+        from src.llm.graph import GraphOrchestrator
+
+        config = Settings()
+        config.llm.opencode_path = "opencode"
+        orchestrator = GraphOrchestrator(config, OpencodeLLMClient(config.llm))
+
+        def side_effect(cmd, **kwargs):
+            import subprocess as sp
+
+            cmd_str = " ".join(cmd)
+            if "research-" in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap(_research_json("SPY")), "")
+            if "predict-" in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap(_predict_json("SPY")), "")
+            if "checker" in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap("I cannot comply."), "")
+            return sp.CompletedProcess(cmd, 1, "", "unexpected")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=side_effect),
+        ):
+            result = await orchestrator.run(
+                briefing=_empty_briefing(),
+                market=_market_with_spy_qqq(),
+                deterministic_results=[],
+            )
+
+        assert result["trace"].get("graph_failed") is True
+        assert result["trace"].get("skip_reason") == "checker_failed"
+
+    @pytest.mark.asyncio
+    async def test_deadline_expiring_mid_graph_stops_before_the_next_phase(self) -> None:
+        """The budget is re-checked before every phase, not just at entry.
+
+        Research succeeds, then the clock runs out, so the checker and
+        pick-trade nodes must never be invoked.
+        """
+        from src.llm.client import OpencodeLLMClient
+        from src.llm.graph import GraphOrchestrator
+
+        config = Settings()
+        config.llm.opencode_path = "opencode"
+        config.graph.total_deadline_sec = 60
+        orchestrator = GraphOrchestrator(config, OpencodeLLMClient(config.llm))
+
+        agents_called: list[str] = []
+        clock = {"t": 1000.0}
+
+        def fake_monotonic() -> float:
+            return clock["t"]
+
+        def side_effect(cmd, **kwargs):
+            import subprocess as sp
+
+            cmd_str = " ".join(cmd)
+            for name in ("research-spy", "research-qqq", "predict-spy", "predict-qqq"):
+                if name in cmd_str:
+                    agents_called.append(name)
+                    payload = (
+                        _research_json(name[-3:].upper())
+                        if name.startswith("research")
+                        else _predict_json(name[-3:].upper())
+                    )
+                    # Burn the entire budget during the predict phase.
+                    if name.startswith("predict"):
+                        clock["t"] += 120.0
+                    return sp.CompletedProcess(cmd, 0, _ndjson_wrap(payload), "")
+            agents_called.append(cmd_str)
+            return sp.CompletedProcess(cmd, 0, _ndjson_wrap("{}"), "")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=side_effect),
+            patch("src.llm.graph.time.monotonic", side_effect=fake_monotonic),
+        ):
+            result = await orchestrator.run(
+                briefing=_empty_briefing(),
+                market=_market_with_spy_qqq(),
+                deterministic_results=[],
+            )
+
+        assert result["trace"].get("graph_failed") is True
+        assert result["trace"].get("skip_reason") == "deadline_exhausted_before_checker"
+        assert not any("checker" in a for a in agents_called)
+        assert not any("pick-trade" in a for a in agents_called)
+
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
+
+def _research_json(asset: str) -> str:
+    """Minimal well-formed research-node payload."""
+    return json.dumps(
+        {
+            "asset": asset,
+            "catalysts": [
+                {"type": "bullish", "description": "x", "source": "reuters:x", "strength": 0.5}
+            ],
+            "risks": [],
+            "sentiment": {
+                "aggregate_polarity": 0.3,
+                "briefing_level": 1.0,
+                "news_consensus": "bullish",
+            },
+            "technical_context": {
+                "gap_from_previous_close_pct": 0.2,
+                "gap_direction": "UP",
+                "gap_significance": "minor",
+                "pre_market_momentum": "holding",
+            },
+            "watchlist_signals": [],
+            "key_theme": "x",
+        }
+    )
+
+
+def _predict_json(asset: str) -> str:
+    """Minimal well-formed predict-node payload."""
+    return json.dumps(
+        {
+            "asset": asset,
+            "direction": "UP",
+            "confidence": 0.6,
+            "predicted_move_pct": 0.4,
+            "rationale": "x",
+            "sources": ["reuters:x"],
+        }
+    )
 
 
 def _empty_briefing():

@@ -30,6 +30,6 @@ Output a single JSON object with these keys:
 - "key_theme": one sentence summary of the dominant theme for QQQ today
 
 Rules:
-- QQQ's gap-fade threshold is 2.0% (vs 1.5% for SPY). Flag gap-fade risk when the gap exceeds this AND catalyst strength (sentiment magnitude) < 0.20.
+- QQQ typically tolerates a larger gap than SPY before gap-fade risk applies. Flag gap-fade risk when the gap exceeds the gap-fade threshold supplied in your input AND catalyst strength (sentiment magnitude) is below the supplied sentiment cutoff.
 - Tech sentiment can diverge from broad market — don't assume SPY's mood applies to QQQ.
 - Output ONLY the JSON object, no prose or code fences.

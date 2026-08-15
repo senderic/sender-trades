@@ -87,6 +87,13 @@ logging:
   level: DEBUG
   json_dir: logs
 
+gap_fade:
+  thresholds_pct:
+    SPY: 1.5
+    QQQ: 2.0
+  default_threshold_pct: 1.5
+  sentiment_magnitude_max: 0.20
+
 graph:
   enabled: true
   fallback_to_monolithic: true
@@ -96,6 +103,10 @@ graph:
   prediction_timeout_sec: 30
   checker_timeout_sec: 30
   pick_trade_timeout_sec: 30
+  # Wall-clock ceiling for the whole graph, sized against the 15-min
+  # entry window (pipeline starts ~2 min before the open).
+  total_deadline_sec: 240
+  reserved_calls_for_fallback: 1
 
 execution:
   entry:

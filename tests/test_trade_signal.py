@@ -492,7 +492,10 @@ class TestGapAwarenessInPrompt:
     def test_prompt_includes_gap_warning_when_large_gap(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
-        market_with_quotes.quotes["QQQ"].current_price = 674.76
+        # Gap is defined as open-vs-previous-close (not current-vs-previous-
+        # close) — see _gap_pct. Setting open_price is what should trigger
+        # the alert; current_price is irrelevant to the gap calculation.
+        market_with_quotes.quotes["QQQ"].open_price = 674.76
         market_with_quotes.quotes["QQQ"].previous_close = 661.50
         prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
         assert "Pre-market gap alert" in prompt
@@ -501,12 +504,22 @@ class TestGapAwarenessInPrompt:
     def test_prompt_omits_gap_warning_when_gap_small(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
-        market_with_quotes.quotes["SPY"].current_price = 745.20
+        market_with_quotes.quotes["SPY"].open_price = 745.20
         market_with_quotes.quotes["SPY"].previous_close = 744.00
-        market_with_quotes.quotes["QQQ"].current_price = 695.33
+        market_with_quotes.quotes["QQQ"].open_price = 695.33
         market_with_quotes.quotes["QQQ"].previous_close = 694.50
         prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
         assert "Pre-market gap alert" not in prompt
+
+    def test_prompt_states_gap_fade_threshold_explicitly(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        """Prompt builders must state the applicable threshold in the
+        prompt text itself — the .opencode/agent/*.md files expect the
+        threshold to arrive in the prompt rather than being hardcoded."""
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "Gap-fade threshold for SPY: 1.5%" in prompt
+        assert "Gap-fade threshold for QQQ: 2.0%" in prompt
 
 
 class TestGraphEnabledLLMTradeStrategy:

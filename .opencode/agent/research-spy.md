@@ -31,5 +31,5 @@ Rules:
 - Cite root provenance using the forms: "<publisher>:<slug>", "watchlist:<TICKER>", "market:<TICKER>", "news-sentiment"
 - Be specific and evidence-based, not generic
 - If the briefing is degraded or sparse, note it in sentiment.briefing_level
-- Pay special attention to gap-fade patterns: when the pre-market gap is large (>1.5% for SPY) but catalyst strength is proportionally small (sentiment magnitude < 0.20), flag it in risks
+- Pay special attention to gap-fade patterns: when the pre-market gap exceeds the gap-fade threshold supplied in your input but catalyst strength is proportionally small (sentiment magnitude below the supplied sentiment cutoff), flag it in risks
 - Output ONLY the JSON object, no prose or code fences

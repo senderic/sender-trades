@@ -126,6 +126,29 @@ class EventDrivenConfig(StrategyConfig):
     catalyst_window_hours: int = 17
 
 
+class GapFadeConfig(BaseModel):
+    """Thresholds for the gap-fade reversal pattern.
+
+    A large pre-market gap backed by a proportionally weak news catalyst
+    often exhausts and reverses during the session (Aug 5 2026: SPY
+    +1.8% gap closed -0.8%, QQQ +3.4% gap closed -1.2%). These
+    thresholds are consumed by the risk engine, the deterministic
+    strategies, and every LLM prompt that mentions gap-fade risk, so
+    they live in one place rather than being restated per call site.
+
+    ``thresholds_pct`` is keyed by asset symbol; assets absent from the
+    mapping fall back to :attr:`default_threshold_pct`.
+    """
+
+    thresholds_pct: dict[str, float] = Field(default_factory=lambda: {"SPY": 1.5, "QQQ": 2.0})
+    default_threshold_pct: float = 1.5
+    sentiment_magnitude_max: float = 0.20
+
+    def threshold_for(self, asset: str) -> float:
+        """Return the gap-fade threshold percentage for ``asset``."""
+        return self.thresholds_pct.get(asset, self.default_threshold_pct)
+
+
 class StrategiesConfig(BaseModel):
     """Container holding configuration for all trading strategies."""
 
@@ -258,6 +281,17 @@ class GraphConfig(BaseModel):
     prediction_timeout_sec: int = 30
     checker_timeout_sec: int = 30
     pick_trade_timeout_sec: int = 30
+    # Wall-clock ceiling for the entire graph. Per-node timeouts above
+    # are per *attempt*; with a 7-model fallback chain the node-level
+    # worst case runs to many minutes, which would overrun the
+    # ``execution.entry.entry_window_minutes`` window given the pipeline
+    # starts ~2 min before the open. When this budget is exhausted the
+    # orchestrator stops starting new nodes and reports a graph failure
+    # so the caller can fall back.
+    total_deadline_sec: int = 240
+    # LLM calls held back from ``LLMConfig.max_calls_per_run`` so the
+    # monolithic fallback is still affordable after a graph failure.
+    reserved_calls_for_fallback: int = 1
 
 
 class Settings(BaseSettings):
@@ -273,6 +307,7 @@ class Settings(BaseSettings):
     rss_feeds: list[RSSFeedItem] = Field(default_factory=list)
     strategies: StrategiesConfig = StrategiesConfig()
     risk: RiskConfig = RiskConfig()
+    gap_fade: GapFadeConfig = GapFadeConfig()
     mcp: MCPConfig = MCPConfig()
     logging: LoggingConfig = LoggingConfig()
     llm: LLMConfig = LLMConfig()

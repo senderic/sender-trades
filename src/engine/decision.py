@@ -237,7 +237,10 @@ class DecisionAggregator:
             streak_len = abs(sstat["current_streak"])
             if streak_len >= 2:
                 penalties.append(
-                    (min(0.25, 0.05 * streak_len), f"{rec.strategy_label} on {streak_len}-loss streak")
+                    (
+                        min(0.25, 0.05 * streak_len),
+                        f"{rec.strategy_label} on {streak_len}-loss streak",
+                    )
                 )
 
         # Per-asset + direction streak

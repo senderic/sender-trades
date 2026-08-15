@@ -509,5 +509,218 @@ class TestGapAwarenessInPrompt:
         assert "Pre-market gap alert" not in prompt
 
 
+class TestGraphEnabledLLMTradeStrategy:
+    """Tests that the graph orchestrator path integrates correctly with LLMTradeStrategy."""
+
+    def _strategy(
+        self, graph_enabled: bool = True, config: Settings | None = None
+    ) -> LLMTradeStrategy:
+        cfg = config or Settings()
+        cfg.graph.enabled = graph_enabled
+        cfg.graph.fallback_to_monolithic = True
+        cfg.llm.opencode_path = "opencode"
+        return LLMTradeStrategy(cfg)
+
+    def _predictions_json(self) -> str:
+        """Build the graph research output JSON for both assets."""
+        return json.dumps(
+            {
+                "predictions": {
+                    "SPY": {
+                        "asset": "SPY",
+                        "direction": "UP",
+                        "confidence": 0.62,
+                        "predicted_move_pct": 0.4,
+                        "rationale": "Broad strength.",
+                        "sources": ["reuters:bullish"],
+                    },
+                    "QQQ": {
+                        "asset": "QQQ",
+                        "direction": "DOWN",
+                        "confidence": 0.48,
+                        "predicted_move_pct": -1.0,
+                        "rationale": "Tech selloff.",
+                        "sources": ["watchlist:NVDA"],
+                    },
+                },
+                "market_vibe": "Mixed",
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_graph_disabled_uses_monolithic(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        strategy = self._strategy(graph_enabled=False)
+        best_trade = {
+            "asset": "SPY",
+            "direction": "CALL",
+            "confidence": 0.66,
+            "rationale": "x",
+        }
+        resp = _full_response(best_trade=best_trade)
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", return_value=_completed(resp)),
+        ):
+            result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+        assert result.recommendation is not None
+        assert result.recommendation.asset == "SPY"
+        assert "llm_raw" in result.debug_trace
+
+    @pytest.mark.asyncio
+    async def test_graph_enabled_runs_research_and_predict(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        strategy = self._strategy(graph_enabled=True)
+
+        def research_response(text: str) -> str:
+            return _ndjson(text)
+
+        research_spy = json.dumps(
+            {
+                "asset": "SPY",
+                "catalysts": [
+                    {
+                        "type": "bullish",
+                        "description": "Broad strength",
+                        "source": "reuters:up",
+                        "strength": 0.6,
+                    }
+                ],
+                "risks": [],
+                "sentiment": {
+                    "aggregate_polarity": 0.4,
+                    "briefing_level": 1.0,
+                    "news_consensus": "bullish",
+                },
+                "technical_context": {
+                    "gap_from_previous_close_pct": 0.3,
+                    "gap_direction": "UP",
+                    "gap_significance": "minor",
+                    "pre_market_momentum": "holding",
+                },
+                "watchlist_signals": [],
+                "key_theme": "Mildly bullish",
+            }
+        )
+        research_qqq = json.dumps(
+            {
+                "asset": "QQQ",
+                "catalysts": [
+                    {
+                        "type": "bearish",
+                        "description": "Tech weakness",
+                        "source": "watchlist:QQQ",
+                        "strength": 0.5,
+                    }
+                ],
+                "risks": [],
+                "sentiment": {
+                    "aggregate_polarity": -0.3,
+                    "briefing_level": 1.0,
+                    "news_consensus": "bearish",
+                },
+                "technical_context": {
+                    "gap_from_previous_close_pct": -0.2,
+                    "gap_direction": "DOWN",
+                    "gap_significance": "minor",
+                    "pre_market_momentum": "fading",
+                },
+                "watchlist_signals": [],
+                "key_theme": "Tech pressure",
+            }
+        )
+
+        predict_spy = json.dumps(
+            {
+                "asset": "SPY",
+                "direction": "UP",
+                "confidence": 0.62,
+                "predicted_move_pct": 0.4,
+                "rationale": "Broad strength",
+                "sources": ["reuters:up"],
+            }
+        )
+        predict_qqq = json.dumps(
+            {
+                "asset": "QQQ",
+                "direction": "DOWN",
+                "confidence": 0.48,
+                "predicted_move_pct": -1.0,
+                "rationale": "Tech weakness",
+                "sources": ["watchlist:QQQ"],
+            }
+        )
+
+        def run_side_effect(cmd, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "research-spy" in cmd_str:
+                return _completed(research_response(research_spy))
+            if "research-qqq" in cmd_str:
+                return _completed(research_response(research_qqq))
+            if "predict-spy" in cmd_str:
+                return _completed(research_response(predict_spy))
+            if "predict-qqq" in cmd_str:
+                return _completed(research_response(predict_qqq))
+            return _completed(research_response("{}"))
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+
+        assert result.predictions is not None
+        assert "SPY" in result.predictions
+        assert result.predictions["SPY"].direction == "UP"
+        assert result.predictions["QQQ"].direction == "DOWN"
+        assert result.debug_trace.get("graph_run") is True
+
+    @pytest.mark.asyncio
+    async def test_graph_falls_back_to_monolithic_on_failure(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        strategy = self._strategy(graph_enabled=True)
+
+        call_count = [0]
+
+        def run_side_effect(cmd, **kwargs):
+            call_count[0] += 1
+            cmd_str = " ".join(cmd)
+            # Graph attempt: fail all research
+            if "research-spy" in cmd_str or "research-qqq" in cmd_str:
+                return _completed("", rc=1)
+            # Fallback monolithic
+            if (
+                "research-spy" not in cmd_str
+                and "research-qqq" not in cmd_str
+                and "predict-spy" not in cmd_str
+                and "predict-qqq" not in cmd_str
+                and "checker" not in cmd_str
+                and "pick-trade" not in cmd_str
+            ):
+                resp = _full_response(
+                    best_trade={
+                        "asset": "SPY",
+                        "direction": "CALL",
+                        "confidence": 0.55,
+                        "rationale": "fallback",
+                    }
+                )
+                return _completed(resp)
+            return _completed("{}")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+
+        assert result.recommendation is not None
+        assert result.recommendation.asset == "SPY"
+        assert call_count[0] >= 2  # At least one graph call + one monolithic call
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

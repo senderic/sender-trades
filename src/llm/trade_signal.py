@@ -161,6 +161,11 @@ class LLMTradeStrategy(TradingStrategy):
     ) -> StrategyResult:
         """Evaluate the LLM prediction strategy.
 
+        When :attr:`GraphConfig.enabled` is True, delegates to the
+        :class:`GraphOrchestrator` diamond (research + predict) and falls
+        back to the monolithic call on failure. When graph is disabled
+        (default), uses the legacy single-call LLM prompt.
+
         Args:
             briefing: Parsed morning briefing data.
             market: Current market snapshot with quotes and news.
@@ -185,6 +190,127 @@ class LLMTradeStrategy(TradingStrategy):
                 duration_ms=round((time.perf_counter() - start) * 1000, 2),
             )
 
+        # --- Graph path ---
+        graph_enabled = self.config.graph.enabled
+        if graph_enabled:
+            graph_result = await self._evaluate_via_graph(briefing, market, trace, start)
+            if graph_result is not None:
+                return graph_result
+            if self.config.graph.fallback_to_monolithic:
+                logger.info("graph_fell_back_to_monolithic")
+
+        # --- Legacy monolithic path ---
+        return await self._evaluate_monolithic(briefing, market, trace, start)
+
+    async def _evaluate_via_graph(
+        self,
+        briefing: BriefingData,
+        market: MarketSnapshot,
+        trace: dict[str, Any],
+        start: float,
+    ) -> StrategyResult | None:
+        """Run the graph orchestrator and convert output to a StrategyResult.
+
+        Returns None when the graph fails, signalling the caller to fall
+        back to the monolithic path.
+        """
+        from src.llm.graph import GraphOrchestrator
+
+        orchestrator = GraphOrchestrator(self.config, self._client)
+        try:
+            result = await orchestrator.run(
+                briefing=briefing,
+                market=market,
+                deterministic_results=[],  # filled later by _phase_check
+            )
+        except Exception as e:
+            logger.warning("graph_orchestrator_exception", error=str(e))
+            return None
+
+        graph_trace = result.get("trace", {})
+        if graph_trace.get("graph_failed"):
+            trace["graph_failed"] = True
+            trace["graph_fail_reason"] = graph_trace.get("graph_fail_reason", "")
+            return None
+
+        trace["served_by"] = result.get("served_by", self._client.last_served_by)
+        trace["paid_used"] = result.get("paid_used", self._client.paid_used)
+        trace["graph_run"] = True
+        trace["graph_nodes"] = graph_trace.get("nodes", {})
+
+        raw_predictions = result.get("predictions", {})
+        predictions: dict[str, AssetPrediction] = {}
+        target_set = set(self.config.general.target_assets)
+
+        for asset, pred_raw in raw_predictions.items():
+            if asset not in target_set:
+                continue
+            if not isinstance(pred_raw, dict):
+                continue
+            direction_raw = pred_raw.get("direction")
+            if direction_raw not in ("UP", "DOWN"):
+                continue
+            try:
+                confidence = float(pred_raw.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = max(0.0, min(1.0, confidence))
+            try:
+                predicted_move_pct = float(pred_raw.get("predicted_move_pct", 0.0))
+            except (TypeError, ValueError):
+                predicted_move_pct = 0.0
+            rationale = str(pred_raw.get("rationale", ""))
+            sources = _normalise_sources(pred_raw.get("sources", []))
+            predictions[asset] = AssetPrediction(
+                asset=asset,  # type: ignore
+                direction=direction_raw,  # type: ignore
+                confidence=round(confidence, 4),
+                predicted_move_pct=round(predicted_move_pct, 2),
+                rationale=rationale,
+                sources=sources,
+            )
+
+        trace["predictions"] = {k: v.model_dump() for k, v in predictions.items()}
+        trace["graph_predictions"] = raw_predictions
+
+        best_trade = result.get("best_trade")
+        market_vibe = result.get("market_vibe", "")
+        trace["market_vibe"] = market_vibe
+        trace["best_trade_raw"] = best_trade
+
+        recommendation = None
+        if isinstance(best_trade, dict):
+            recommendation = self._parse_best_trade(best_trade, market, trace)
+
+        if not predictions:
+            trace["skip_reason"] = "graph_no_valid_predictions"
+            return self._abstain(trace, start)
+
+        all_sources: list[str] = []
+        for p in predictions.values():
+            for s in p.sources:
+                label = f"llm:{s}"
+                if label not in all_sources:
+                    all_sources.append(label)
+
+        return StrategyResult(
+            label=self.label,
+            recommendation=recommendation,
+            predictions=predictions,
+            confidence=recommendation.confidence if recommendation else 0.0,
+            debug_trace=trace,
+            duration_ms=round((time.perf_counter() - start) * 1000, 2),
+            forecast_source_labels=all_sources if all_sources else None,
+        )
+
+    async def _evaluate_monolithic(
+        self,
+        briefing: BriefingData,
+        market: MarketSnapshot,
+        trace: dict[str, Any],
+        start: float,
+    ) -> StrategyResult:
+        """Run the legacy single-call LLM prediction (monolithic prompt)."""
         history_str = format_history_for_prompt(
             load_history(self.config.logging.json_dir),
         )

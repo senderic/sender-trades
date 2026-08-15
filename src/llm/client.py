@@ -257,6 +257,171 @@ class OpencodeLLMClient:
         )
         return None
 
+    def invoke_agent(
+        self,
+        agent_name: str,
+        prompt: str,
+        files: list[str] | None = None,
+        timeout_sec: int | None = None,
+    ) -> str | None:
+        """Invoke a named opencode subagent with the same fallback chain as :meth:`invoke`.
+
+        Uses ``opencode run --agent <agent_name>`` to load the agent's system
+        prompt from ``.opencode/agent/<agent_name>.md``. The model chain and
+        fallback behaviour are identical to :meth:`invoke`.
+
+        Args:
+            agent_name: Subagent name (matches the filename without ``.md``).
+            prompt: User prompt passed as positional message to the agent.
+            files: Optional list of file paths to attach via ``-f``.
+            timeout_sec: Override the default timeout for this call.
+
+        Returns:
+            Response text from the first successful model, or ``None``.
+        """
+        if not self.available:
+            return None
+
+        if self._call_count >= self.config.max_calls_per_run:
+            logger.warning(
+                "opencode_budget_exhausted",
+                calls=self._call_count,
+                max=self.config.max_calls_per_run,
+                agent=agent_name,
+            )
+            return None
+
+        chain = _dedupe(self.config.zen_models + self.config.paid_go_models)
+        timeout = timeout_sec if timeout_sec is not None else self.config.timeout_sec
+        first_model = chain[0] if chain else ""
+
+        last_error = ""
+        for idx, model in enumerate(chain):
+            is_fallback = idx > 0
+            is_paid = is_paid_model(model)
+            if is_fallback:
+                logger.info(
+                    "opencode_falling_back",
+                    model=model,
+                    paid=is_paid,
+                    agent=agent_name,
+                    first=first_model,
+                )
+
+            if self._call_count >= self.config.max_calls_per_run:
+                break
+
+            cmd = [
+                self.config.opencode_path,
+                "run",
+                "--agent",
+                agent_name,
+                "-m",
+                model,
+                "--format",
+                "json",
+                "--auto",
+                "--dir",
+                "/tmp",
+                "--pure",
+            ]
+            if files:
+                for f in files:
+                    cmd.extend(["-f", f])
+            cmd.append(prompt)
+
+            try:
+                t0 = time.monotonic()
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                elapsed = time.monotonic() - t0
+
+                input_chars = len(prompt)
+                if result.returncode != 0:
+                    last_error = (result.stderr or "")[:300]
+                    logger.debug(
+                        "opencode_agent_failed",
+                        model=model,
+                        agent=agent_name,
+                        paid=is_paid,
+                        rc=result.returncode,
+                        error=last_error,
+                    )
+                    self.total_failures += 1
+                    continue
+
+                response = _parse_ndjson_response(result.stdout)
+                if not response:
+                    last_error = "empty NDJSON response"
+                    logger.debug(
+                        "opencode_agent_empty_response",
+                        model=model,
+                        agent=agent_name,
+                        paid=is_paid,
+                        elapsed=round(elapsed, 2),
+                    )
+                    self.total_failures += 1
+                    continue
+
+                self._call_count += 1
+                self.total_calls += 1
+                self.total_input_chars += input_chars
+                self.total_output_chars += len(response)
+                self.total_elapsed += elapsed
+                if is_fallback:
+                    self.fallback_hits += 1
+
+                logger.info(
+                    "opencode_agent_ok",
+                    model=model,
+                    agent=agent_name,
+                    paid=is_paid,
+                    fallback=is_fallback,
+                    elapsed=round(elapsed, 2),
+                    chars=len(response),
+                )
+                self.last_served_by = model
+                self.last_fallback_hit = is_fallback
+                self.paid_used = is_paid
+                self.last_error = ""
+                return response
+
+            except subprocess.TimeoutExpired:
+                self.total_failures += 1
+                last_error = f"timeout after {timeout}s"
+                logger.warning(
+                    "opencode_agent_timed_out",
+                    model=model,
+                    agent=agent_name,
+                    paid=is_paid,
+                    timeout=timeout,
+                )
+                continue
+            except Exception as e:
+                self.total_failures += 1
+                last_error = f"{type(e).__name__}: {e}"
+                logger.debug(
+                    "opencode_agent_exception", model=model, agent=agent_name, error=str(e)
+                )
+                continue
+
+        self.last_error = last_error
+        self.last_served_by = None
+        self.last_fallback_hit = False
+        self.paid_used = False
+        logger.warning(
+            "opencode_agent_all_models_failed",
+            agent=agent_name,
+            first=first_model,
+            tried=len(chain),
+            last_error=last_error,
+        )
+        return None
+
     def get_usage_summary_html(self) -> str:
         """Return an HTML snippet summarizing LLM usage for this run.
 

@@ -129,6 +129,13 @@ class Pipeline:
         briefing = await self._phase_ingest_briefing(llm_client=llm_client)
         market = await self._phase_ingest_market()
         strategy_results = await self._phase_analyze(briefing, market, llm_client=llm_client)
+
+        # Graph checker phase — validates all strategy outputs together
+        if llm_client and self.config.graph.enabled:
+            strategy_results = await self._phase_check(
+                strategy_results, briefing, market, llm_client
+            )
+
         decision = self._phase_decide(strategy_results)
         decision.forecast = self._compute_forecast(strategy_results, decision)
 
@@ -433,6 +440,168 @@ class Pipeline:
             }
         )
         return decision
+
+    async def _phase_check(
+        self,
+        results: list[StrategyResult],
+        briefing: BriefingData,
+        market: MarketSnapshot,
+        llm_client: OpencodeLLMClient,
+    ) -> list[StrategyResult]:
+        """Run the graph checker agent to validate all strategy outputs.
+
+        When :attr:`GraphConfig.enabled` is True, the checker agent
+        receives all LLM predictions and deterministic strategy results,
+        cross-references them for contradictions, and adjusts confidences
+        accordingly. The checker may penalize or veto the LLM result
+        when it conflicts with deterministic signals.
+
+        Args:
+            results: All strategy results from ``_phase_analyze``.
+            briefing: Parsed briefing data.
+            market: Current market snapshot.
+            llm_client: The opencode LLM client.
+
+        Returns:
+            The (possibly adjusted) list of strategy results.
+        """
+        from src.llm.graph import GraphOrchestrator
+
+        # Serialize deterministic results for the checker
+        deterministic_results: list[dict] = []
+        llm_result = None
+        for r in results:
+            if r.label == "llm_trade":
+                llm_result = r
+            else:
+                det = {
+                    "label": r.label,
+                    "recommendation": r.recommendation.model_dump() if r.recommendation else None,
+                    "confidence": r.confidence,
+                    "debug_trace": r.debug_trace,
+                }
+                deterministic_results.append(det)
+
+        if llm_result is None:
+            logger.info("graph_check_skipped", reason="no_llm_strategy_result")
+            return results
+
+        # Build checker prompt with all outputs
+        from src.llm.graph import _build_checker_prompt
+
+        predict_spy = None
+        predict_qqq = None
+        if llm_result.predictions:
+            predict_spy = llm_result.predictions.get("SPY")
+            if predict_spy:
+                predict_spy = predict_spy.model_dump()
+            predict_qqq = llm_result.predictions.get("QQQ")
+            if predict_qqq:
+                predict_qqq = predict_qqq.model_dump()
+
+        checker_prompt = _build_checker_prompt(
+            predict_spy,
+            predict_qqq,
+            deterministic_results,
+            market,
+            self.config.graph,
+        )
+        response = llm_client.invoke_agent(
+            GraphOrchestrator.AGENT_CHECKER,
+            checker_prompt,
+            timeout_sec=self.config.graph.checker_timeout_sec,
+        )
+
+        if response is None:
+            logger.warning("graph_checker_failed", reason="no_response")
+            return results
+
+        from src.llm.graph import _extract_json
+
+        checker_output = _extract_json(response)
+        if checker_output is None:
+            logger.warning("graph_checker_failed", reason="unparseable_response")
+            return results
+
+        can_proceed = checker_output.get("can_proceed", True)
+        validated_predictions = checker_output.get("validated_predictions", [])
+        contradictions = checker_output.get("contradictions", [])
+        flags = checker_output.get("flags", [])
+
+        logger.info(
+            "graph_checker_complete",
+            can_proceed=can_proceed,
+            contradictions=len(contradictions),
+            flags=len(flags),
+            validated_count=len(validated_predictions),
+        )
+
+        # Apply checker adjustments to the LLM strategy result
+        if not can_proceed and self.config.graph.checker_contradiction_action == "veto":
+            logger.warning(
+                "graph_checker_veto",
+                contradictions=[
+                    f"{c.get('strategies', ['?', '?'])}: {c.get('description', '?')}"
+                    for c in contradictions
+                ],
+            )
+            # Null out the recommendation — effectively blocks the trade
+            if llm_result.recommendation is not None:
+                llm_result.recommendation.confidence = max(
+                    0.0,
+                    llm_result.recommendation.confidence
+                    - self.config.graph.checker_confidence_penalty * 2,
+                )
+            if llm_result.predictions:
+                for vp in validated_predictions:
+                    asset = vp.get("asset", "")
+                    adjusted = vp.get("adjusted_confidence")
+                    if asset in llm_result.predictions and adjusted is not None:
+                        llm_result.predictions[asset].confidence = max(
+                            0.0, min(1.0, float(adjusted))
+                        )
+
+        elif not can_proceed and self.config.graph.checker_contradiction_action == "penalize":
+            penalty = self.config.graph.checker_confidence_penalty
+            if llm_result.recommendation is not None:
+                llm_result.recommendation.confidence = max(
+                    0.0, llm_result.recommendation.confidence - penalty
+                )
+            if llm_result.predictions:
+                for vp in validated_predictions:
+                    asset = vp.get("asset", "")
+                    adjusted = vp.get("adjusted_confidence")
+                    if asset in llm_result.predictions and adjusted is not None:
+                        llm_result.predictions[asset].confidence = max(
+                            0.0, min(1.0, float(adjusted))
+                        )
+        else:
+            # Apply any adjusted confidences from checker
+            if llm_result.predictions:
+                for vp in validated_predictions:
+                    asset = vp.get("asset", "")
+                    adjusted = vp.get("adjusted_confidence")
+                    if asset in llm_result.predictions and adjusted is not None:
+                        llm_result.predictions[asset].confidence = max(
+                            0.0, min(1.0, float(adjusted))
+                        )
+
+        # Store checker trace in llm debug_trace
+        llm_trace = llm_result.debug_trace
+        llm_trace["checker_output"] = checker_output
+        llm_trace["checker_can_proceed"] = can_proceed
+
+        self.file_logger.write_entry(
+            {
+                "phase": "check",
+                "can_proceed": can_proceed,
+                "contradictions": contradictions,
+                "flags": flags,
+                "checker_confidence_penalty": self.config.graph.checker_confidence_penalty,
+            }
+        )
+
+        return results
 
     def _compute_forecast(
         self,

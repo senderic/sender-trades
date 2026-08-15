@@ -123,8 +123,24 @@ class TestTradeOutcome:
 
 class TestStrategyStats:
     def test_streak_negative_two(self, tmp_path) -> None:
-        _write_trade(tmp_path, "2026-08-11", "a", pnl=-65.0, pnl_pct=-94.2, exit_price=0.04, exit_reason="safety_close")
-        _write_trade(tmp_path, "2026-08-12", "b", pnl=-20.0, pnl_pct=-50.0, exit_price=0.1, exit_reason="safety_close")
+        _write_trade(
+            tmp_path,
+            "2026-08-11",
+            "a",
+            pnl=-65.0,
+            pnl_pct=-94.2,
+            exit_price=0.04,
+            exit_reason="safety_close",
+        )
+        _write_trade(
+            tmp_path,
+            "2026-08-12",
+            "b",
+            pnl=-20.0,
+            pnl_pct=-50.0,
+            exit_price=0.1,
+            exit_reason="safety_close",
+        )
         outcomes = load_trade_outcomes(tmp_path)
         stats = compute_strategy_stats(outcomes)
         assert stats["momentum"]["wins"] == 0
@@ -133,8 +149,18 @@ class TestStrategyStats:
         assert stats["momentum"]["total_pnl"] == pytest.approx(-85.0)
 
     def test_streak_win_then_loss(self, tmp_path) -> None:
-        _write_trade(tmp_path, "2026-08-07", "w", pnl=73.0, exit_price=1.46, exit_reason="take_profit")
-        _write_trade(tmp_path, "2026-08-11", "l", pnl=-65.0, exit_price=0.04, exit_reason="safety_close", pnl_pct=-94.2)
+        _write_trade(
+            tmp_path, "2026-08-07", "w", pnl=73.0, exit_price=1.46, exit_reason="take_profit"
+        )
+        _write_trade(
+            tmp_path,
+            "2026-08-11",
+            "l",
+            pnl=-65.0,
+            exit_price=0.04,
+            exit_reason="safety_close",
+            pnl_pct=-94.2,
+        )
         outcomes = load_trade_outcomes(tmp_path)
         stats = compute_strategy_stats(outcomes)
         assert stats["momentum"]["wins"] == 1
@@ -144,8 +170,26 @@ class TestStrategyStats:
 
 class TestDirectionStats:
     def test_direction_streak(self, tmp_path) -> None:
-        _write_trade(tmp_path, "2026-08-10", "q1", asset="QQQ", direction="CALL", pnl=-73.0, exit_price=0.0, exit_reason="safety_close")
-        _write_trade(tmp_path, "2026-08-11", "s1", asset="SPY", direction="CALL", pnl=-20.0, exit_price=0.0, exit_reason="safety_close")
+        _write_trade(
+            tmp_path,
+            "2026-08-10",
+            "q1",
+            asset="QQQ",
+            direction="CALL",
+            pnl=-73.0,
+            exit_price=0.0,
+            exit_reason="safety_close",
+        )
+        _write_trade(
+            tmp_path,
+            "2026-08-11",
+            "s1",
+            asset="SPY",
+            direction="CALL",
+            pnl=-20.0,
+            exit_price=0.0,
+            exit_reason="safety_close",
+        )
         outcomes = load_trade_outcomes(tmp_path)
         stats = compute_direction_stats(outcomes)
         assert stats["SPY:CALL"]["current_streak"] == -1
@@ -154,7 +198,15 @@ class TestDirectionStats:
 
 class TestFormatForPrompt:
     def test_format_includes_learning_directive(self, tmp_path) -> None:
-        _write_trade(tmp_path, "2026-08-11", "a", pnl=-65.0, pnl_pct=-94.2, exit_price=0.04, exit_reason="safety_close")
+        _write_trade(
+            tmp_path,
+            "2026-08-11",
+            "a",
+            pnl=-65.0,
+            pnl_pct=-94.2,
+            exit_price=0.04,
+            exit_reason="safety_close",
+        )
         outcomes = load_trade_outcomes(tmp_path)
         text = format_outcomes_for_prompt(outcomes)
         assert "Actual trade results" in text
@@ -183,8 +235,12 @@ class TestStreakDampening:
         )
 
     def test_dampens_losing_streak(self, tmp_path) -> None:
-        _write_trade(tmp_path, "2026-08-10", "a", pnl=-65.0, exit_price=0.04, exit_reason="safety_close")
-        _write_trade(tmp_path, "2026-08-11", "b", pnl=-20.0, exit_price=0.1, exit_reason="safety_close")
+        _write_trade(
+            tmp_path, "2026-08-10", "a", pnl=-65.0, exit_price=0.04, exit_reason="safety_close"
+        )
+        _write_trade(
+            tmp_path, "2026-08-11", "b", pnl=-20.0, exit_price=0.1, exit_reason="safety_close"
+        )
 
         settings = Settings()
         settings.logging.json_dir = str(tmp_path)

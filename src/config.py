@@ -226,7 +226,7 @@ class LLMConfig(BaseModel):
         ]
     )
     timeout_sec: int = 30
-    max_calls_per_run: int = 5
+    max_calls_per_run: int = 10
     # LLM-driven trade-signal strategy. When enabled, an
     # ``LLMTradeStrategy`` runs alongside Momentum / MeanReversion /
     # EventDriven and asks the LLM to emit a structured
@@ -236,6 +236,28 @@ class LLMConfig(BaseModel):
     # of this flag.
     trade_signal_enabled: bool = True
     trade_signal_min_confidence: float = 0.45
+
+
+class GraphConfig(BaseModel):
+    """Configuration for the LLM graph orchestration engine.
+
+    Replaces the monolithic single-call LLM prediction with a diamond-
+    shaped graph of narrow-scope subagent nodes: research (per-asset),
+    prediction (per-asset), a checker that validates and cross-references
+    all outputs, and a final pick-trade node.
+
+    When ``enabled`` is False (the initial default), the pipeline falls
+    back to the monolithic ``LLMTradeStrategy`` call.
+    """
+
+    enabled: bool = False
+    fallback_to_monolithic: bool = True
+    checker_contradiction_action: Literal["veto", "penalize"] = "veto"
+    checker_confidence_penalty: float = 0.15
+    research_timeout_sec: int = 45
+    prediction_timeout_sec: int = 30
+    checker_timeout_sec: int = 30
+    pick_trade_timeout_sec: int = 30
 
 
 class Settings(BaseSettings):
@@ -254,6 +276,7 @@ class Settings(BaseSettings):
     mcp: MCPConfig = MCPConfig()
     logging: LoggingConfig = LoggingConfig()
     llm: LLMConfig = LLMConfig()
+    graph: GraphConfig = GraphConfig()
     execution: ExecutionConfig = ExecutionConfig()
 
     model_config = ConfigDict(env_nested_delimiter="__")

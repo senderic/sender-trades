@@ -343,5 +343,101 @@ class TestResynthesize:
         assert briefing.macro_sentiment is None
 
 
+class TestOpencodeLLMClientInvokeAgent:
+    def _success_completed(self, stdout: str, rc: int = 0) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args=["opencode"], returncode=rc, stdout=stdout, stderr=""
+        )
+
+    def test_invoke_agent_adds_agent_flag(self) -> None:
+        client = OpencodeLLMClient(
+            LLMConfig(enabled=True, opencode_path="opencode", timeout_sec=60)
+        )
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=self._success_completed(_ndjson_output("agent response")),
+            ) as mock_run,
+        ):
+            response = client.invoke_agent("research-spy", "analyze SPY please")
+        assert response == "agent response"
+        args = mock_run.call_args.args[0]
+        assert "--agent" in args
+        assert "research-spy" in args
+        assert "--format" in args
+        assert "json" in args
+
+    def test_invoke_agent_disabled_returns_none(self) -> None:
+        client = OpencodeLLMClient(LLMConfig(enabled=False))
+        assert client.invoke_agent("research-spy", "prompt") is None
+
+    def test_invoke_agent_no_binary_returns_none(self) -> None:
+        client = OpencodeLLMClient(LLMConfig(enabled=True, opencode_path="no-such-bin"))
+        assert client.invoke_agent("research-spy", "prompt") is None
+
+    def test_invoke_agent_with_files(self) -> None:
+        client = OpencodeLLMClient(
+            LLMConfig(enabled=True, opencode_path="opencode", timeout_sec=60)
+        )
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=self._success_completed(_ndjson_output("ok")),
+            ) as mock_run,
+        ):
+            response = client.invoke_agent("research-spy", "prompt", files=["/tmp/data.json"])
+        assert response == "ok"
+        args = mock_run.call_args.args[0]
+        assert "-f" in args
+        assert "/tmp/data.json" in args
+
+    def test_invoke_agent_budget_exhausted(self) -> None:
+        client = OpencodeLLMClient(
+            LLMConfig(enabled=True, opencode_path="opencode", max_calls_per_run=0)
+        )
+        with patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"):
+            response = client.invoke_agent("research-spy", "prompt")
+        assert response is None
+
+    def test_invoke_agent_custom_timeout(self) -> None:
+        client = OpencodeLLMClient(LLMConfig(enabled=True, opencode_path="opencode", timeout_sec=5))
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=self._success_completed(_ndjson_output("ok")),
+            ) as mock_run,
+        ):
+            response = client.invoke_agent("predict-spy", "prompt", timeout_sec=99)
+        assert response == "ok"
+        assert mock_run.call_args.kwargs["timeout"] == 99
+
+    def test_invoke_agent_fallback_chain(self) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            zen_models=["opencode/deepseek-v4-flash-free"],
+            paid_go_models=["opencode-go/glm-5.2"],
+        )
+        client = OpencodeLLMClient(cfg)
+
+        def run_side_effect(cmd, **kwargs):
+            if "opencode/deepseek-v4-flash-free" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "fail")
+            return self._success_completed(_ndjson_output("paid ok"))
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            response = client.invoke_agent("checker", "validate please")
+        assert response == "paid ok"
+        assert client.paid_used is True
+        assert client.last_served_by == "opencode-go/glm-5.2"
+        assert client.last_fallback_hit is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

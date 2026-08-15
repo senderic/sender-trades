@@ -167,7 +167,9 @@ class TestForecastAlignment:
     def test_call_blocked_when_llm_forecasts_down(self, tmp_path) -> None:
         agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
-            _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
+            _make_result(
+                "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
+            ),
             self._llm_prediction(asset="SPY", direction="DOWN", confidence=0.52),
         ]
         decision = agg.aggregate(results)
@@ -177,7 +179,9 @@ class TestForecastAlignment:
     def test_put_blocked_when_llm_forecasts_up(self, tmp_path) -> None:
         agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
-            _make_result("event_driven", _make_rec("event", asset="QQQ", direction=Direction.PUT), 0.70),
+            _make_result(
+                "event_driven", _make_rec("event", asset="QQQ", direction=Direction.PUT), 0.70
+            ),
             self._llm_prediction(asset="QQQ", direction="UP", confidence=0.60),
         ]
         decision = agg.aggregate(results)
@@ -186,7 +190,9 @@ class TestForecastAlignment:
     def test_call_allowed_when_llm_forecasts_up(self, tmp_path) -> None:
         agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
-            _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
+            _make_result(
+                "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
+            ),
             self._llm_prediction(asset="SPY", direction="UP", confidence=0.60),
         ]
         decision = agg.aggregate(results)
@@ -196,7 +202,9 @@ class TestForecastAlignment:
     def test_no_llm_prediction_allows_trade(self, tmp_path) -> None:
         agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
-            _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
+            _make_result(
+                "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
+            ),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
@@ -204,7 +212,9 @@ class TestForecastAlignment:
     def test_different_asset_prediction_does_not_conflict(self, tmp_path) -> None:
         agg = DecisionAggregator(_make_settings(tmp_path))
         results = [
-            _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
+            _make_result(
+                "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
+            ),
             self._llm_prediction(asset="QQQ", direction="DOWN", confidence=0.60),
         ]
         decision = agg.aggregate(results)
@@ -215,7 +225,9 @@ class TestForecastAlignment:
         settings.general.require_forecast_alignment = False
         agg = DecisionAggregator(settings)
         results = [
-            _make_result("event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77),
+            _make_result(
+                "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
+            ),
             self._llm_prediction(asset="SPY", direction="DOWN", confidence=0.52),
         ]
         decision = agg.aggregate(results)

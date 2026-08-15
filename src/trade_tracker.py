@@ -256,9 +256,7 @@ def format_outcomes_for_prompt(
     strategy_stats = compute_strategy_stats(resolved)
     direction_stats = compute_direction_stats(resolved)
 
-    parts: list[str] = [
-        "Actual trade results (not predictions — real money outcomes):"
-    ]
+    parts: list[str] = ["Actual trade results (not predictions — real money outcomes):"]
 
     # Per-trade summary
     lines: list[str] = []

@@ -68,6 +68,41 @@ uv run ruff format src/ tests/
 6. **Execute** — submit order via Alpaca, manage exits, close by deadline
 7. **Email** — styled HTML via Gmail SMTP
 
+## Graph Engineering (LLM Analysis)
+
+The daily LLM research pass is a **graph of narrow-scope opencode subagents** (`src/llm/graph.py::GraphOrchestrator`) instead of one monolithic call. Each node is a named agent in `.opencode/agent/`, invoked via `OpencodeLLMClient.invoke_agent()` with per-node timeouts, and the deterministic strategies feed in alongside the LLM.
+
+```
+[Research SPY] ──→ [Predict SPY] ──┐
+[Research QQQ] ──→ [Predict QQQ] ──┤
+                                    ├──→ [Checker] ──→ [Pick Trade]
+[Momentum / MeanRev / EventDriven] ─┘
+```
+
+### Nodes (`.opencode/agent/`)
+
+| Agent | Role | Runs |
+|-------|------|------|
+| `research-spy` / `research-qqq` | Parse briefing + market into structured catalysts, gap, sentiment, news | In parallel |
+| `predict-spy` / `predict-qqq` | Turn research output into direction, confidence, move %, evidence | In parallel, after research |
+| `checker` | Validates ALL outputs (LLM + deterministic), flags contradictions, adjusts confidence | Serial, after all outputs |
+| `pick-trade` | Chooses best trade or passes, given meated predictions, history, trade outcomes | Serial, last |
+
+### Behavior
+
+- **Enabled** via `graph.enabled` in `config.yaml` (currently `true`). When false, the legacy monolithic `LLMTradeStrategy` call is used.
+- **Timeout budget** — research 45s, predict 30s, checker 30s, pick-trade 30s (configurable in `graph:`).
+- **Checker authority** — `checker_contradiction_action: veto` lets the checker veto the LLM prediction when it disagrees with deterministic strategies; `checker_confidence_penalty: 0.15` reduces confidence on contradictions. Its adjusted predictions feed the DecisionAggregator.
+- **Deterministic feed** — Momentum, MeanReversion, EventDriven strategy outputs (which run in parallel with the graph) feed into the checker node so the LLM validates against them.
+- **History awareness** — pick-trade sees prediction history + trade outcomes (`format_history_for_prompt`, `format_outcomes_for_prompt`) to avoid repeating losing calls.
+- **Failure fallback** — if any node or phase fails (e.g. both research nodes, checker, or pick-trade), the orchestrator returns `graph_failed: true` in its trace and `trade_signal.py` falls back to the monolithic call (`graph.fallback_to_monolithic: true`).
+- **Phase check** — `src/pipeline.py::_phase_check` runs the checker agent between analyze and decide over all 4 strategy outputs; if it returns a veto, the pipeline skips that asset.
+- **JSON contracts** — each agent returns a JSON object (extracted by `src/llm/graph.py::_extract_json`, tolerant of fenced/mixed text). Node contracts: research → `{catalysts, gap_fade, ...}`; predict → `{asset, direction, confidence, move_pct, evidence}`; checker → `{asset_adjustments, contradiction_flags, overall_assessment, veto}`; pick-trade → `{best_trade, rationale, pass_reason}`.
+
+### Extending the Graph
+
+To add a node: create `.opencode/agent/<name>.md` (the system prompt for that node, instructing it to emit the JSON contract), add a `_run_<name>()` method + prompt builder in `src/llm/graph.py`, wire it into `run()` in the right phase, then add a test in `tests/test_graph.py`.
+
 ## Execution Module (`src/execution/`)
 
 | File | Responsibility |

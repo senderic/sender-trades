@@ -49,6 +49,156 @@ Observations that recur across multiple days. Each gets stronger (or weaker) wit
 
 ---
 
+## 2026-08-14
+
+```yaml
+date: 2026-08-14
+spy:
+  direction: UP
+  confidence: 0.55
+  predicted_move_pct: 0.35
+  actual_move_pct: -0.28
+  result: MISS
+  note: "never hit target, closed -0.28%"
+qqq:
+  direction: UP
+  confidence: 0.68
+  predicted_move_pct: 0.65
+  actual_move_pct: -0.32
+  result: MISS
+  note: "never hit target, closed -0.32%"
+best_trade: "QQQ CALL @ $736.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: 0.00
+tags:
+  - pattern:qqq-up-unreliable
+  - pattern:spy-up-unreliable
+  - source:market-SPY
+  - source:market-SPY-unreliable
+  - source:news-sentiment
+  - source:news-sentiment-unreliable
+  - source:watchlist-META
+  - source:watchlist-META-unreliable
+  - source:watchlist-QQQ
+  - source:watchlist-QQQ-unreliable
+  - source:watchlist-SPY
+  - source:watchlist-SPY-unreliable
+```
+
+### Pre-market context
+
+Market vibe: Mildly risk-on with a narrow AI/autonomy leadership bid: megacap tech and defense-AI names (GOOGL, META, PLTR) lift QQQ while defense primes and space stocks drift lower; broad indices grind up on modestly positive sentiment.
+
+Key catalysts: AI, tech, gap
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | UP | 55% | 0.3% | SPY gapped +0.7% and is holding above its close on mildly positive (+0.107) aggregate sentiment, but mixed sector action |
+| QQQ | UP | 68% | 0.7% | QQQ gapped +1.2% and held, backed by broad AI optimism across GOOGL +0.8%, META +2.8%, PLTR +4.7% and NVDA +0.5%, with a |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $778.54 | $778.80 | $775.43 | $776.34 | -0.28% | :x: MISS |
+| QQQ | $733.41 | $734.39 | $728.32 | $731.07 | -0.32% | :x: MISS |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   QQQ CALL @ $0.87/contract → not closed by engine (pending)
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :x: UP | :x: UP |
+
+**Cumulative prediction record**: 24/31 (77%)
+
+---
+
+## 2026-08-13
+
+```yaml
+date: 2026-08-13
+spy:
+  direction: UP
+  confidence: 0.55
+  predicted_move_pct: 0.3
+  actual_move_pct: 0.39
+  result: HIT
+  note: "hit target (H=$779.37)"
+qqq:
+  direction: UP
+  confidence: 0.58
+  predicted_move_pct: 0.8
+  actual_move_pct: 0.95
+  result: HIT
+  note: "hit target (H=$733.96)"
+best_trade: "QQQ CALL @ $728.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: 74.00
+tags:
+  - source:market-QQQ
+  - source:market-QQQ-reliable
+  - source:market-SPY
+  - source:market-SPY-reliable
+  - source:news-sentiment
+  - source:news-sentiment-reliable
+  - source:watchlist-ANET
+  - source:watchlist-ANET-reliable
+  - source:watchlist-NVDA
+  - source:watchlist-NVDA-reliable
+```
+
+### Pre-market context
+
+Market vibe: Mildly positive, rotated tape: AI chip/networking/data-center infrastructure (LITE +13.6%, ANET +6.4%, NVDA +3.0%, EQIX, VRT) is leading while mega-cap tech (META -3.4%, MSFT -2.3%, AMZN -1.8%) sells off; defense/AI-defense themes in focus with sentiment at +0.126.
+
+Key catalysts: AI, gap
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | UP | 55% | 0.3% | Broad market holds green on mild +0.126 sentiment with AI-infrastructure strength offsetting a mega-cap tech selloff (ME |
+| QQQ | UP | 58% | 0.8% | QQQ stays positive despite mega-cap drag because AI chip and networking demand is surging (NVDA +3.0%, ANET +6.4%, LITE  |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $774.87 | $779.37 | $774.11 | $777.88 | +0.39% | :white_check_mark: HIT |
+| QQQ | $725.15 | $733.96 | $724.04 | $732.07 | +0.95% | :white_check_mark: HIT |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   QQQ CALL @ $0.73/contract → +$74.00 (take_profit)
+
+Engine-tracked PnL: +$74.00
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: UP | :white_check_mark: UP |
+
+**Cumulative prediction record**: 22/29 (76%)
+
+---
+
 ## 2026-08-12
 
 ```yaml

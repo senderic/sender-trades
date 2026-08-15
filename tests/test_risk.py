@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -7,6 +7,7 @@ from src.config import Settings
 from src.engine.risk import RiskEngine
 from src.models.market import DataSource, MarketSnapshot, Quote
 from src.models.recommendation import Direction, PositionIntent, TradeRecommendation
+from src.timezone import today_local
 
 _TS = __import__("datetime").datetime.now()
 
@@ -32,7 +33,7 @@ def valid_rec() -> TradeRecommendation:
         order_type="market",
         position_intent=PositionIntent.BUY_TO_OPEN,
         rationale={},
-        expires_at=date.today().isoformat(),
+        expires_at=today_local().isoformat(),
         must_close_before="15:30",
     )
 
@@ -176,7 +177,7 @@ class TestRiskEngineGapFadeRisk:
             order_type="market",
             position_intent=PositionIntent.BUY_TO_OPEN,
             rationale={},
-            expires_at=date.today().isoformat(),
+            expires_at=today_local().isoformat(),
             must_close_before="15:30",
         )
 

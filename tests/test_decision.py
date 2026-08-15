@@ -1,5 +1,3 @@
-from datetime import date
-
 import pytest
 
 from src.config import Settings
@@ -11,6 +9,7 @@ from src.models.recommendation import (
     StrategyResult,
     TradeRecommendation,
 )
+from src.timezone import today_local
 
 
 def _make_settings(tmp_path) -> Settings:
@@ -34,7 +33,7 @@ def _make_rec(
         order_type="market",
         position_intent=PositionIntent.BUY_TO_OPEN,
         rationale={},
-        expires_at=date.today().isoformat(),
+        expires_at=today_local().isoformat(),
         must_close_before="15:30",
     )
 

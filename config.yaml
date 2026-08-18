@@ -94,18 +94,28 @@ gap_fade:
   default_threshold_pct: 1.5
   sentiment_magnitude_max: 0.20
 
+llm:
+  enabled: true
+  # Chain order: primary_model first, then fallback_models in order.
+  # Both are DeepSeek V4 Pro — the only model used for analysis/prediction.
+  primary_model: opencode-go/deepseek-v4-pro
+  fallback_models:
+    - openrouter/deepseek/deepseek-v4-pro
+  timeout_sec: 45
+  max_calls_per_run: 14
+
 graph:
   enabled: true
   fallback_to_monolithic: true
   checker_contradiction_action: veto
   checker_confidence_penalty: 0.15
-  research_timeout_sec: 45
-  prediction_timeout_sec: 30
-  checker_timeout_sec: 30
-  pick_trade_timeout_sec: 30
+  research_timeout_sec: 60
+  prediction_timeout_sec: 45
+  checker_timeout_sec: 45
+  pick_trade_timeout_sec: 45
   # Wall-clock ceiling for the whole graph, sized against the 15-min
   # entry window (pipeline starts ~2 min before the open).
-  total_deadline_sec: 240
+  total_deadline_sec: 300
   reserved_calls_for_fallback: 1
 
 execution:

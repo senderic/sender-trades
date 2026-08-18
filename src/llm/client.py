@@ -1,12 +1,11 @@
-"""OpenCode CLI LLM client with free-Zen-first + paid-Go fallback chain.
+"""OpenCode CLI LLM client with DeepSeek-Pro ordered fallback chain.
 
-Models are organised into two tiers by provider namespace (see
-:class:`src.config.LLMConfig`):
-
-- Zen (``opencode/*``) — free tier, tried first in order.
-- Go (``opencode-go/*``) — paid, tried only after every Zen model has
-  been exhausted. :attr:`OpencodeLLMClient.paid_used` surfaces whether
-  the last successful response came from a paid model.
+Models are tried in the order declared by :class:`src.config.LLMConfig`:
+:attr:`~LLMConfig.primary_model` first, then
+:attr:`~LLMConfig.fallback_models`. Both tiers use DeepSeek V4 Pro
+served via the OpenCode Go gateway (``opencode-go/*``) and OpenRouter
+(``openrouter/*``), respectively. :attr:`OpencodeLLMClient.paid_used`
+is always ``True`` after a successful call.
 """
 
 from __future__ import annotations
@@ -34,42 +33,29 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def is_paid_model(model_id: str) -> bool:
-    """Return True for OpenCode Go (paid) model IDs.
+    """Return True for paid provider namespaces.
 
-    The OpenCode Go provider uses the ``opencode-go/`` namespace; the
-    free Zen provider uses ``opencode/``. This is the only signal the
-    CLI leaves us to distinguish cost tiers at config-entry time.
-
-    Args:
-        model_id: Model string as passed to ``opencode run -m ...``.
-
-    Returns:
-        True if the model lives in the paid Go namespace.
+    Both the OpenCode Go gateway (``opencode-go/*``) and OpenRouter
+    (``openrouter/*``) incur real charges.
     """
-    return model_id.startswith("opencode-go/")
+    return model_id.startswith("opencode-go/") or model_id.startswith("openrouter/")
 
 
 class OpencodeLLMClient:
     """LLM client that shells out to the ``opencode`` CLI in headless mode.
 
-    The free Zen models in :attr:`LLMConfig.zen_models` are tried
-    first, in order, under a strict per-call timeout. If every Zen
-    model fails (non-zero exit code, empty NDJSON response, or
-    ``subprocess.TimeoutExpired``), the paid Go models in
-    :attr:`LLMConfig.paid_go_models` are walked in order until one
+    Models are tried in order — :attr:`LLMConfig.primary_model` first,
+    then :attr:`LLMConfig.fallback_models` — under a strict per-call
+    timeout. A non-zero exit code, empty NDJSON response, or
+    ``subprocess.TimeoutExpired`` advances to the next model until one
     succeeds or the chain is exhausted.
-
-    This mirrors the upstream atlas-morning-briefing
-    ``scripts/opencode_client.py`` invocation pattern, intentionally
-    pared down to the surface this project needs and extended with an
-    explicit free/paid boundary.
     """
 
     def __init__(self, config: LLMConfig, reserved_calls_for_fallback: int = 0):
         """Initialize the client with an :class:`LLMConfig`.
 
         Args:
-            config: LLM configuration (zen_models, paid_go_models, timeout).
+            config: LLM configuration (primary_model, fallback_models, timeout).
             reserved_calls_for_fallback: Number of calls to hold back from
                 ``config.max_calls_per_run`` for the exclusive use of
                 :meth:`invoke`. :meth:`invoke_agent` (the graph path) is
@@ -101,10 +87,10 @@ class OpencodeLLMClient:
         self.total_output_chars = 0
         self.total_elapsed = 0.0
         self.fallback_hits = 0
-        # Cache of agent-name -> system-prompt character count, so the
+        # Cache of agent-name -> stripped system-prompt body, so the
         # `.opencode/agent/<name>.md` file is read at most once per agent
-        # per client lifetime (see `_agent_system_prompt_chars`).
-        self._agent_prompt_chars_cache: dict[str, int] = {}
+        # per client lifetime (see `_agent_system_prompt`).
+        self._agent_prompt_chars_cache: dict[str, str] = {}
 
     @property
     def available(self) -> bool:
@@ -171,7 +157,8 @@ class OpencodeLLMClient:
         Args:
             model: The model ID that served the response.
             is_fallback: True if this was not the first model in the chain.
-            is_paid: True if ``model`` is in the paid Go namespace.
+            is_paid: True if ``model`` is in a paid namespace
+                (``opencode-go/*`` or ``openrouter/*``).
             input_chars: Character count of everything sent to the model.
             output_chars: Character count of the response text.
             elapsed: Wall-clock seconds the successful call took.
@@ -196,56 +183,53 @@ class OpencodeLLMClient:
             self.last_fallback_hit = False
             self.paid_used = False
 
-    def _agent_system_prompt_chars(self, agent_name: str) -> int:
-        """Return the character length of an agent's system-prompt file.
+    def _agent_system_prompt(self, agent_name: str) -> str:
+        """Return an agent's system-prompt body, frontmatter stripped.
 
-        ``opencode run --agent <agent_name>`` loads a substantial system
-        prompt from ``.opencode/agent/<agent_name>.md`` that is invisible
-        to callers of :meth:`invoke_agent` (they only see ``prompt``), so
-        cost telemetry built from ``len(prompt)`` alone systematically
-        undercounts input size. This reads that file's length, relative to
-        the project root -- NOT the ``--dir /tmp`` opencode working
-        directory, which is unrelated to where agent definitions live.
+        ``.opencode/agent/<agent_name>.md`` carries a YAML frontmatter
+        block (``description``/``mode``/``permission``) followed by the
+        agent's actual instructions. ``invoke_agent`` inlines those
+        instructions directly into the prompt instead of relying on
+        ``opencode run --agent``, because the paid Go/OpenRouter runtimes
+        do not resolve project-local subagents and fail with
+        ``agent "<name>" not found``.
 
         Results are cached per ``agent_name`` so the file is read at most
-        once per agent for the life of this client. This is cost
-        telemetry only: any failure to locate or read the file is
-        swallowed and treated as zero extra chars so it never breaks the
-        actual LLM call.
+        once per agent for the life of this client. Any failure to
+        locate or read the file is swallowed and returned as an empty
+        string so it never breaks the actual LLM call.
 
         Args:
             agent_name: Subagent name (matches the filename without ``.md``).
 
         Returns:
-            Character count of the agent definition file, or 0 if it
-            could not be found or read.
+            The stripped system-prompt body, or ``""`` if the file could
+            not be found or read.
         """
         with self._lock:
             cached = self._agent_prompt_chars_cache.get(agent_name)
         if cached is not None:
             return cached
 
-        chars = 0
+        body = ""
         try:
             agent_path = _PROJECT_ROOT / ".opencode" / "agent" / f"{agent_name}.md"
-            chars = len(agent_path.read_text())
+            body = _strip_frontmatter(agent_path.read_text())
         except OSError as e:
             logger.debug("opencode_agent_prompt_file_unreadable", agent=agent_name, error=str(e))
-            chars = 0
+            body = ""
 
         with self._lock:
-            self._agent_prompt_chars_cache[agent_name] = chars
-        return chars
+            self._agent_prompt_chars_cache[agent_name] = body
+        return body
 
     def invoke(self, prompt: str, system_prompt: str | None = None) -> str | None:
         """Send a prompt via ``opencode run --format json`` with fallback.
 
-        Tries every model in :attr:`LLMConfig.zen_models` (free) first,
-        in order, under a ``timeout_sec``-second deadline. On timeout,
-        non-zero exit, or empty response, walks
-        :attr:`LLMConfig.paid_go_models` in order. Returns the first
-        non-empty response text, or ``None`` if every model in both
-        tiers failed.
+        Tries :attr:`LLMConfig.primary_model` first, then each model in
+        :attr:`LLMConfig.fallback_models`, under a ``timeout_sec``-second
+        deadline. Returns the first non-empty response text, or ``None``
+        if every model in the chain failed.
 
         Args:
             prompt: The user prompt.
@@ -259,8 +243,7 @@ class OpencodeLLMClient:
         if not self.available:
             return None
 
-        chain = _dedupe(self.config.zen_models + self.config.paid_go_models)
-        zen_set = set(self.config.zen_models)
+        chain = _dedupe([self.config.primary_model, *self.config.fallback_models])
 
         full_prompt = f"{system_prompt}\n\nUser Request: {prompt}" if system_prompt else prompt
 
@@ -358,7 +341,6 @@ class OpencodeLLMClient:
                     model=model,
                     paid=is_paid,
                     fallback=is_fallback,
-                    in_zen_tier=model in zen_set,
                     elapsed=round(elapsed, 2),
                     chars=len(response),
                 )
@@ -399,13 +381,14 @@ class OpencodeLLMClient:
     ) -> str | None:
         """Invoke a named opencode subagent with the same fallback chain as :meth:`invoke`.
 
-        Uses ``opencode run --agent <agent_name>`` to load the agent's system
-        prompt from ``.opencode/agent/<agent_name>.md``. The model chain and
-        fallback behaviour are identical to :meth:`invoke`.
+        The agent's system prompt is read from ``.opencode/agent/<agent_name>.md``
+        (frontmatter stripped) and inlined into the prompt rather than passed
+        via ``opencode run --agent``. The Go/OpenRouter runtimes do not
+        resolve project-local subagents, so the ``--agent`` flag is avoided
+        entirely. The model chain and fallback behaviour are otherwise
+        identical to :meth:`invoke`.
 
-        ``timeout_sec`` bounds a single *attempt*. With a 7-model chain a
-        node's worst case is therefore ``7 * timeout_sec``, which on its
-        own can overrun the caller's overall budget. ``deadline_ts`` bounds
+        ``timeout_sec`` bounds a single *attempt*. ``deadline_ts`` bounds
         the whole retry chain: no further model is attempted once it
         passes, and the per-attempt timeout is clamped to the time left.
 
@@ -423,13 +406,16 @@ class OpencodeLLMClient:
         if not self.available:
             return None
 
-        chain = _dedupe(self.config.zen_models + self.config.paid_go_models)
+        chain = _dedupe([self.config.primary_model, *self.config.fallback_models])
         timeout = timeout_sec if timeout_sec is not None else self.config.timeout_sec
         first_model = chain[0] if chain else ""
-        # The agent's `.opencode/agent/<agent_name>.md` system prompt is
-        # invisible to `prompt` but still sent to the CLI, so fold its
-        # size into input-char accounting (read once, cached thereafter).
-        agent_prompt_chars = self._agent_system_prompt_chars(agent_name)
+        # Inline the agent's system prompt (frontmatter stripped) instead
+        # of relying on `opencode run --agent`, which the paid runtimes
+        # cannot resolve. Read once, cached thereafter.
+        agent_system_prompt = self._agent_system_prompt(agent_name)
+        full_prompt = (
+            f"{agent_system_prompt}\n\nUser Request: {prompt}" if agent_system_prompt else prompt
+        )
 
         last_error = ""
         for idx, model in enumerate(chain):
@@ -493,8 +479,6 @@ class OpencodeLLMClient:
             cmd = [
                 self.config.opencode_path,
                 "run",
-                "--agent",
-                agent_name,
                 "-m",
                 model,
                 "--format",
@@ -507,7 +491,7 @@ class OpencodeLLMClient:
             if files:
                 for f in files:
                     cmd.extend(["-f", f])
-            cmd.append(prompt)
+            cmd.append(full_prompt)
 
             try:
                 t0 = time.monotonic()
@@ -519,7 +503,7 @@ class OpencodeLLMClient:
                 )
                 elapsed = time.monotonic() - t0
 
-                input_chars = len(prompt) + agent_prompt_chars
+                input_chars = len(full_prompt)
                 if result.returncode != 0:
                     last_error = (result.stderr or "")[:300]
                     logger.debug(
@@ -658,6 +642,22 @@ Tokens estimated at ~4 bytes per token. This run used the {paid_note}.
             f"Costs estimated at ${in_rate:.2f}/1M input, ${out_rate:.2f}/1M output. "
             f"Tokens estimated at ~4 bytes per token."
         )
+
+
+def _strip_frontmatter(content: str) -> str:
+    """Strip a leading YAML frontmatter block (``---`` ... ``---``).
+
+    Agent ``.md`` files carry a frontmatter block before the actual
+    system-prompt body. Returns the body (or the whole string when there
+    is no frontmatter).
+    """
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return content
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == "---":
+            return "\n".join(lines[idx + 1 :]).strip()
+    return content
 
 
 def _dedupe(models: list[str]) -> list[str]:

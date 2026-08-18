@@ -205,51 +205,31 @@ class GeneralConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Configuration for the local LLM fallback used to re-synthesize a
-    degraded Atlas briefing.
+    """Configuration for the LLM calls made via the ``opencode`` CLI.
 
-    The Atlas morning briefing is normally LLM-synthesised upstream.
-    When the upstream LLM layer fails (e.g. the 2026-07-18 DeepSeek
-    free-tier hang documented in ``LESSONS_LEARNED.md``), this project
-    invokes the ``opencode`` CLI locally to re-synthesise the executive
-    summary from the raw feed items.
+    Covers every consumer in the pipeline: the graph nodes (research,
+    predict, checker, pick-trade), the monolithic trade-signal fallback,
+    and the re-synthesis of a degraded Atlas briefing. All of these are
+    analysis tasks, so every call uses a DeepSeek **Pro** model.
 
-    Models are split into two tiers by provider namespace:
-
-    - ``zen_models`` — the free OpenCode Zen namespace (``opencode/*``).
-      Tried first, in order, under a strict per-call timeout. Default
-      list includes every ``-free`` Zen model currently published by
-      ``opencode models``, ordered by expected quality / context fit.
-    - ``paid_go_models`` — the paid OpenCode Go namespace
-      (``opencode-go/*``). Tried only after every Zen model has been
-      exhausted. Surface via :attr:`OpencodeLLMClient.paid_used` so
-      the pipeline can log when a re-synthesis incurred a cost.
-
-    As of 2026-07-18 these Zen IDs were observed via ``opencode models``:
-    ``opencode/deepseek-v4-flash-free``, ``opencode/mimo-v2.5-free``,
-    ``opencode/hy3-free``, ``opencode/nemotron-3-ultra-free``,
-    ``opencode/north-mini-code-free``, ``opencode/big-pickle``.
+    Models are tried in order: :attr:`primary_model` first, then
+    :attr:`fallback_models`. The primary is served by the OpenCode Go
+    gateway (``opencode-go/*``); the fallback is served via OpenRouter
+    (``openrouter/*``). Both are paid. The free Zen namespace is
+    deliberately unused here — its flash-tier models are not up to the
+    research/prediction workload.
     """
 
     enabled: bool = True
     opencode_path: str = "opencode"
-    zen_models: list[str] = Field(
+    primary_model: str = "opencode-go/deepseek-v4-pro"
+    fallback_models: list[str] = Field(
         default_factory=lambda: [
-            "opencode/deepseek-v4-flash-free",
-            "opencode/mimo-v2.5-free",
-            "opencode/nemotron-3-ultra-free",
-            "opencode/hy3-free",
+            "openrouter/deepseek/deepseek-v4-pro",
         ]
     )
-    paid_go_models: list[str] = Field(
-        default_factory=lambda: [
-            "opencode-go/glm-5.2",
-            "opencode-go/kimi-k3",
-            "opencode-go/qwen3.7-max",
-        ]
-    )
-    timeout_sec: int = 30
-    max_calls_per_run: int = 10
+    timeout_sec: int = 45
+    max_calls_per_run: int = 14
     # LLM-driven trade-signal strategy. When enabled, an
     # ``LLMTradeStrategy`` runs alongside Momentum / MeanReversion /
     # EventDriven and asks the LLM to emit a structured

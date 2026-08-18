@@ -13,6 +13,18 @@ from src.llm.client import OpencodeLLMClient
 from src.models.briefing import BriefingData
 from src.models.market import DataSource, MarketSnapshot, Quote
 
+# Distinguishing phrases from each agent's inlined system-prompt body.
+# ``invoke_agent`` no longer passes ``--agent``, so subprocess mocks route
+# on these markers instead of the agent name.
+_AGENT_MARKERS = {
+    "research-spy": "market research analyst focused exclusively on SPY",
+    "research-qqq": "market research analyst focused exclusively on QQQ",
+    "predict-spy": "directional prediction specialist for SPY",
+    "predict-qqq": "directional prediction specialist for QQQ",
+    "checker": "validation checker",
+    "pick-trade": "trade selector",
+}
+
 
 def _ndjson(text: str) -> str:
     return json.dumps({"type": "text", "part": {"text": text}}) + "\n"
@@ -124,22 +136,22 @@ def _clean_checker(validated: list) -> dict:
 
 
 def _dispatch(research_spy, research_qqq, predict_spy, predict_qqq, checker, pick_trade):
-    """Build a subprocess.run side_effect dispatching on the --agent name."""
+    """Build a subprocess.run side_effect dispatching on the inlined agent body."""
+
+    payloads = {
+        "research-spy": research_spy,
+        "research-qqq": research_qqq,
+        "predict-spy": predict_spy,
+        "predict-qqq": predict_qqq,
+        "checker": checker,
+        "pick-trade": pick_trade,
+    }
 
     def side_effect(cmd, **kwargs):
         cmd_str = " ".join(cmd)
-        if "research-spy" in cmd_str:
-            return _completed(_ndjson(research_spy))
-        if "research-qqq" in cmd_str:
-            return _completed(_ndjson(research_qqq))
-        if "predict-spy" in cmd_str:
-            return _completed(_ndjson(predict_spy))
-        if "predict-qqq" in cmd_str:
-            return _completed(_ndjson(predict_qqq))
-        if "checker" in cmd_str:
-            return _completed(_ndjson(checker))
-        if "pick-trade" in cmd_str:
-            return _completed(_ndjson(pick_trade))
+        for agent, marker in _AGENT_MARKERS.items():
+            if marker in cmd_str:
+                return _completed(_ndjson(payloads[agent]))
         return _completed("{}", rc=1)
 
     return side_effect
@@ -443,7 +455,7 @@ class TestCheckerInvokedOncePerRun:
                 _briefing(), _market_spy_qqq(), llm_client=llm_client
             )
 
-        checker_calls = [c for c in calls if "checker" in c]
+        checker_calls = [c for c in calls if _AGENT_MARKERS["checker"] in c]
         assert len(checker_calls) == 1, f"expected exactly 1 checker call, got {len(checker_calls)}"
 
         # The deterministic strategies actually ran and their labels
@@ -773,17 +785,17 @@ class TestGraphEndToEnd:
 
         def run_side_effect(cmd, **kwargs):
             cmd_str = " ".join(cmd)
-            if "research-spy" in cmd_str:
+            if _AGENT_MARKERS["research-spy"] in cmd_str:
                 return _completed(_ndjson(research_spy))
-            if "research-qqq" in cmd_str:
+            if _AGENT_MARKERS["research-qqq"] in cmd_str:
                 return _completed(_ndjson(research_qqq))
-            if "predict-spy" in cmd_str:
+            if _AGENT_MARKERS["predict-spy"] in cmd_str:
                 return _completed(_ndjson(predict_spy))
-            if "predict-qqq" in cmd_str:
+            if _AGENT_MARKERS["predict-qqq"] in cmd_str:
                 return _completed(_ndjson(predict_qqq))
-            if "checker" in cmd_str:
+            if _AGENT_MARKERS["checker"] in cmd_str:
                 return _completed(_ndjson(checker))
-            if "pick-trade" in cmd_str:
+            if _AGENT_MARKERS["pick-trade"] in cmd_str:
                 return _completed(_ndjson(pick_trade))
             return _completed("{}", rc=1)
 
@@ -897,17 +909,17 @@ class TestGraphEndToEnd:
 
         def run_side_effect(cmd, **kwargs):
             cmd_str = " ".join(cmd)
-            if "research-spy" in cmd_str:
+            if _AGENT_MARKERS["research-spy"] in cmd_str:
                 return _completed(_ndjson(research_spy))
-            if "research-qqq" in cmd_str:
+            if _AGENT_MARKERS["research-qqq"] in cmd_str:
                 return _completed(_ndjson(research_qqq))
-            if "predict-spy" in cmd_str:
+            if _AGENT_MARKERS["predict-spy"] in cmd_str:
                 return _completed(_ndjson(predict_spy))
-            if "predict-qqq" in cmd_str:
+            if _AGENT_MARKERS["predict-qqq"] in cmd_str:
                 return _completed(_ndjson(predict_qqq))
-            if "checker" in cmd_str:
+            if _AGENT_MARKERS["checker"] in cmd_str:
                 return _completed(_ndjson(checker))
-            if "pick-trade" in cmd_str:
+            if _AGENT_MARKERS["pick-trade"] in cmd_str:
                 return _completed(_ndjson(pick_trade))
             return _completed("{}", rc=1)
 

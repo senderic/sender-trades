@@ -15,6 +15,18 @@ from src.llm.graph import (
 )
 from src.models.market import DataSource, MarketSnapshot, NewsHeadline, Quote
 
+# Distinguishing phrases from each agent's inlined system-prompt body.
+# ``invoke_agent`` no longer passes ``--agent``, so subprocess mocks route
+# on these markers instead of the agent name.
+_AGENT_MARKERS = {
+    "research-spy": "market research analyst focused exclusively on SPY",
+    "research-qqq": "market research analyst focused exclusively on QQQ",
+    "predict-spy": "directional prediction specialist for SPY",
+    "predict-qqq": "directional prediction specialist for QQQ",
+    "checker": "validation checker",
+    "pick-trade": "trade selector",
+}
+
 
 class TestExtractJson:
     def test_bare_json(self) -> None:
@@ -454,15 +466,15 @@ class TestGraphOrchestratorRun:
             import subprocess as sp
 
             cmd_str = " ".join(cmd)
-            if "research-spy" in cmd_str:
+            if _AGENT_MARKERS["research-spy"] in cmd_str:
                 return sp.CompletedProcess(cmd, 0, _ndjson_wrap(research_spy), "")
-            if "research-qqq" in cmd_str:
+            if _AGENT_MARKERS["research-qqq"] in cmd_str:
                 return sp.CompletedProcess(cmd, 1, "", "fail")
-            if "predict-spy" in cmd_str:
+            if _AGENT_MARKERS["predict-spy"] in cmd_str:
                 return sp.CompletedProcess(cmd, 0, _ndjson_wrap(predict_spy), "")
-            if "checker" in cmd_str:
+            if _AGENT_MARKERS["checker"] in cmd_str:
                 return sp.CompletedProcess(cmd, 0, _ndjson_wrap(checker), "")
-            if "pick-trade" in cmd_str:
+            if _AGENT_MARKERS["pick-trade"] in cmd_str:
                 # Dead node: every model fails to produce a response.
                 return sp.CompletedProcess(cmd, 1, "", "boom")
             return sp.CompletedProcess(cmd, 1, "", "unknown agent")
@@ -701,7 +713,10 @@ class TestGraphOrchestratorRun:
             import subprocess as sp
 
             cmd_str = " ".join(cmd)
-            if "research-" in cmd_str:
+            if (
+                _AGENT_MARKERS["research-spy"] in cmd_str
+                or _AGENT_MARKERS["research-qqq"] in cmd_str
+            ):
                 return sp.CompletedProcess(cmd, 0, _ndjson_wrap(_research_json("SPY")), "")
             return sp.CompletedProcess(cmd, 1, "", "predict died")
 
@@ -734,11 +749,14 @@ class TestGraphOrchestratorRun:
             import subprocess as sp
 
             cmd_str = " ".join(cmd)
-            if "research-" in cmd_str:
+            if (
+                _AGENT_MARKERS["research-spy"] in cmd_str
+                or _AGENT_MARKERS["research-qqq"] in cmd_str
+            ):
                 return sp.CompletedProcess(cmd, 0, _ndjson_wrap(_research_json("SPY")), "")
-            if "predict-" in cmd_str:
+            if _AGENT_MARKERS["predict-spy"] in cmd_str or _AGENT_MARKERS["predict-qqq"] in cmd_str:
                 return sp.CompletedProcess(cmd, 0, _ndjson_wrap(_predict_json("SPY")), "")
-            if "checker" in cmd_str:
+            if _AGENT_MARKERS["checker"] in cmd_str:
                 return sp.CompletedProcess(cmd, 0, _ndjson_wrap("I cannot comply."), "")
             return sp.CompletedProcess(cmd, 1, "", "unexpected")
 
@@ -780,17 +798,17 @@ class TestGraphOrchestratorRun:
             import subprocess as sp
 
             cmd_str = " ".join(cmd)
-            for name in ("research-spy", "research-qqq", "predict-spy", "predict-qqq"):
-                if name in cmd_str:
+            for name, marker in _AGENT_MARKERS.items():
+                if marker in cmd_str:
                     agents_called.append(name)
-                    payload = (
-                        _research_json(name[-3:].upper())
-                        if name.startswith("research")
-                        else _predict_json(name[-3:].upper())
-                    )
-                    # Burn the entire budget during the predict phase.
-                    if name.startswith("predict"):
+                    if name.startswith("research"):
+                        payload = _research_json(name.split("-")[-1].upper())
+                    elif name.startswith("predict"):
+                        payload = _predict_json(name.split("-")[-1].upper())
+                        # Burn the entire budget during the predict phase.
                         clock["t"] += 120.0
+                    else:
+                        payload = "{}"
                     return sp.CompletedProcess(cmd, 0, _ndjson_wrap(payload), "")
             agents_called.append(cmd_str)
             return sp.CompletedProcess(cmd, 0, _ndjson_wrap("{}"), "")
@@ -931,23 +949,24 @@ def _build_mock_subprocess(
     checker: str,
     pick_trade: str,
 ):
-    """Build a side_effect function for subprocess.run that dispatches by --agent arg."""
+    """Build a side_effect for subprocess.run that dispatches on the inlined
+    agent system-prompt body."""
     import subprocess as sp
+
+    payloads = {
+        "research-spy": research_spy,
+        "research-qqq": research_qqq,
+        "predict-spy": predict_spy,
+        "predict-qqq": predict_qqq,
+        "checker": checker,
+        "pick-trade": pick_trade,
+    }
 
     def side_effect(cmd, **kwargs):
         cmd_str = " ".join(cmd)
-        if "research-spy" in cmd_str:
-            return sp.CompletedProcess(cmd, 0, _ndjson_wrap(research_spy), "")
-        if "research-qqq" in cmd_str:
-            return sp.CompletedProcess(cmd, 0, _ndjson_wrap(research_qqq), "")
-        if "predict-spy" in cmd_str:
-            return sp.CompletedProcess(cmd, 0, _ndjson_wrap(predict_spy), "")
-        if "predict-qqq" in cmd_str:
-            return sp.CompletedProcess(cmd, 0, _ndjson_wrap(predict_qqq), "")
-        if "checker" in cmd_str:
-            return sp.CompletedProcess(cmd, 0, _ndjson_wrap(checker), "")
-        if "pick-trade" in cmd_str:
-            return sp.CompletedProcess(cmd, 0, _ndjson_wrap(pick_trade), "")
+        for agent, marker in _AGENT_MARKERS.items():
+            if marker in cmd_str:
+                return sp.CompletedProcess(cmd, 0, _ndjson_wrap(payloads[agent]), "")
         return sp.CompletedProcess(cmd, 1, "", "unknown agent")
 
     return side_effect

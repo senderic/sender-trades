@@ -14,6 +14,18 @@ from src.models.briefing import BriefingData, BriefingQuality
 from src.models.market import DataSource, MarketSnapshot, Quote
 from src.models.recommendation import Direction
 
+# Distinguishing phrases from each agent's inlined system-prompt body.
+# ``invoke_agent`` no longer passes ``--agent``, so subprocess mocks route
+# on these markers instead of the agent name.
+_AGENT_MARKERS = {
+    "research-spy": "market research analyst focused exclusively on SPY",
+    "research-qqq": "market research analyst focused exclusively on QQQ",
+    "predict-spy": "directional prediction specialist for SPY",
+    "predict-qqq": "directional prediction specialist for QQQ",
+    "checker": "validation checker",
+    "pick-trade": "trade selector",
+}
+
 
 def _ndjson(text: str) -> str:
     return json.dumps({"type": "text", "part": {"text": text}}) + "\n"
@@ -243,8 +255,8 @@ class TestLLMTradeStrategy:
         assert result.recommendation.direction == Direction.PUT
         assert result.recommendation.confidence == 0.78
         assert result.recommendation.strategy_label == "llm_trade"
-        assert result.debug_trace["served_by"] == "opencode/deepseek-v4-flash-free"
-        assert result.debug_trace["paid_used"] is False
+        assert result.debug_trace["served_by"] == "opencode-go/deepseek-v4-pro"
+        assert result.debug_trace["paid_used"] is True
         assert "tech selloff" in result.recommendation.rationale["llm_rationale"].lower()
         assert result.recommendation.rationale["llm_sources"] == [
             "atlas-briefing:executive_summary",
@@ -460,8 +472,8 @@ class TestLLMTradeStrategy:
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         cfg = Settings()
-        cfg.llm.zen_models = ["opencode/deepseek-v4-flash-free"]
-        cfg.llm.paid_go_models = ["opencode-go/glm-5.2"]
+        cfg.llm.primary_model = "opencode-go/deepseek-v4-pro"
+        cfg.llm.fallback_models = ["openrouter/deepseek/deepseek-v4-pro"]
         cfg.llm.opencode_path = "opencode"
         strategy = LLMTradeStrategy(cfg)
 
@@ -474,7 +486,7 @@ class TestLLMTradeStrategy:
         resp = _full_response(best_trade=best_trade)
 
         def run_side_effect(cmd, **kwargs):
-            if "opencode/deepseek-v4-flash-free" in cmd:
+            if "opencode-go/deepseek-v4-pro" in cmd:
                 return subprocess.CompletedProcess(cmd, 1, "", "fail")
             return _completed(resp)
 
@@ -485,7 +497,7 @@ class TestLLMTradeStrategy:
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
         assert result.recommendation is not None
         assert result.debug_trace["paid_used"] is True
-        assert result.debug_trace["served_by"] == "opencode-go/glm-5.2"
+        assert result.debug_trace["served_by"] == "openrouter/deepseek/deepseek-v4-pro"
 
 
 class TestGapAwarenessInPrompt:
@@ -668,13 +680,13 @@ class TestGraphEnabledLLMTradeStrategy:
 
         def run_side_effect(cmd, **kwargs):
             cmd_str = " ".join(cmd)
-            if "research-spy" in cmd_str:
+            if _AGENT_MARKERS["research-spy"] in cmd_str:
                 return _completed(research_response(research_spy))
-            if "research-qqq" in cmd_str:
+            if _AGENT_MARKERS["research-qqq"] in cmd_str:
                 return _completed(research_response(research_qqq))
-            if "predict-spy" in cmd_str:
+            if _AGENT_MARKERS["predict-spy"] in cmd_str:
                 return _completed(research_response(predict_spy))
-            if "predict-qqq" in cmd_str:
+            if _AGENT_MARKERS["predict-qqq"] in cmd_str:
                 return _completed(research_response(predict_qqq))
             return _completed(research_response("{}"))
 
@@ -701,18 +713,14 @@ class TestGraphEnabledLLMTradeStrategy:
         def run_side_effect(cmd, **kwargs):
             call_count[0] += 1
             cmd_str = " ".join(cmd)
-            # Graph attempt: fail all research
-            if "research-spy" in cmd_str or "research-qqq" in cmd_str:
-                return _completed("", rc=1)
-            # Fallback monolithic
+            # Graph attempt: fail all research nodes.
             if (
-                "research-spy" not in cmd_str
-                and "research-qqq" not in cmd_str
-                and "predict-spy" not in cmd_str
-                and "predict-qqq" not in cmd_str
-                and "checker" not in cmd_str
-                and "pick-trade" not in cmd_str
+                _AGENT_MARKERS["research-spy"] in cmd_str
+                or _AGENT_MARKERS["research-qqq"] in cmd_str
             ):
+                return _completed("", rc=1)
+            # Fallback monolithic: none of the agent bodies are inlined.
+            if not any(marker in cmd_str for marker in _AGENT_MARKERS.values()):
                 resp = _full_response(
                     best_trade={
                         "asset": "SPY",

@@ -141,7 +141,8 @@ class LLMTradeStrategy(TradingStrategy):
     :class:`DecisionAggregator` / :class:`RiskEngine` pipeline.
 
     The LLM call goes through :class:`OpencodeLLMClient`, which tries
-    every free Zen model before any paid Go model (see
+    :attr:`~src.config.LLMConfig.primary_model` first and then the
+    :attr:`~src.config.LLMConfig.fallback_models` chain (see
     :class:`src.config.LLMConfig`). When the LLM is unavailable, returns
     junk, or emits an unparseable response, the strategy abstains
     (returns ``recommendation=None``) rather than guessing.

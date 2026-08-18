@@ -49,6 +49,82 @@ Observations that recur across multiple days. Each gets stronger (or weaker) wit
 
 ---
 
+## 2026-08-17
+
+```yaml
+date: 2026-08-17
+spy:
+  direction: UP
+  confidence: 0.58
+  predicted_move_pct: 0.2
+  actual_move_pct: -0.45
+  result: MISS
+  note: "never hit target, closed -0.45%"
+qqq:
+  direction: UP
+  confidence: 0.55
+  predicted_move_pct: 0.15
+  actual_move_pct: -0.42
+  result: HIT
+  note: "hit target, but reversed — closed -0.42%"
+best_trade: "QQQ CALL @ $735.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: 0.00
+tags:
+  - pattern:qqq-amplifies
+  - pattern:spy-up-unreliable
+  - source:market-QQQ
+  - source:market-QQQ-reliable
+  - source:news-sentiment
+  - source:news-sentiment-reliable
+  - source:news-sentiment-unreliable
+  - source:watchlist-EQIX
+  - source:watchlist-EQIX-unreliable
+  - source:watchlist-LITE
+  - source:watchlist-LITE-reliable
+  - source:watchlist-VRT
+  - source:watchlist-VRT-unreliable
+```
+
+### Pre-market context
+
+Market vibe: Mildly constructive: positive news polarity (+0.154) with AI infrastructure and defense strength (EQIX +2.6%, LMT +1.8%, LITE +5.2%) offsetting a broad-tech slip (ANET -2.4%, AMZN -0.9%); tiny gaps opening flat-to-slightly-negative with no gap-fade alarm.
+
+Key catalysts: AI
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | UP | 58% | 0.2% | Positive aggregate news sentiment (+0.154, historically the most reliable signal at 11/11) and resilient AI data-center  |
+| QQQ | UP | 55% | 0.1% | Positive sentiment backdrop and surging AI optical/data-center names (LITE +5.19%, EQIX +2.64%) counter a mild broad-tec |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $776.18 | $776.78 | $772.51 | $772.67 | -0.45% | :x: MISS |
+| QQQ | $732.95 | $734.58 | $729.27 | $729.87 | -0.42% | :white_check_mark: HIT |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   QQQ CALL @ $1.14/contract → not closed by engine (pending)
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :x: UP | :white_check_mark: UP |
+
+**Cumulative prediction record**: 24/33 (73%)
+
+---
+
 ## 2026-08-14
 
 ```yaml

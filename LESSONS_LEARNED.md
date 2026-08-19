@@ -49,6 +49,81 @@ Observations that recur across multiple days. Each gets stronger (or weaker) wit
 
 ---
 
+## 2026-08-18
+
+```yaml
+date: 2026-08-18
+spy:
+  direction: DOWN
+  confidence: 0.55
+  predicted_move_pct: -0.4
+  actual_move_pct: -0.16
+  result: HIT
+  note: "hit target (L=$766.92)"
+qqq:
+  direction: DOWN
+  confidence: 0.58
+  predicted_move_pct: -0.45
+  actual_move_pct: -0.37
+  result: HIT
+  note: "hit target (L=$715.92)"
+best_trade: "QQQ PUT @ $725.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: 282.00
+tags:
+  - source:market-QQQ
+  - source:market-QQQ-reliable
+  - source:news-sentiment
+  - source:news-sentiment-reliable
+  - source:watchlist-LMT
+  - source:watchlist-LMT-reliable
+  - source:watchlist-META
+  - source:watchlist-META-reliable
+  - source:watchlist-MSFT
+  - source:watchlist-MSFT-reliable
+```
+
+### Pre-market context
+
+Market vibe: Both LLM predictions are well-formed, consistent with each other, and lack cross-strategy conflicts because all deterministic strategies are neutral/skipped; no gap-fade triggers, no hard contradictions.
+
+Key catalysts:   No standard catalyst keywords detected
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 55% | -0.4% | Mega-cap AI capex fears (META -3.54%, MSFT -3.04%) and defense budget jitters outweigh narrower space and AI-networking  |
+| QQQ | DOWN | 58% | -0.5% | Two of QQQ's largest mega-cap weights (META -3.54%, MSFT -3.04%) are selling off on AI capex fears with the strongest ca |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $768.70 | $769.50 | $766.92 | $767.45 | -0.16% | :white_check_mark: HIT |
+| QQQ | $720.21 | $722.13 | $715.92 | $717.51 | -0.37% | :white_check_mark: HIT |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   QQQ PUT @ $4.81/contract → +$282.00 (safety_close)
+
+Engine-tracked PnL: +$282.00
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: DOWN | :white_check_mark: DOWN |
+
+**Cumulative prediction record**: 24/33 (73%)
+
+---
+
 ## 2026-08-17
 
 ```yaml

@@ -131,6 +131,7 @@ async def main(argv: list[str] | None = None) -> int:
             start_time=result.start_time,
             end_time=result.end_time,
             execution_result=result.execution_result,
+            decision=result.decision,
         )
 
     return 0 if len(result.errors) == 0 else 1

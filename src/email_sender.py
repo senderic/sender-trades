@@ -13,7 +13,12 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from src.models.recommendation import DirectionalForecast, PredictionOutcome
+from src.models.recommendation import (
+    DecisionOutput,
+    DirectionalForecast,
+    PredictionOutcome,
+    TradeRecommendation,
+)
 from src.timezone import LA_TZ, format_la, today_local
 
 logger = logging.getLogger(__name__)
@@ -116,6 +121,41 @@ def _format_option_description(
     )
 
 
+def _render_decision_text(
+    decision: DecisionOutput | None,
+    execution_result: dict | None,
+) -> str:
+    """Build the plain-text trade-decision block, or empty when a trade executed."""
+    if decision is None or execution_result is not None:
+        return ""
+
+    rec = decision.recommendation
+    if rec is not None:
+        desc = _format_option_description(
+            rec.asset, rec.direction.value, rec.target_strike, rec.expires_at, rec.contracts
+        )
+        return (
+            "\n\nTrade Decision:\n"
+            f"  Trade recommended but not executed (dry run): {desc} "
+            f"({rec.confidence:.0%} confidence)"
+        )
+
+    lines = [
+        f"\n\nTrade Decision:\n  No trade placed. {decision.rationale or 'No strategy produced a valid recommendation.'}"
+    ]
+    blocked = _highest_confidence_rec(decision)
+    if blocked is not None:
+        desc = _format_option_description(
+            blocked.asset,
+            blocked.direction.value,
+            blocked.target_strike,
+            blocked.expires_at,
+            blocked.contracts,
+        )
+        lines.append(f"  Top signal considered: {desc} ({blocked.confidence:.0%} confidence)")
+    return "\n".join(lines)
+
+
 def _render_execution_section(execution_result: dict | None) -> str:
     if not execution_result:
         return ""
@@ -211,6 +251,75 @@ def _render_execution_section(execution_result: dict | None) -> str:
 </div>"""
 
 
+def _render_decision_section(
+    decision: DecisionOutput | None,
+    execution_result: dict | None,
+) -> str:
+    """Render a human-readable trade-decision notice when no trade was placed.
+
+    Three states are handled:
+    - A trade was executed -> empty (the execution section covers it).
+    - A trade was recommended but execution is disabled (dry run).
+    - No trade was recommended (vetoed, blocked, or risk-check failed).
+
+    Args:
+        decision: The final decision output, or None.
+        execution_result: The execution engine result, or None.
+
+    Returns:
+        HTML for the decision section, or empty string when a trade executed.
+    """
+    if decision is None or execution_result is not None:
+        return ""
+
+    rec = decision.recommendation
+    if rec is not None:
+        desc = _format_option_description(
+            rec.asset, rec.direction.value, rec.target_strike, rec.expires_at, rec.contracts
+        )
+        return f"""<h2>Trade Decision</h2>
+<div class="outcome-card outcome-unknown">
+<p><strong>Trade recommended but not executed (dry run):</strong> {desc} ({rec.confidence:.0%} confidence)</p>
+</div>"""
+
+    blocked = _highest_confidence_rec(decision)
+    blocked_desc = ""
+    if blocked is not None:
+        blocked_desc = (
+            f'<p style="margin:4px 0"><span style="color:#8b949e">Top signal considered:</span> '
+            f"{_format_option_description(blocked.asset, blocked.direction.value, blocked.target_strike, blocked.expires_at, blocked.contracts)} "
+            f"({blocked.confidence:.0%} confidence)</p>"
+        )
+    rationale = decision.rationale or "No strategy produced a valid recommendation."
+    return f"""<h2>Trade Decision</h2>
+<div class="outcome-card outcome-fail">
+<p><strong>No trade placed.</strong> {rationale}</p>
+{blocked_desc}
+</div>"""
+
+
+def _highest_confidence_rec(decision: DecisionOutput) -> TradeRecommendation | None:
+    """Return the highest-confidence recommendation among all strategy results.
+
+    Used to surface which signal was vetoed when the final decision is null.
+
+    Args:
+        decision: The final decision output.
+
+    Returns:
+        The top recommendation by strategy confidence, or None.
+    """
+    best: TradeRecommendation | None = None
+    best_conf = -1.0
+    for r in decision.all_results:
+        if r.recommendation is None:
+            continue
+        if r.confidence > best_conf:
+            best = r.recommendation
+            best_conf = r.confidence
+    return best
+
+
 def format_duration(seconds: float) -> str:
     minutes = int(seconds // 60)
     secs = int(seconds % 60)
@@ -232,6 +341,7 @@ def render_forecast_html(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     execution_result: dict | None = None,
+    decision: DecisionOutput | None = None,
 ) -> str:
     rows = ""
     for f in forecast.forecasts:
@@ -266,6 +376,7 @@ def render_forecast_html(
 
     yesterday_html = _render_yesterday_section(yesterday_outcomes)
     execution_html = _render_execution_section(execution_result)
+    decision_html = _render_decision_section(decision, execution_result)
 
     model_html = f"\n{model_usage_html}\n" if model_usage_html else ""
 
@@ -294,6 +405,7 @@ def render_forecast_html(
 </tbody>
 </table>
 {execution_html}
+{decision_html}
 {yesterday_html}
 {model_html}
 {runtime_html}
@@ -349,6 +461,7 @@ def send_email(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     execution_result: dict | None = None,
+    decision: DecisionOutput | None = None,
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -376,9 +489,13 @@ def send_email(
         start_time=start_time,
         end_time=end_time,
         execution_result=execution_result,
+        decision=decision,
     )
 
     plain_parts = [f"sender-trades Directional Forecast\n\n{forecast.table()}"]
+    decision_text = _render_decision_text(decision, execution_result)
+    if decision_text:
+        plain_parts.append(decision_text)
     if yesterday_outcomes:
         plain_parts.append("\n\nYesterday's Prediction Recap:")
         for o in yesterday_outcomes:

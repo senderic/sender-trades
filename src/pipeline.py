@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime
 from typing import Literal
 
 import structlog
 
 from src.config import Settings
+from src.engine.base import TradingStrategy
 from src.engine.decision import DecisionAggregator
 from src.engine.risk import RiskEngine
 from src.engine.strategy_a import MomentumStrategy
 from src.engine.strategy_b import MeanReversionStrategy
 from src.engine.strategy_c import EventDrivenStrategy
+from src.execution.client import AlpacaBrokerClient
+from src.execution.engine import ExecutionEngine
+from src.execution.models import ExecutionConfig
 from src.ingestion.candle_providers import build_candle_chain
-from src.ingestion.fetcher import FinnhubFetcher, fetch_market_data
+from src.ingestion.fetcher import fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
 from src.ingestion.snapshot_loader import SnapshotLoader
 from src.ingestion.status import read_briefing_status
@@ -23,7 +28,6 @@ from src.llm.client import OpencodeLLMClient
 from src.llm.resynthesizer import resynthesize_briefing
 from src.llm.trade_signal import LLMTradeStrategy
 from src.logging_setup import JSONFileLogger
-from src.mcp.client import MCPBrokerClient
 from src.models.briefing import BriefingData, BriefingQuality
 from src.models.market import MarketSnapshot
 from src.models.recommendation import (
@@ -90,7 +94,9 @@ class PipelineResult:
             "model_usage": {
                 "calls": 0,
                 "failures": 0,
-            } if not self.model_usage_html else {},
+            }
+            if not self.model_usage_html
+            else {},
         }
 
 
@@ -119,11 +125,22 @@ class Pipeline:
         """
         logger.info("pipeline_start", correlation_id=self.correlation_id)
 
-        llm_client = OpencodeLLMClient(self.config.llm) if self.config.llm.enabled else None
+        # The graph path (``invoke_agent``) is capped below the raw call
+        # budget so a graph failure caused by exhausting the budget does
+        # not also starve the monolithic fallback it triggers.
+        llm_client = (
+            OpencodeLLMClient(
+                self.config.llm,
+                reserved_calls_for_fallback=self.config.graph.reserved_calls_for_fallback,
+            )
+            if self.config.llm.enabled
+            else None
+        )
 
         briefing = await self._phase_ingest_briefing(llm_client=llm_client)
         market = await self._phase_ingest_market()
         strategy_results = await self._phase_analyze(briefing, market, llm_client=llm_client)
+
         decision = self._phase_decide(strategy_results)
         decision.forecast = self._compute_forecast(strategy_results, decision)
 
@@ -132,8 +149,14 @@ class Pipeline:
             self.result.model_usage_text = llm_client.get_usage_summary_text()
 
         execution = None
-        if decision.recommendation is not None:
+        if decision.recommendation is not None and self.config.general.execute:
             execution = await self._phase_execute(decision)
+        elif decision.recommendation is not None:
+            logger.info(
+                "pipeline_execution_disabled",
+                asset=decision.recommendation.asset,
+                direction=decision.recommendation.direction.value,
+            )
         else:
             logger.info("pipeline_no_trade", rationale=decision.rationale)
 
@@ -319,51 +342,110 @@ class Pipeline:
     ) -> list[StrategyResult]:
         """Phase 3: Run all enabled trading strategies.
 
+        Deterministic strategies (Momentum, MeanReversion, EventDriven)
+        run FIRST — they are pure local computation, so serializing their
+        results into the checker prompt costs almost nothing. Their
+        serialized outputs are injected into :class:`LLMTradeStrategy` so
+        the in-graph checker node validates the LLM against REAL
+        deterministic signals instead of an empty list. This also means
+        the checker only runs once per pipeline run (inside the graph),
+        rather than once inside the graph against nothing and a second
+        time afterwards against the real results.
+
         Args:
             briefing: Parsed briefing (may be None).
             market: Market snapshot with quotes and news.
+            llm_client: Shared opencode client for the LLM strategy.
 
         Returns:
-            List of StrategyResult from each enabled strategy.
+            List of StrategyResult from each enabled strategy,
+            deterministic strategies first.
         """
         if briefing is None:
             briefing = BriefingData(briefing_date=today_local())
 
-        strategies = []
+        det_strategies: list[TradingStrategy] = []
         if self.config.strategies.momentum.enabled:
-            strategies.append(MomentumStrategy(self.config))
+            det_strategies.append(MomentumStrategy(self.config))
         if self.config.strategies.mean_reversion.enabled:
-            strategies.append(MeanReversionStrategy(self.config))
+            det_strategies.append(MeanReversionStrategy(self.config))
         if self.config.strategies.event_driven.enabled:
-            strategies.append(EventDrivenStrategy(self.config))
+            det_strategies.append(EventDrivenStrategy(self.config))
+
+        det_results = await self._run_strategies(det_strategies, briefing, market)
+
+        deterministic_serialized = [
+            {
+                "label": r.label,
+                "recommendation": r.recommendation.model_dump() if r.recommendation else None,
+                "confidence": r.confidence,
+                "debug_trace": r.debug_trace,
+            }
+            for r in det_results
+        ]
+
+        llm_strategies: list[TradingStrategy] = []
         if self.config.llm.enabled and self.config.llm.trade_signal_enabled:
-            strategies.append(LLMTradeStrategy(self.config, client=llm_client))
+            llm_strategies.append(
+                LLMTradeStrategy(
+                    self.config,
+                    client=llm_client,
+                    deterministic_results=deterministic_serialized,
+                )
+            )
+
+        llm_results = await self._run_strategies(llm_strategies, briefing, market)
+
+        strategy_results = det_results + llm_results
+        for r in strategy_results:
+            self.file_logger.write_entry(
+                {
+                    "phase": "analyze",
+                    "strategy": r.label,
+                    "confidence": r.confidence,
+                    "has_recommendation": r.recommendation is not None,
+                    "duration_ms": r.duration_ms,
+                    "debug_trace": r.debug_trace,
+                }
+            )
+
+        self.result.strategy_results = strategy_results
+        return strategy_results
+
+    async def _run_strategies(
+        self,
+        strategies: list[TradingStrategy],
+        briefing: BriefingData,
+        market: MarketSnapshot,
+    ) -> list[StrategyResult]:
+        """Evaluate a batch of strategies concurrently, tolerating individual failures.
+
+        Args:
+            strategies: Strategy instances to evaluate.
+            briefing: Parsed briefing data.
+            market: Market snapshot.
+
+        Returns:
+            A StrategyResult for each strategy that did not raise.
+            Failures are logged and recorded in ``self.result.errors``
+            rather than propagating.
+        """
+        if not strategies:
+            return []
 
         results = await asyncio.gather(
             *[s.evaluate(briefing, market) for s in strategies],
             return_exceptions=True,
         )
 
-        strategy_results: list[StrategyResult] = []
+        out: list[StrategyResult] = []
         for r in results:
             if isinstance(r, StrategyResult):
-                strategy_results.append(r)
-                self.file_logger.write_entry(
-                    {
-                        "phase": "analyze",
-                        "strategy": r.label,
-                        "confidence": r.confidence,
-                        "has_recommendation": r.recommendation is not None,
-                        "duration_ms": r.duration_ms,
-                        "debug_trace": r.debug_trace,
-                    }
-                )
+                out.append(r)
             elif isinstance(r, Exception):
                 logger.error("strategy_error", error=str(r))
                 self.result.errors.append(f"Strategy error: {r}")
-
-        self.result.strategy_results = strategy_results
-        return strategy_results
+        return out
 
     def _phase_decide(self, strategy_results: list[StrategyResult]) -> DecisionOutput:
         """Phase 4: Aggregate strategy results, apply risk checks, and reach a decision.
@@ -544,7 +626,10 @@ class Pipeline:
         return DirectionalForecast(forecasts=forecasts)
 
     async def _phase_execute(self, decision: DecisionOutput) -> dict | None:
-        """Phase 5: Execute the selected trade through the MCP broker client.
+        """Phase 5: Execute the selected trade through the Alpaca broker.
+
+        Uses the :class:`ExecutionEngine` with direct ``alpaca-py``
+        API calls and automatic exit management.
 
         Args:
             decision: The final decision output with a recommendation.
@@ -557,22 +642,37 @@ class Pipeline:
             return None
 
         rec.correlation_id = self.correlation_id
-        mcp = MCPBrokerClient(self.config)
+        api_key = os.environ.get("APCA_API_KEY_ID", "")
+        api_secret = os.environ.get("APCA_API_SECRET_KEY", "")
+
+        if not api_key or not api_secret:
+            msg = "Alpaca API keys not set — skipping execution"
+            logger.warning("execution_skipped", reason="no_api_keys")
+            self.result.errors.append(msg)
+            return {"error": msg}
+
+        paper = self.config.general.env_mode == "PAPER_ALPACA"
+        exec_config = (
+            self.config.execution if hasattr(self.config, "execution") else ExecutionConfig()
+        )
+
+        client = AlpacaBrokerClient(api_key, api_secret, paper=paper, config=exec_config)
+        engine = ExecutionEngine(client, exec_config, log_dir=self.config.logging.json_dir)
+
         try:
-            result = await mcp.execute(rec)
+            result = await engine.execute(rec, self.correlation_id)
             self.file_logger.write_entry(
                 {
                     "phase": "execute",
-                    "status": result.get("status", "unknown"),
-                    "occ_symbol": result.get("occ_symbol", ""),
-                    "bid": result.get("bid"),
-                    "ask": result.get("ask"),
-                    "execution_command": result.get("execution_command"),
+                    "trade_id": result.get("trade_id", ""),
+                    "exit_reason": result.get("exit_reason", ""),
+                    "final_pnl": result.get("final_pnl", 0.0),
+                    "final_pnl_pct": result.get("final_pnl_pct", 0.0),
                 }
             )
             return result
         except Exception as e:
-            msg = f"MCP execution failed: {e}"
+            msg = f"Execution failed: {e}"
             logger.error("execution_error", error=str(e))
             self.result.errors.append(msg)
             return {"error": msg}

@@ -243,7 +243,10 @@ class AlphaVantageProvider:
                 resp.raise_for_status()
                 data = resp.json()
                 if "Error Message" in data or "Note" in data:
-                    logger.warning("alphavantage_api_error", detail=data.get("Note", data.get("Error Message", "")))
+                    logger.warning(
+                        "alphavantage_api_error",
+                        detail=data.get("Note", data.get("Error Message", "")),
+                    )
                     return None
                 return data
         except httpx.TimeoutException:
@@ -271,9 +274,6 @@ class FinnhubProvider:
         self.api_key = api_key
         self.timeout = timeout
 
-    async def fetch_daily_candle(self, symbol: str, target_date: date) -> dict | None:
-        if not self.api_key:
-            return None
     async def fetch_daily_candle(self, symbol: str, target_date: date) -> dict | None:
         if not self.api_key:
             return None
@@ -344,7 +344,9 @@ class FinnhubProvider:
             logger.error("finnhub_intraday_timeout", symbol=symbol)
             return None
         except httpx.HTTPStatusError as e:
-            logger.error("finnhub_intraday_http_error", symbol=symbol, status=e.response.status_code)
+            logger.error(
+                "finnhub_intraday_http_error", symbol=symbol, status=e.response.status_code
+            )
             return None
         except Exception as e:
             logger.error("finnhub_intraday_error", symbol=symbol, error=str(e))

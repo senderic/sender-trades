@@ -9,10 +9,22 @@ from unittest.mock import patch
 import pytest
 
 from src.config import Settings
-from src.llm.trade_signal import LLMTradeStrategy, _normalise_sources, _parse_pick
+from src.llm.trade_signal import LLMTradeStrategy, _build_prompt, _normalise_sources, _parse_pick
 from src.models.briefing import BriefingData, BriefingQuality
 from src.models.market import DataSource, MarketSnapshot, Quote
 from src.models.recommendation import Direction
+
+# Distinguishing phrases from each agent's inlined system-prompt body.
+# ``invoke_agent`` no longer passes ``--agent``, so subprocess mocks route
+# on these markers instead of the agent name.
+_AGENT_MARKERS = {
+    "research-spy": "market research analyst focused exclusively on SPY",
+    "research-qqq": "market research analyst focused exclusively on QQQ",
+    "predict-spy": "directional prediction specialist for SPY",
+    "predict-qqq": "directional prediction specialist for QQQ",
+    "checker": "validation checker",
+    "pick-trade": "trade selector",
+}
 
 
 def _ndjson(text: str) -> str:
@@ -243,8 +255,8 @@ class TestLLMTradeStrategy:
         assert result.recommendation.direction == Direction.PUT
         assert result.recommendation.confidence == 0.78
         assert result.recommendation.strategy_label == "llm_trade"
-        assert result.debug_trace["served_by"] == "opencode/deepseek-v4-flash-free"
-        assert result.debug_trace["paid_used"] is False
+        assert result.debug_trace["served_by"] == "opencode-go/deepseek-v4-pro"
+        assert result.debug_trace["paid_used"] is True
         assert "tech selloff" in result.recommendation.rationale["llm_rationale"].lower()
         assert result.recommendation.rationale["llm_sources"] == [
             "atlas-briefing:executive_summary",
@@ -460,8 +472,8 @@ class TestLLMTradeStrategy:
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
         cfg = Settings()
-        cfg.llm.zen_models = ["opencode/deepseek-v4-flash-free"]
-        cfg.llm.paid_go_models = ["opencode-go/glm-5.2"]
+        cfg.llm.primary_model = "opencode-go/deepseek-v4-pro"
+        cfg.llm.fallback_models = ["openrouter/deepseek/deepseek-v4-pro"]
         cfg.llm.opencode_path = "opencode"
         strategy = LLMTradeStrategy(cfg)
 
@@ -474,7 +486,7 @@ class TestLLMTradeStrategy:
         resp = _full_response(best_trade=best_trade)
 
         def run_side_effect(cmd, **kwargs):
-            if "opencode/deepseek-v4-flash-free" in cmd:
+            if "opencode-go/deepseek-v4-pro" in cmd:
                 return subprocess.CompletedProcess(cmd, 1, "", "fail")
             return _completed(resp)
 
@@ -485,7 +497,250 @@ class TestLLMTradeStrategy:
             result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
         assert result.recommendation is not None
         assert result.debug_trace["paid_used"] is True
-        assert result.debug_trace["served_by"] == "opencode-go/glm-5.2"
+        assert result.debug_trace["served_by"] == "openrouter/deepseek/deepseek-v4-pro"
+
+
+class TestGapAwarenessInPrompt:
+    def test_prompt_includes_gap_warning_when_large_gap(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        # Gap is defined as open-vs-previous-close (not current-vs-previous-
+        # close) — see _gap_pct. Setting open_price is what should trigger
+        # the alert; current_price is irrelevant to the gap calculation.
+        market_with_quotes.quotes["QQQ"].open_price = 674.76
+        market_with_quotes.quotes["QQQ"].previous_close = 661.50
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "Pre-market gap alert" in prompt
+        assert "QQQ has gapped +2.0%" in prompt
+
+    def test_prompt_omits_gap_warning_when_gap_small(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        market_with_quotes.quotes["SPY"].open_price = 745.20
+        market_with_quotes.quotes["SPY"].previous_close = 744.00
+        market_with_quotes.quotes["QQQ"].open_price = 695.33
+        market_with_quotes.quotes["QQQ"].previous_close = 694.50
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "Pre-market gap alert" not in prompt
+
+    def test_prompt_states_gap_fade_threshold_explicitly(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        """Prompt builders must state the applicable threshold in the
+        prompt text itself — the .opencode/agent/*.md files expect the
+        threshold to arrive in the prompt rather than being hardcoded."""
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "Gap-fade threshold for SPY: 1.5%" in prompt
+        assert "Gap-fade threshold for QQQ: 2.0%" in prompt
+
+
+class TestGraphEnabledLLMTradeStrategy:
+    """Tests that the graph orchestrator path integrates correctly with LLMTradeStrategy."""
+
+    def _strategy(
+        self, graph_enabled: bool = True, config: Settings | None = None
+    ) -> LLMTradeStrategy:
+        cfg = config or Settings()
+        cfg.graph.enabled = graph_enabled
+        cfg.graph.fallback_to_monolithic = True
+        cfg.llm.opencode_path = "opencode"
+        return LLMTradeStrategy(cfg)
+
+    def _predictions_json(self) -> str:
+        """Build the graph research output JSON for both assets."""
+        return json.dumps(
+            {
+                "predictions": {
+                    "SPY": {
+                        "asset": "SPY",
+                        "direction": "UP",
+                        "confidence": 0.62,
+                        "predicted_move_pct": 0.4,
+                        "rationale": "Broad strength.",
+                        "sources": ["reuters:bullish"],
+                    },
+                    "QQQ": {
+                        "asset": "QQQ",
+                        "direction": "DOWN",
+                        "confidence": 0.48,
+                        "predicted_move_pct": -1.0,
+                        "rationale": "Tech selloff.",
+                        "sources": ["watchlist:NVDA"],
+                    },
+                },
+                "market_vibe": "Mixed",
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_graph_disabled_uses_monolithic(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        strategy = self._strategy(graph_enabled=False)
+        best_trade = {
+            "asset": "SPY",
+            "direction": "CALL",
+            "confidence": 0.66,
+            "rationale": "x",
+        }
+        resp = _full_response(best_trade=best_trade)
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", return_value=_completed(resp)),
+        ):
+            result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+        assert result.recommendation is not None
+        assert result.recommendation.asset == "SPY"
+        assert "llm_raw" in result.debug_trace
+
+    @pytest.mark.asyncio
+    async def test_graph_enabled_runs_research_and_predict(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        strategy = self._strategy(graph_enabled=True)
+
+        def research_response(text: str) -> str:
+            return _ndjson(text)
+
+        research_spy = json.dumps(
+            {
+                "asset": "SPY",
+                "catalysts": [
+                    {
+                        "type": "bullish",
+                        "description": "Broad strength",
+                        "source": "reuters:up",
+                        "strength": 0.6,
+                    }
+                ],
+                "risks": [],
+                "sentiment": {
+                    "aggregate_polarity": 0.4,
+                    "briefing_level": 1.0,
+                    "news_consensus": "bullish",
+                },
+                "technical_context": {
+                    "gap_from_previous_close_pct": 0.3,
+                    "gap_direction": "UP",
+                    "gap_significance": "minor",
+                    "pre_market_momentum": "holding",
+                },
+                "watchlist_signals": [],
+                "key_theme": "Mildly bullish",
+            }
+        )
+        research_qqq = json.dumps(
+            {
+                "asset": "QQQ",
+                "catalysts": [
+                    {
+                        "type": "bearish",
+                        "description": "Tech weakness",
+                        "source": "watchlist:QQQ",
+                        "strength": 0.5,
+                    }
+                ],
+                "risks": [],
+                "sentiment": {
+                    "aggregate_polarity": -0.3,
+                    "briefing_level": 1.0,
+                    "news_consensus": "bearish",
+                },
+                "technical_context": {
+                    "gap_from_previous_close_pct": -0.2,
+                    "gap_direction": "DOWN",
+                    "gap_significance": "minor",
+                    "pre_market_momentum": "fading",
+                },
+                "watchlist_signals": [],
+                "key_theme": "Tech pressure",
+            }
+        )
+
+        predict_spy = json.dumps(
+            {
+                "asset": "SPY",
+                "direction": "UP",
+                "confidence": 0.62,
+                "predicted_move_pct": 0.4,
+                "rationale": "Broad strength",
+                "sources": ["reuters:up"],
+            }
+        )
+        predict_qqq = json.dumps(
+            {
+                "asset": "QQQ",
+                "direction": "DOWN",
+                "confidence": 0.48,
+                "predicted_move_pct": -1.0,
+                "rationale": "Tech weakness",
+                "sources": ["watchlist:QQQ"],
+            }
+        )
+
+        def run_side_effect(cmd, **kwargs):
+            cmd_str = " ".join(cmd)
+            if _AGENT_MARKERS["research-spy"] in cmd_str:
+                return _completed(research_response(research_spy))
+            if _AGENT_MARKERS["research-qqq"] in cmd_str:
+                return _completed(research_response(research_qqq))
+            if _AGENT_MARKERS["predict-spy"] in cmd_str:
+                return _completed(research_response(predict_spy))
+            if _AGENT_MARKERS["predict-qqq"] in cmd_str:
+                return _completed(research_response(predict_qqq))
+            return _completed(research_response("{}"))
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+
+        assert result.predictions is not None
+        assert "SPY" in result.predictions
+        assert result.predictions["SPY"].direction == "UP"
+        assert result.predictions["QQQ"].direction == "DOWN"
+        assert result.debug_trace.get("graph_run") is True
+
+    @pytest.mark.asyncio
+    async def test_graph_falls_back_to_monolithic_on_failure(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        strategy = self._strategy(graph_enabled=True)
+
+        call_count = [0]
+
+        def run_side_effect(cmd, **kwargs):
+            call_count[0] += 1
+            cmd_str = " ".join(cmd)
+            # Graph attempt: fail all research nodes.
+            if (
+                _AGENT_MARKERS["research-spy"] in cmd_str
+                or _AGENT_MARKERS["research-qqq"] in cmd_str
+            ):
+                return _completed("", rc=1)
+            # Fallback monolithic: none of the agent bodies are inlined.
+            if not any(marker in cmd_str for marker in _AGENT_MARKERS.values()):
+                resp = _full_response(
+                    best_trade={
+                        "asset": "SPY",
+                        "direction": "CALL",
+                        "confidence": 0.55,
+                        "rationale": "fallback",
+                    }
+                )
+                return _completed(resp)
+            return _completed("{}")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            result = await strategy.evaluate(briefing_with_sentiment, market_with_quotes)
+
+        assert result.recommendation is not None
+        assert result.recommendation.asset == "SPY"
+        assert call_count[0] >= 2  # At least one graph call + one monolithic call
 
 
 if __name__ == "__main__":

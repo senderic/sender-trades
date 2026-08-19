@@ -1,13 +1,16 @@
 import json
 import subprocess
 import uuid
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from src.config import Settings
 from src.logging_setup import setup_logging
+from src.models.market import DataSource, MarketSnapshot, Quote
 from src.models.recommendation import (
     DecisionOutput,
     Direction,
@@ -16,6 +19,46 @@ from src.models.recommendation import (
     TradeRecommendation,
 )
 from src.pipeline import Pipeline
+
+_TS = __import__("datetime").datetime.now()
+
+
+def _qqq_put_rec(
+    correlation_id: str = "", strategy: str = "event", conf: float = 0.75
+) -> TradeRecommendation:
+    return TradeRecommendation(
+        correlation_id=correlation_id,
+        strategy_label=strategy,
+        asset="QQQ",
+        direction=Direction.PUT,
+        confidence=conf,
+        target_strike=670.0,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={},
+        expires_at="2026-07-31",
+        must_close_before="15:30",
+    )
+
+
+def _qqq_call_rec(
+    correlation_id: str = "", strategy: str = "llm_trade", conf: float = 0.55
+) -> TradeRecommendation:
+    return TradeRecommendation(
+        correlation_id=correlation_id,
+        strategy_label=strategy,
+        asset="QQQ",
+        direction=Direction.CALL,
+        confidence=conf,
+        target_strike=690.0,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={},
+        expires_at="2026-07-31",
+        must_close_before="15:30",
+    )
 
 
 @pytest.fixture
@@ -229,3 +272,112 @@ async def test_compute_forecast_falls_back_to_strategy_label_when_unset(
     spy = next(f for f in forecast.forecasts if f.asset == "SPY")
     assert spy.direction == "UP"
     assert "momentum" in spy.sources
+
+
+class TestPreMarketGapGuardIntegration:
+    def _market_with_gap(self, asset: str, current: float, prev_close: float) -> dict:
+        return {
+            "quotes": {
+                asset: Quote(
+                    symbol=asset,
+                    current_price=current,
+                    open_price=current,
+                    high_price=current,
+                    low_price=current,
+                    previous_close=prev_close,
+                    change_pct=(current - prev_close) / prev_close * 100 if prev_close > 0 else 0.0,
+                    volume=0,
+                    source=DataSource.FINNHUB,
+                    timestamp=_TS,
+                ),
+            },
+            "news": [],
+            "rss_items": [],
+        }
+
+    def test_gap_contradicts_trade_rejects(self, tmp_path) -> None:
+        config = Settings()
+        config.logging.json_dir = str(tmp_path / "logs")
+        cid = uuid.uuid4().hex[:12]
+        logger = setup_logging(config, cid)
+        pipeline = Pipeline(config, cid, logger)
+
+        results = [
+            StrategyResult(
+                label="momentum",
+                recommendation=_qqq_put_rec(strategy="momentum", conf=0.55),
+                confidence=0.55,
+                duration_ms=1.0,
+            ),
+            StrategyResult(
+                label="mean_reversion",
+                recommendation=_qqq_put_rec(strategy="mean_reversion", conf=0.60),
+                confidence=0.60,
+                duration_ms=1.0,
+            ),
+            StrategyResult(
+                label="event_driven",
+                recommendation=_qqq_put_rec(strategy="event_driven", conf=0.75),
+                confidence=0.75,
+                duration_ms=1.0,
+            ),
+            StrategyResult(
+                label="llm_trade",
+                recommendation=_qqq_call_rec(strategy="llm_trade", conf=0.50),
+                confidence=0.50,
+                duration_ms=1.0,
+            ),
+        ]
+        pipeline.result.market = MarketSnapshot(**self._market_with_gap("QQQ", 674.76, 661.50))
+
+        mock_now = datetime(2026, 1, 1, 9, 30, tzinfo=ZoneInfo("America/New_York"))
+        with patch("src.engine.risk.datetime") as mock_dt:
+            mock_dt.now.return_value = mock_now
+            decision = pipeline._phase_decide(results)
+
+        assert decision.recommendation is None
+        assert "risk" in decision.rationale.lower() or "gap" in decision.rationale.lower()
+
+    def test_gap_aligned_with_trade_passes(self, tmp_path) -> None:
+        config = Settings()
+        config.logging.json_dir = str(tmp_path / "logs")
+        cid = uuid.uuid4().hex[:12]
+        logger = setup_logging(config, cid)
+        pipeline = Pipeline(config, cid, logger)
+
+        results = [
+            StrategyResult(
+                label="momentum",
+                recommendation=_qqq_put_rec(strategy="momentum", conf=0.55),
+                confidence=0.55,
+                duration_ms=1.0,
+            ),
+            StrategyResult(
+                label="mean_reversion",
+                recommendation=_qqq_put_rec(strategy="mean_reversion", conf=0.60),
+                confidence=0.60,
+                duration_ms=1.0,
+            ),
+            StrategyResult(
+                label="event_driven",
+                recommendation=_qqq_put_rec(strategy="event_driven", conf=0.75),
+                confidence=0.75,
+                duration_ms=1.0,
+            ),
+            StrategyResult(
+                label="llm_trade",
+                recommendation=_qqq_call_rec(strategy="llm_trade", conf=0.50),
+                confidence=0.50,
+                duration_ms=1.0,
+            ),
+        ]
+        pipeline.result.market = MarketSnapshot(**self._market_with_gap("QQQ", 661.50, 674.76))
+
+        mock_now = datetime(2026, 1, 1, 9, 30, tzinfo=ZoneInfo("America/New_York"))
+        with patch("src.engine.risk.datetime") as mock_dt:
+            mock_dt.now.return_value = mock_now
+            decision = pipeline._phase_decide(results)
+
+        assert decision.recommendation is not None
+        assert decision.recommendation.asset == "QQQ"
+        assert decision.recommendation.direction == Direction.PUT

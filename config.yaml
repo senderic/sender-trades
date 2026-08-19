@@ -3,7 +3,8 @@ general:
   target_assets:
     - SPY
     - QQQ
-  execute: false
+  execute: true
+  require_forecast_alignment: true
 
 atlas_briefing:
   directory: ~/atlas-morning-briefing
@@ -77,7 +78,63 @@ mcp:
       username: ${ROBINHOOD_USERNAME}
       password: ${ROBINHOOD_PASSWORD}
       mfa_code: ${ROBINHOOD_MFA_CODE}
+  options_chain:
+    command: npx
+    args: ["-y", "@blake365/options-chain"]
+    timeout_sec: 15
 
 logging:
   level: DEBUG
   json_dir: logs
+
+gap_fade:
+  thresholds_pct:
+    SPY: 1.5
+    QQQ: 2.0
+  default_threshold_pct: 1.5
+  sentiment_magnitude_max: 0.20
+
+llm:
+  enabled: true
+  # Chain order: primary_model first, then fallback_models in order.
+  # Both are DeepSeek V4 Pro — the only model used for analysis/prediction.
+  primary_model: opencode-go/deepseek-v4-pro
+  fallback_models:
+    - openrouter/deepseek/deepseek-v4-pro
+  timeout_sec: 45
+  max_calls_per_run: 14
+
+graph:
+  enabled: true
+  fallback_to_monolithic: true
+  checker_contradiction_action: veto
+  checker_confidence_penalty: 0.15
+  research_timeout_sec: 60
+  prediction_timeout_sec: 45
+  checker_timeout_sec: 45
+  pick_trade_timeout_sec: 45
+  # Wall-clock ceiling for the whole graph, sized against the 15-min
+  # entry window (pipeline starts ~2 min before the open).
+  total_deadline_sec: 300
+  reserved_calls_for_fallback: 1
+
+execution:
+  entry:
+    order_type: limit
+    # % lean above live ask for buy entries to guarantee a fill (avoids expiring unfilled)
+    limit_offset_pct: 5
+    entry_window_minutes: 15
+  exit_strategy:
+    take_profit_pct: 100
+    stop_loss_pct: -50
+    trailing:
+      enabled: true
+      activate_after_pct: 30
+      trail_pct: 15
+    time_deadline_est: "15:25"
+  tenacity:
+    max_attempts: 3
+    min_wait_sec: 1
+    max_wait_sec: 30
+    backoff_multiplier: 2
+  max_concurrent_trades: 1

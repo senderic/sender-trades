@@ -4,12 +4,14 @@ version = "0.1.0"
 description = "0DTE intraday options trading recommendation system"
 requires-python = ">=3.12"
 dependencies = [
+    "alpaca-py>=0.40,<1",
     "httpx>=0.28,<0.29",
     "pydantic>=2.10,<3",
     "pydantic-settings>=2.7,<3",
     "pyyaml>=6.0,<7",
     "structlog>=25.1,<26",
     "feedparser>=6.0,<7",
+    "tenacity>=9.0,<10",
     "yfinance>=0.2,<1",
 ]
 
@@ -18,6 +20,7 @@ dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.25,<1",
     "pytest-cov>=6.0,<7",
+    "pytest-httpx>=0.35,<1",
     "ruff>=0.15,<1",
 ]
 
@@ -67,8 +70,13 @@ ignore = [
     "S101",    # allow assert in tests
     "PLR2004", # magic value comparisons
     "B017",    # allow pytest.raises(Exception)
+    "B011",    # allow assert False in tests (for expected exceptions)
+    "PT015",   # allow assert False as failure check in tests
+    "SIM105",  # allow try/except/pass in tests (expected exception patterns)
 ]
 "src/__init__.py" = ["F401"]  # allow unused imports in __init__
+"src/execution/__init__.py" = ["F401"]  # allow unused imports in __init__
+"src/ingestion/candle_providers.py" = ["E741"]  # `l` is standard OHLCV convention
 
 [tool.ruff.format]
 quote-style = "double"

@@ -7,45 +7,47 @@ Run this checklist at the end of every session before any `git commit` or `git p
 
 ### 1. Run the full test suite
 ```bash
-uv run pytest tests/ -q --tb=short
+uv run pytest tests/ -q --tb=short -m "not integration"
 ```
-**Expected**: `127 passed` (or the current count). If any test fails, fix before proceeding.
+**Expected**: all tests pass. If any test fails, fix before proceeding.
 
-### 2. Run the linter
+### 2. Run execution-specific tests
+```bash
+uv run pytest tests/test_execution_*.py -v --tb=short
+```
+**Expected**: all execution tests pass (currently ~64 as of 2026-07-28).
+
+### 3. Run the linter
 ```bash
 uv run ruff check src/ tests/
 ```
-**Expected**: `All checks passed!`
+**Expected**: `All checks passed!` (may have warnings about `F401` in `__init__.py` — that's expected).
 
-### 3. Run the formatter
+### 4. Run the formatter
 ```bash
 uv run ruff format --check src/ tests/
 ```
-**Expected**: `45 files already formatted` (or similar count). If any files need reformatting, run `uv run ruff format src/ tests/`.
+**Expected**: all files already formatted. If any files need reformatting, run `uv run ruff format src/ tests/`.
 
-### 4. Check for secrets in tracked files
+### 5. Check for secrets in tracked files
 ```bash
-grep -rn 'GMAIL_USER\|GMAIL_APP_PASSWORD\|RECIPIENT_EMAIL\|APCA_API_KEY\|UNUSUAL_WHALES' src/ --include='*.py' 2>/dev/null
+grep -rn 'GMAIL_USER\|GMAIL_APP_PASSWORD\|RECIPIENT_EMAIL\|APCA_API_KEY\|APCA_API_SECRET\|UNUSUAL_WHALES' src/ --include='*.py' 2>/dev/null
 ```
 **Expected**: No output. Secrets should only live in `.env` (gitignored) and be referenced via `${VAR}` in `config.yaml`.
 
-### 5. Verify site is up-to-date
-The site at `site/index.html` should reflect the current state of the system:
-- Check that the example JSON matches the actual LLM output format
-- Check that the email preview table matches the actual rendered HTML
-- Check that the feature descriptions are accurate
-- Run a quick dry-run to get fresh output:
-  ```bash
-  uv run python -m src.main --dry-run --correlation-id precommit-check
-  ```
+### 6. Verify execution dependencies are declared
+```bash
+grep -c 'alpaca-py\|tenacity' pyproject.toml
+```
+**Expected**: at least 2 matches.
 
-### 6. Verify GitHub Actions are consistent
-Check that `.github/workflows/ci.yml` and `.github/workflows/deploy.yml` reference the correct:
-- Python version (3.12)
-- Test count (no hardcoded numbers that drift)
-- Ruff commands
+### 7. Verify execution config section is valid
+```bash
+uv run python -c "from src.execution import ExecutionConfig; c = ExecutionConfig(); print('OK')"
+```
+**Expected**: prints `OK`.
 
-### 7. Review the diff
+### 8. Review the diff
 ```bash
 git diff --stat
 git diff
@@ -54,12 +56,13 @@ Look for:
 - No `.env` or secrets in the diff
 - No large binary files
 - No unintended changes to config files
+- No commented-out code
 
-### 8. Read the commit message
+### 9. Read the commit message
 Ensure it is a single concise line matching repo style (no periods, no emojis, imperative mood).
 
 ## Quick one-liner
 If all checks above pass individually, run this combined smoke check:
 ```bash
-uv run pytest tests/ -q --tb=short && uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/
+uv run pytest tests/test_execution_*.py tests/test_config.py tests/test_decision.py tests/test_models.py tests/test_options_strategy.py tests/test_parser.py tests/test_risk.py tests/test_status.py tests/test_strategies.py tests/test_mcp_client.py -q --tb=short && uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/
 ```

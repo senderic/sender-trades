@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pandas as pd
-import pytest
 
 from src.ingestion.candle_providers import (
     AlphaVantageProvider,
@@ -25,7 +24,6 @@ TARGET_TS = int(datetime(2026, 7, 17, tzinfo=ET_TZ).timestamp())
 
 
 def _make_daily_df(open_p=100.0, high=105.0, low=99.0, close=103.0, volume=1_000_000):
-    import pandas as pd
 
     idx = pd.DatetimeIndex([datetime(2026, 7, 17, 16, 0, tzinfo=ET_TZ)])
     return pd.DataFrame(
@@ -35,7 +33,6 @@ def _make_daily_df(open_p=100.0, high=105.0, low=99.0, close=103.0, volume=1_000
 
 
 def _make_hourly_df():
-    import pandas as pd
 
     rows = []
     for h in range(10, 16):
@@ -74,7 +71,6 @@ class TestYahooFinanceProvider:
 
     @patch("yfinance.Ticker")
     async def test_daily_no_data(self, mock_ticker):
-        import pandas as pd
 
         mock_ticker.return_value.history.return_value = pd.DataFrame()
         provider = YahooFinanceProvider()
@@ -95,7 +91,6 @@ class TestYahooFinanceProvider:
 
     @patch("yfinance.Ticker")
     async def test_intraday_no_data(self, mock_ticker):
-        import pandas as pd
 
         mock_ticker.return_value.history.return_value = pd.DataFrame()
         provider = YahooFinanceProvider()
@@ -258,26 +253,32 @@ class _FakeProvider:
 class TestCandleProviderChain:
     async def test_first_provider_succeeds(self):
         data = {"s": "ok", "o": [100.0]}
-        chain = CandleProviderChain([
-            _FakeProvider("A", daily_result=data),
-            _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", daily_result=data),
+                _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
+            ]
+        )
         result = await chain.fetch_daily_candle("SPY", date(2026, 7, 17))
         assert result == data
 
     async def test_first_fails_second_succeeds(self):
-        chain = CandleProviderChain([
-            _FakeProvider("A", daily_result=None),
-            _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", daily_result=None),
+                _FakeProvider("B", daily_result={"s": "ok", "o": [200.0]}),
+            ]
+        )
         result = await chain.fetch_daily_candle("SPY", date(2026, 7, 17))
         assert result == {"s": "ok", "o": [200.0]}
 
     async def test_all_fail(self):
-        chain = CandleProviderChain([
-            _FakeProvider("A", daily_result=None),
-            _FakeProvider("B", daily_result=None),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", daily_result=None),
+                _FakeProvider("B", daily_result=None),
+            ]
+        )
         result = await chain.fetch_daily_candle("SPY", date(2026, 7, 17))
         assert result is None
 
@@ -287,10 +288,12 @@ class TestCandleProviderChain:
         assert result is None
 
     async def test_intraday_fallback(self):
-        chain = CandleProviderChain([
-            _FakeProvider("A", intraday_result=None),
-            _FakeProvider("B", intraday_result=[{"timestamp": 0, "open": 100.0}]),
-        ])
+        chain = CandleProviderChain(
+            [
+                _FakeProvider("A", intraday_result=None),
+                _FakeProvider("B", intraday_result=[{"timestamp": 0, "open": 100.0}]),
+            ]
+        )
         result = await chain.fetch_intraday_candles("SPY", date(2026, 7, 17))
         assert result == [{"timestamp": 0, "open": 100.0}]
 

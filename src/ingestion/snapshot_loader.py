@@ -184,7 +184,7 @@ class SnapshotLoader:
             return []
 
     def _load_quotes(self) -> dict[str, Quote]:
-        """Load Finnhub quote data from snapshot.
+        """Load Finnhub quote data from snapshot, falling back to Yahoo Finance.
 
         Returns:
             Dict mapping symbol to Quote object.
@@ -197,10 +197,16 @@ class SnapshotLoader:
                 continue
             if "error" in row:
                 logger.warning("snapshot_quote_error", symbol=symbol, error=row["error"])
+                yf_quote = self._fetch_yahoo_quote(symbol)
+                if yf_quote is not None:
+                    quotes[symbol] = yf_quote
                 continue
             current_price = row.get("current_price")
             if current_price is None:
                 logger.warning("snapshot_quote_missing_price", symbol=symbol)
+                yf_quote = self._fetch_yahoo_quote(symbol)
+                if yf_quote is not None:
+                    quotes[symbol] = yf_quote
                 continue
             try:
                 quotes[symbol] = Quote(
@@ -217,7 +223,54 @@ class SnapshotLoader:
                 )
             except (ValueError, TypeError) as e:
                 logger.warning("snapshot_quote_parse_error", symbol=symbol, error=str(e))
+                yf_quote = self._fetch_yahoo_quote(symbol)
+                if yf_quote is not None:
+                    quotes[symbol] = yf_quote
         return quotes
+
+    @staticmethod
+    def _fetch_yahoo_quote(symbol: str) -> Quote | None:
+        """Fetch a quote from Yahoo Finance as a fallback.
+
+        Args:
+            symbol: Ticker symbol.
+
+        Returns:
+            A Quote object or None on failure.
+        """
+        try:
+            import yfinance as yf
+
+            t = yf.Ticker(symbol)
+            info = t.fast_info
+            price = info.last_price
+            if price is None or price <= 0:
+                return None
+            change_pct = (
+                round(
+                    (price - info.regular_market_previous_close)
+                    / info.regular_market_previous_close
+                    * 100,
+                    2,
+                )
+                if info.regular_market_previous_close and info.regular_market_previous_close > 0
+                else 0.0
+            )
+            return Quote(
+                symbol=symbol,
+                current_price=round(float(price), 2),
+                open_price=round(float(info.open or price), 2),
+                high_price=round(float(info.day_high or price), 2),
+                low_price=round(float(info.day_low or price), 2),
+                previous_close=round(float(info.regular_market_previous_close or price), 2),
+                change_pct=change_pct,
+                volume=int(info.last_volume or 0),
+                source=DataSource.FINNHUB,
+                timestamp=datetime.now(UTC),
+            )
+        except Exception as e:
+            logger.warning("yahoo_quote_fallback_error", symbol=symbol, error=str(e))
+            return None
 
     def _load_news(self) -> list[NewsHeadline]:
         """Load Brave news data from snapshot.

@@ -47,12 +47,12 @@ from typing import Any
 
 import structlog
 
-from src.config import Settings
+from src.config import GapFadeConfig, Settings
 from src.engine.base import TradingStrategy
 from src.engine.options_strategy import compute_otm_strike, estimate_delta
 from src.llm.client import OpencodeLLMClient
 from src.models.briefing import BriefingData
-from src.models.market import MarketSnapshot
+from src.models.market import MarketSnapshot, Quote
 from src.models.recommendation import (
     AssetPrediction,
     Direction,
@@ -62,6 +62,7 @@ from src.models.recommendation import (
 )
 from src.prediction_tracker import format_history_for_prompt, load_history
 from src.timezone import today_local
+from src.trade_tracker import format_outcomes_for_prompt, load_trade_outcomes
 
 logger = structlog.get_logger()
 
@@ -88,7 +89,20 @@ SYSTEM_PROMPT = (
     '  - "best_trade": (optional) an object with exactly the same shape '
     'as the old single-trade format — asset, direction ("CALL" or '
     '"PUT"), confidence, rationale, sources — if the data clearly '
-    "points to a specific executable trade today\n\n"
+    "points to a specific executable trade today. Omit this key "
+    "entirely when conditions are mixed, unclear, or when no trade "
+    "has a strong edge. It is better to pass than to force a "
+    "low-conviction trade.\n\n"
+    "Gap-fade pattern (important): when a pre-market gap exceeds +1.5% "
+    "for SPY or +2.0% for QQQ and the news sentiment magnitude is "
+    "proportionally small (below 0.20 absolute), extreme caution is "
+    "warranted. These large gaps often fade during the session — the "
+    "overnight move exhausts before or shortly after the open and the "
+    "market reverses. Aug 5 2026 was a textbook example: SPY gapped "
+    "+1.8% and QQQ +3.4% on AI/space news with only +0.128 sentiment, "
+    "both predicted UP, but both closed DOWN (-0.8% SPY, -1.2% QQQ). "
+    "Do not blindly follow the gap direction when the catalyst strength "
+    "is disproportionate to the gap size.\n\n"
     "Cite root provenance using these forms (prefer the MOST PRIMARY "
     "source available):\n"
     '  - "<publisher>:<short-slug>" for market news feed items (e.g. '
@@ -127,18 +141,37 @@ class LLMTradeStrategy(TradingStrategy):
     :class:`DecisionAggregator` / :class:`RiskEngine` pipeline.
 
     The LLM call goes through :class:`OpencodeLLMClient`, which tries
-    every free Zen model before any paid Go model (see
+    :attr:`~src.config.LLMConfig.primary_model` first and then the
+    :attr:`~src.config.LLMConfig.fallback_models` chain (see
     :class:`src.config.LLMConfig`). When the LLM is unavailable, returns
     junk, or emits an unparseable response, the strategy abstains
     (returns ``recommendation=None``) rather than guessing.
     """
 
-    def __init__(self, config: Settings, client: OpencodeLLMClient | None = None):
+    def __init__(
+        self,
+        config: Settings,
+        client: OpencodeLLMClient | None = None,
+        deterministic_results: list[dict[str, Any]] | None = None,
+    ):
+        """Initialize LLMTradeStrategy.
+
+        Args:
+            config: Application settings.
+            client: Shared opencode client (constructed if omitted).
+            deterministic_results: Serialized Momentum / MeanReversion /
+                EventDriven outputs (``{"label", "recommendation",
+                "confidence", "debug_trace"}`` dicts), already evaluated
+                by the caller. Injected into the in-graph checker node so
+                it validates the LLM against real deterministic signals
+                instead of an empty list. Ignored on the monolithic path.
+        """
         assert set(config.general.target_assets).issubset({"SPY", "QQQ"}), (
             f"LLMTradeStrategy only supports SPY/QQQ, got {config.general.target_assets}"
         )
         super().__init__(label="llm_trade", config=config)
         self._client = client or OpencodeLLMClient(config.llm)
+        self._deterministic_results: list[dict[str, Any]] = deterministic_results or []
 
     async def evaluate(
         self,
@@ -146,6 +179,11 @@ class LLMTradeStrategy(TradingStrategy):
         market: MarketSnapshot,
     ) -> StrategyResult:
         """Evaluate the LLM prediction strategy.
+
+        When :attr:`GraphConfig.enabled` is True, delegates to the
+        :class:`GraphOrchestrator` diamond (research + predict) and falls
+        back to the monolithic call on failure. When graph is disabled
+        (default), uses the legacy single-call LLM prompt.
 
         Args:
             briefing: Parsed morning briefing data.
@@ -171,10 +209,170 @@ class LLMTradeStrategy(TradingStrategy):
                 duration_ms=round((time.perf_counter() - start) * 1000, 2),
             )
 
+        # --- Graph path ---
+        graph_enabled = self.config.graph.enabled
+        if graph_enabled:
+            graph_result = await self._evaluate_via_graph(briefing, market, trace, start)
+            if graph_result is not None:
+                return graph_result
+            if self.config.graph.fallback_to_monolithic:
+                logger.info("graph_fell_back_to_monolithic")
+
+        # --- Legacy monolithic path ---
+        return await self._evaluate_monolithic(briefing, market, trace, start)
+
+    async def _evaluate_via_graph(
+        self,
+        briefing: BriefingData,
+        market: MarketSnapshot,
+        trace: dict[str, Any],
+        start: float,
+    ) -> StrategyResult | None:
+        """Run the graph orchestrator and convert output to a StrategyResult.
+
+        Returns None when the graph fails, signalling the caller to fall
+        back to the monolithic path.
+        """
+        from src.llm.graph import GraphOrchestrator
+
+        orchestrator = GraphOrchestrator(self.config, self._client)
+        try:
+            result = await orchestrator.run(
+                briefing=briefing,
+                market=market,
+                deterministic_results=self._deterministic_results,
+            )
+        except Exception as e:
+            logger.warning("graph_orchestrator_exception", error=str(e))
+            return None
+
+        graph_trace = result.get("trace", {})
+        if graph_trace.get("graph_failed"):
+            trace["graph_failed"] = True
+            trace["graph_fail_reason"] = graph_trace.get("graph_fail_reason", "")
+            return None
+
+        trace["served_by"] = result.get("served_by", self._client.last_served_by)
+        trace["paid_used"] = result.get("paid_used", self._client.paid_used)
+        trace["graph_run"] = True
+        trace["graph_nodes"] = graph_trace.get("nodes", {})
+
+        raw_predictions = result.get("predictions", {})
+        predictions: dict[str, AssetPrediction] = {}
+        target_set = set(self.config.general.target_assets)
+
+        for asset, pred_raw in raw_predictions.items():
+            if asset not in target_set:
+                continue
+            if not isinstance(pred_raw, dict):
+                continue
+            direction_raw = pred_raw.get("direction")
+            if direction_raw not in ("UP", "DOWN"):
+                continue
+            try:
+                confidence = float(pred_raw.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            confidence = max(0.0, min(1.0, confidence))
+            try:
+                predicted_move_pct = float(pred_raw.get("predicted_move_pct", 0.0))
+            except (TypeError, ValueError):
+                predicted_move_pct = 0.0
+            rationale = str(pred_raw.get("rationale", ""))
+            sources = _normalise_sources(pred_raw.get("sources", []))
+            predictions[asset] = AssetPrediction(
+                asset=asset,  # type: ignore
+                direction=direction_raw,  # type: ignore
+                confidence=round(confidence, 4),
+                predicted_move_pct=round(predicted_move_pct, 2),
+                rationale=rationale,
+                sources=sources,
+            )
+
+        trace["predictions"] = {k: v.model_dump() for k, v in predictions.items()}
+        trace["graph_predictions"] = raw_predictions
+
+        best_trade = result.get("best_trade")
+        market_vibe = result.get("market_vibe", "")
+        trace["market_vibe"] = market_vibe
+        trace["best_trade_raw"] = best_trade
+
+        recommendation = None
+        if isinstance(best_trade, dict):
+            recommendation = self._parse_best_trade(best_trade, market, trace)
+
+        if not predictions:
+            trace["skip_reason"] = "graph_no_valid_predictions"
+            return self._abstain(trace, start)
+
+        # --- Apply the checker's verdict ---
+        # A veto must make the trade unselectable at the decision-
+        # aggregation level. DecisionAggregator.aggregate() filters on
+        # `StrategyResult.recommendation is not None` and ranks/thresholds
+        # on `StrategyResult.confidence` — it never looks at
+        # `recommendation.confidence` directly — so both must be nulled
+        # out together, not just the nested recommendation field.
+        can_proceed = result.get("checker_can_proceed", True)
+        contradictions = result.get("checker_contradictions", [])
+        action = self.config.graph.checker_contradiction_action
+        penalty = self.config.graph.checker_confidence_penalty
+
+        trace["checker_can_proceed"] = can_proceed
+        trace["checker_contradictions"] = contradictions
+        trace["checker_flags"] = result.get("checker_flags", [])
+
+        strategy_confidence = recommendation.confidence if recommendation else 0.0
+
+        if not can_proceed and action == "veto":
+            trace["checker_veto"] = True
+            trace["checker_veto_reason"] = f"checker can_proceed=False: {contradictions}"
+            recommendation = None
+            strategy_confidence = 0.0
+        elif not can_proceed and action == "penalize":
+            trace["checker_penalized"] = True
+            if recommendation is not None:
+                recommendation.confidence = max(0.0, round(recommendation.confidence - penalty, 4))
+            strategy_confidence = recommendation.confidence if recommendation else 0.0
+
+        all_sources: list[str] = []
+        for p in predictions.values():
+            for s in p.sources:
+                label = f"llm:{s}"
+                if label not in all_sources:
+                    all_sources.append(label)
+
+        return StrategyResult(
+            label=self.label,
+            recommendation=recommendation,
+            predictions=predictions,
+            confidence=strategy_confidence,
+            debug_trace=trace,
+            duration_ms=round((time.perf_counter() - start) * 1000, 2),
+            forecast_source_labels=all_sources if all_sources else None,
+        )
+
+    async def _evaluate_monolithic(
+        self,
+        briefing: BriefingData,
+        market: MarketSnapshot,
+        trace: dict[str, Any],
+        start: float,
+    ) -> StrategyResult:
+        """Run the legacy single-call LLM prediction (monolithic prompt)."""
         history_str = format_history_for_prompt(
             load_history(self.config.logging.json_dir),
         )
-        prompt = _build_prompt(briefing, market, self.config.general.target_assets, history_str)
+        trade_outcomes_str = format_outcomes_for_prompt(
+            load_trade_outcomes(self.config.logging.json_dir),
+        )
+        prompt = _build_prompt(
+            briefing,
+            market,
+            self.config.general.target_assets,
+            history_str,
+            trade_outcomes_str,
+            gap_fade=self.config.gap_fade,
+        )
         response = self._client.invoke(prompt=prompt, system_prompt=SYSTEM_PROMPT)
 
         trace["served_by"] = self._client.last_served_by
@@ -352,11 +550,51 @@ class LLMTradeStrategy(TradingStrategy):
         )
 
 
+def _gap_pct(quote: Quote) -> float:
+    """Percentage gap from yesterday's close to today's OPENING print.
+
+    This is the single "gap" definition used consistently across every
+    LLM prompt builder in this module and in :mod:`src.llm.graph` — the
+    overnight/pre-market move, not the move since the open. See
+    :func:`_day_move_pct` for the latter.
+
+    Args:
+        quote: A market quote with ``open_price`` and ``previous_close``.
+
+    Returns:
+        The gap as a signed percentage, or ``0.0`` when ``previous_close``
+        is non-positive (avoids a division by zero on bad data).
+    """
+    if quote.previous_close <= 0:
+        return 0.0
+    return (quote.open_price - quote.previous_close) / quote.previous_close * 100
+
+
+def _day_move_pct(quote: Quote) -> float:
+    """Percentage move from yesterday's close to the CURRENT price.
+
+    Distinct from :func:`_gap_pct` — this reflects the move since the
+    open (intraday drift), not the overnight gap itself.
+
+    Args:
+        quote: A market quote with ``current_price`` and ``previous_close``.
+
+    Returns:
+        The move as a signed percentage, or ``0.0`` when ``previous_close``
+        is non-positive.
+    """
+    if quote.previous_close <= 0:
+        return 0.0
+    return (quote.current_price - quote.previous_close) / quote.previous_close * 100
+
+
 def _build_prompt(
     briefing: BriefingData,
     market: MarketSnapshot,
     target_assets: list[str],
     prediction_history: str = "",
+    trade_outcomes: str = "",
+    gap_fade: GapFadeConfig | None = None,
 ) -> str:
     """Assemble the LLM prediction prompt from briefing + market data.
 
@@ -364,11 +602,17 @@ def _build_prompt(
         briefing: Parsed morning briefing.
         market: Current market snapshot.
         target_assets: Configured asset universe (e.g. ``["SPY", "QQQ"]``).
+        prediction_history: Formatted string of past prediction outcomes.
+        trade_outcomes: Formatted string of actual trade PnL outcomes.
+        gap_fade: Gap-fade thresholds (per-asset threshold pct + sentiment
+            magnitude cutoff). Defaults to :class:`GapFadeConfig` defaults
+            when omitted.
 
     Returns:
         A prompt string suitable for the opencode CLI single-positional
         argument.
     """
+    gap_fade = gap_fade or GapFadeConfig()
     sections: list[str] = []
 
     sections.append(
@@ -394,23 +638,64 @@ def _build_prompt(
         q = market.quotes.get(asset)
         if q is None:
             continue
-        gap_pct = (
-            (q.open_price - q.previous_close) / q.previous_close * 100
-            if q.previous_close > 0
-            else 0.0
-        )
-        move_pct = (
-            (q.current_price - q.previous_close) / q.previous_close * 100
-            if q.previous_close > 0
-            else 0.0
-        )
+        gap_pct = _gap_pct(q)
+        move_pct = _day_move_pct(q)
         quote_lines.append(
             f"- {q.symbol}: ${q.current_price:.2f} "
-            f"(gap {gap_pct:+.2f}% from prev close {q.previous_close:.2f}, "
+            f"(gap {gap_pct:+.2f}% open-vs-prev-close ${q.previous_close:.2f}, "
             f"now {move_pct:+.2f}% on day)"
         )
     if quote_lines:
         sections.append("Target-asset quotes:\n" + "\n".join(quote_lines))
+
+    threshold_lines = [
+        f"Gap-fade threshold for {asset}: {gap_fade.threshold_for(asset)}% "
+        f"(flag when |gap| exceeds this AND sentiment magnitude < "
+        f"{gap_fade.sentiment_magnitude_max})"
+        for asset in target_assets
+        if market.quotes.get(asset) is not None
+    ]
+    if threshold_lines:
+        sections.append("Gap-fade thresholds:\n" + "\n".join(threshold_lines))
+
+    gap_alerts: list[str] = []
+    gap_fade_risk: list[str] = []
+    for asset in target_assets:
+        q = market.quotes.get(asset)
+        if q is None or q.previous_close <= 0:
+            continue
+        gap_pct = _gap_pct(q)
+        if abs(gap_pct) > 0.5:
+            gap_alerts.append(
+                f"  - {q.symbol} has gapped {gap_pct:+.1f}% pre-market from "
+                f"yesterday's close (${q.previous_close:.2f})."
+            )
+        gap_threshold = gap_fade.threshold_for(q.symbol)
+        sentiment_mag = abs(market.avg_sentiment_polarity())
+        if abs(gap_pct) > gap_threshold and sentiment_mag < gap_fade.sentiment_magnitude_max:
+            gap_fade_risk.append(
+                f"  - {q.symbol} gap ({gap_pct:+.1f}%) is large relative to "
+                f"catalyst strength (sentiment {sentiment_mag:+.3f}). "
+                f"This is a gap-fade risk — the overnight move may exhaust and "
+                f"reverse during the session, as it did on Aug 5 2026 "
+                f"(SPY +1.8% gap -> -0.8% close, QQQ +3.4% gap -> -1.2% close)."
+            )
+    if gap_fade_risk:
+        sections.append(
+            "Gap-fade risk warning: the following assets show pre-market gaps "
+            "that are disproportionately large compared to news catalyst "
+            "strength. Consider whether the gap is sustainable or likely to "
+            "fade. On Aug 5 2026, both SPY and QQQ showed this pattern and "
+            "reversed hard.\n" + "\n".join(gap_fade_risk)
+        )
+    if gap_alerts:
+        alert_block = (
+            "Pre-market gap alert: the following assets show significant "
+            "gaps from yesterday's close. The briefing sections below were "
+            "built before these gaps were fully visible. Consider whether "
+            "each gap confirms or contradicts the briefing's thesis.\n" + "\n".join(gap_alerts)
+        )
+        sections.append(alert_block)
 
     if market.news:
         top_news = market.news[:10]
@@ -427,41 +712,96 @@ def _build_prompt(
             f"Recent prediction history (learn from past outcomes):\n{prediction_history}"
         )
 
+    if trade_outcomes:
+        sections.append(trade_outcomes)
+
     return "\n\n".join(sections)
 
 
-_JSON_OBJECT_RE = re.compile(r"\{[\s\S]*\}", re.MULTILINE)
+_FENCE_RE = re.compile(r"```(?:json)?\s*(\{[\s\S]*\})\s*```")
+
+
+def _balanced_object_at(text: str, start: int) -> str | None:
+    """Return the substring of a balanced ``{...}`` object starting at ``start``.
+
+    Tracks JSON string state so braces that appear inside string values
+    (e.g. a rationale sentence containing ``"{"``) aren't mistaken for
+    structural braces. Used by :func:`_parse_pick` to scan for the
+    correct closing brace instead of greedily matching from the first
+    ``{`` to the LAST ``}`` in the text, which swallows everything
+    between two separate JSON objects or between the real object and
+    trailing braced prose.
+
+    Args:
+        text: The full text being scanned.
+        start: Index of the opening ``{``.
+
+    Returns:
+        The balanced ``{...}`` substring, or ``None`` if no matching
+        close brace is found before the end of ``text``.
+    """
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return None
 
 
 def _parse_pick(response: str) -> dict[str, Any] | None:
-    """Extract the first JSON object from an LLM response.
+    """Extract a JSON object from an LLM response.
 
     The opencode CLI may wrap the JSON in prose or code fences despite
-    the system prompt asking for bare JSON, so we regex for the first
-    ``{...}`` block and try to parse it. Accepts either bare JSON or
-    JSON embedded in markdown code fences.
+    the system prompt asking for bare JSON, so this scans for a
+    BALANCED ``{...}`` span starting at each ``{`` in the text (rather
+    than a greedy regex from the first ``{`` to the last ``}``, which
+    would span two separate JSON objects or trailing braced prose) and
+    returns the first one that parses as a JSON object. Accepts either
+    bare JSON or JSON embedded in markdown code fences.
 
     Args:
         response: Raw LLM response text.
 
     Returns:
-        Parsed dict or ``None`` when the response cannot be parsed.
+        Parsed dict or ``None`` when no JSON object can be extracted.
     """
+    if not response or not response.strip():
+        return None
     text = response.strip()
     if text.startswith("```"):
-        fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*\})\s*```", text)
+        fenced = _FENCE_RE.search(text)
         if fenced:
             text = fenced.group(1)
-    match = _JSON_OBJECT_RE.search(text)
-    if not match:
-        return None
-    try:
-        parsed = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed
+
+    for i, ch in enumerate(text):
+        if ch != "{":
+            continue
+        candidate = _balanced_object_at(text, i)
+        if candidate is None:
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def _normalise_sources(sources_raw: Any) -> list[str]:

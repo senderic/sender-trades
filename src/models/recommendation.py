@@ -193,6 +193,7 @@ class PredictionOutcome(BaseModel):
     close_price: float | None = None
     triggered_at: str = ""
     duration_hours: float | None = None
+    sources: list[str] = Field(default_factory=list)
 
 
 class DecisionOutput(BaseModel):

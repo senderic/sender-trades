@@ -204,6 +204,36 @@ class GeneralConfig(BaseModel):
     require_forecast_alignment: bool = True
 
 
+class PreflightConfig(BaseModel):
+    """Pre-flight model availability probing.
+
+    Adapted from ``~/atlas-morning-briefing/scripts/preflight_model_check.py``.
+    A probe runs ahead of the pipeline, walks the configured model chain,
+    and writes :attr:`file_path`. The pipeline then pins a model already
+    known to answer, instead of discovering a dead or degraded one
+    mid-run at the cost of a full node timeout.
+
+    Two rules carried over from atlas, both learned the hard way there:
+
+    - The roster comes from config, never from a table in the probe. A
+      local copy drifts from ``config.yaml`` and silently swaps models.
+    - Stale results are worse than none. Model health changes hour to
+      hour, so a file older than :attr:`max_age_sec` is ignored and the
+      configured chain order is used.
+
+    One deliberate divergence: atlas pins the *first* model that answers,
+    because its failure mode is hard outages. Here the failure mode is
+    per-node timeouts, so ``select_by: latency`` pins the *fastest*
+    healthy model instead.
+    """
+
+    enabled: bool = False
+    file_path: str = ".model-availability.json"
+    max_age_sec: int = 6 * 3600
+    probe_timeout_sec: int = 45
+    select_by: Literal["latency", "order"] = "latency"
+
+
 class LLMConfig(BaseModel):
     """Configuration for the LLM calls made via the ``opencode`` CLI.
 
@@ -239,6 +269,7 @@ class LLMConfig(BaseModel):
     # of this flag.
     trade_signal_enabled: bool = True
     trade_signal_min_confidence: float = 0.45
+    preflight: PreflightConfig = PreflightConfig()
 
 
 class GraphConfig(BaseModel):
@@ -268,10 +299,31 @@ class GraphConfig(BaseModel):
     # starts ~2 min before the open. When this budget is exhausted the
     # orchestrator stops starting new nodes and reports a graph failure
     # so the caller can fall back.
-    total_deadline_sec: int = 240
+    total_deadline_sec: int = 360
     # LLM calls held back from ``LLMConfig.max_calls_per_run`` so the
     # monolithic fallback is still affordable after a graph failure.
     reserved_calls_for_fallback: int = 1
+    # Ceiling on the confidence of a signal that rests on a single
+    # deterministic strategy with no LLM corroboration. Applied in two
+    # places: the published DirectionalForecast, and — critically — the
+    # DecisionAggregator gate, because the forecast is computed AFTER the
+    # decision and is never read back by the trading path, so capping the
+    # forecast alone changes nothing about what actually trades.
+    #
+    # Sized deliberately BELOW both strategy gates
+    # (momentum.min_confidence 0.40, llm.trade_signal_min_confidence 0.45)
+    # so an uncorroborated signal cannot clear them on its own. That is the
+    # whole point: a value above 0.40 dampens the number without blocking
+    # the trade.
+    #
+    # Evidence (final run per day, 2026-07-29..08-28): trades taken on a
+    # lone deterministic strategy went 1 win / 4 losses for -$64, while
+    # corroborated or LLM-backed trades went 5/12 for +$158. Every solo
+    # trade fired between 0.55 and 0.80 confidence, so nothing below 0.55
+    # would have been filtered by the existing gates. Small sample (n=5) —
+    # the asymmetry is that a blocked trade costs an opportunity, while an
+    # uncorroborated one has so far cost money.
+    unsupported_confidence_cap: float = 0.35
 
 
 class Settings(BaseSettings):

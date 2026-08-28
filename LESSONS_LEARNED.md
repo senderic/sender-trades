@@ -6,10 +6,29 @@ Intraday directional prediction engine & 0DTE execution. LLM-readable format -- 
 
 | Date | SPY Pred | SPY Result | QQQ Pred | QQQ Result | Trade Executed | Engine PnL | Key Tags |
 |------|----------|------------|----------|------------|---------------|------------|----------|
-| [2026-07-30](#2026-07-30) | DOWN 62% | TBD | DOWN 75% -> UP 55% | MISS (gapped +2%) | SPY PUT @ 731 (rerun) | open | `bug:market-order-premarket` `pattern:qqq-down-BROKEN` `pattern:model-pivot-correct` `luck:bug-saved-loss` |
-| [2026-07-29](#2026-07-29) | UP 45% | HIT (+0.3%/target) | DOWN 70% | HIT (-1.5% -> -2.0%) | No (OCC bug) | $0 | `bug:occ-symbol` `pattern:qqq-down-reliable` `system:exit-monitoring` `source:market-qqq-reliable` |
-| [2026-07-18b](#2026-07-18b) | -- | -- | -- | -- | N/A | N/A | `arch:redesign` `model:prediction-engine` `fix:strike-calculation` |
-| [2026-07-18](#2026-07-18) | -- | -- | -- | -- | N/A | N/A | `system:degraded-briefing` `fix:quality-detection` `upstream:atlas` |
+| [2026-08-27](#2026-08-27) | UP 45% | HIT | UP 52% | HIT | No | $0.00 | `pattern:qqq-amplifies` `pattern:spy-amplifies` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-LITE` `source:watchlist-LITE-reliable` `source:watchlist-NVDA` |
+| [2026-08-26](#2026-08-26) | DOWN 100% | HIT | -- | MISS | SPY PUT @ $761.0, strategy=momentum | $-36.00 | `pattern:spy-down-reliable` |
+| [2026-08-25](#2026-08-25) | DOWN 45% | HIT | DOWN 58% | HIT | SPY PUT @ $759.0, strategy=momentum | $-8.00 | `source:market-LUNR` `source:market-LUNR-reliable` `source:market-META` `source:market-META-reliable` `source:market-NVDA` `source:market-NVDA-reliable` `source:market-megacap-rotation` `source:market-megacap-rotation-reliable` `source:nyt-autonomous-drone` |
+| [2026-08-24](#2026-08-24) | UP 40% | MISS | UP 55% | MISS | No | $0.00 | `pattern:qqq-up-unreliable` `pattern:spy-up-unreliable` `source:market-SPY` `source:market-SPY-unreliable` `source:watchlist-ANET` `source:watchlist-ANET-unreliable` `source:watchlist-NVDA` `source:watchlist-NVDA-unreliable` `source:watchlist-PLTR` |
+| [2026-08-21](#2026-08-21) | DOWN 58% | HIT | DOWN 55% | HIT | QQQ PUT @ $707.0, strategy=llm_trade | $38.00 | `source:market-QQQ` `source:market-QQQ-reliable` `source:market-news-sentiment` `source:market-news-sentiment-reliable` `source:nytimes-ai-borrowing-bond-yields` `source:nytimes-ai-borrowing-bond-yields-reliable` `source:nytimes.com-AI-borrowing-bond-yields` `source:nytimes.com-AI-borrowing-bond-yields-reliable` `source:watchlist-AMZN/GOOGL/MSFT` `source:watchlist-AMZN/GOOGL/MSFT-reliable` |
+| [2026-08-20](#2026-08-20) | UP 100% | MISS | -- | HIT | SPY CALL @ $774.0, strategy=event_driven | $0.00 | `pattern:qqq-amplifies` `pattern:spy-up-unreliable` |
+| [2026-08-19](#2026-08-19) | DOWN 58% | HIT | DOWN 70% | HIT | No | $0.00 | `pattern:qqq-down-reliable` `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-META` `source:watchlist-META-reliable` `source:watchlist-NVDA` |
+| [2026-08-18](#2026-08-18) | DOWN 55% | HIT | DOWN 58% | HIT | QQQ PUT @ $725.0, strategy=llm_trade | $282.00 | `source:market-QQQ` `source:market-QQQ-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-LMT` `source:watchlist-LMT-reliable` `source:watchlist-META` `source:watchlist-META-reliable` `source:watchlist-MSFT` `source:watchlist-MSFT-reliable` |
+| [2026-08-17](#2026-08-17) | UP 58% | MISS | UP 55% | HIT | QQQ CALL @ $735.0, strategy=llm_trade | $0.00 | `pattern:qqq-amplifies` `pattern:spy-up-unreliable` `source:market-QQQ` `source:market-QQQ-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:news-sentiment-unreliable` `source:watchlist-EQIX` `source:watchlist-EQIX-unreliable` `source:watchlist-LITE` `source:watchlist-LITE-reliable` `source:watchlist-VRT` |
+| [2026-08-14](#2026-08-14) | UP 55% | MISS | UP 68% | MISS | QQQ CALL @ $736.0, strategy=llm_trade | $0.00 | `pattern:qqq-up-unreliable` `pattern:spy-up-unreliable` `source:market-SPY` `source:market-SPY-unreliable` `source:news-sentiment` `source:news-sentiment-unreliable` `source:watchlist-META` `source:watchlist-META-unreliable` `source:watchlist-QQQ` `source:watchlist-QQQ-unreliable` `source:watchlist-SPY` |
+| [2026-08-13](#2026-08-13) | UP 55% | HIT | UP 58% | HIT | QQQ CALL @ $728.0, strategy=llm_trade | $74.00 | `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-ANET` `source:watchlist-ANET-reliable` `source:watchlist-NVDA` `source:watchlist-NVDA-reliable` |
+| [2026-08-12](#2026-08-12) | DOWN 60% | HIT | DOWN 62% | HIT | SPY CALL @ $775.0, strategy=momentum | $0.00 | `pattern:qqq-down-reliable` `pattern:spy-down-reliable` `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-GOOGL` `source:watchlist-GOOGL-reliable` |
+| [2026-08-11](#2026-08-11) | DOWN 52% | HIT | DOWN 60% | HIT | SPY CALL @ $778.0, strategy=event_driven | $0.00 | `pattern:qqq-down-reliable` `pattern:spy-amplifies` `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-LITE` `source:watchlist-LITE-reliable` `source:watchlist-NVDA` `source:watchlist-NVDA-reliable` |
+| [2026-08-10](#2026-08-10) | -- | MISS | UP 100% | HIT | QQQ CALL @ $727.0, strategy=momentum | $0.00 | `pattern:qqq-up-reliable` |
+| [2026-08-07](#2026-08-07) | UP 58% | HIT | DOWN 55% | HIT | SPY CALL @ $773.0, strategy=llm_trade | $0.00 | `pattern:qqq-amplifies` `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-ANET` `source:watchlist-ANET-reliable` `source:watchlist-GD` `source:watchlist-GD-reliable` `source:watchlist-GOOGL` `source:watchlist-GOOGL-reliable` |
+| [2026-08-05](#2026-08-05) | UP 62% | MISS | UP 67% | MISS | SPY CALL @ $776.0, strategy=event_driven | $0.00 | `pattern:qqq-up-unreliable` `pattern:spy-up-unreliable` `source:market-QQQ` `source:market-QQQ-unreliable` `source:market-SPY` `source:market-SPY-unreliable` `source:market-VGT` `source:market-VGT-unreliable` `source:news-sentiment` `source:news-sentiment-unreliable` |
+| [2026-08-04](#2026-08-04) | UP 68% | HIT | UP 72% | HIT | QQQ CALL @ $704.0, strategy=llm_trade (not filled) | $0.00 | `pattern:qqq-amplifies` `pattern:qqq-up-reliable` `pattern:spy-amplifies` `pattern:spy-up-reliable` `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:reuters-ai-cost-collapse` `source:reuters-ai-cost-collapse-reliable` `source:watchlist-QQQ` `source:watchlist-QQQ-reliable` `source:watchlist-SPY` `source:watchlist-SPY-reliable` |
+| [2026-08-03](#2026-08-03) | UP 62% | HIT | UP 65% | HIT | SPY CALL @ $752.0, strategy=momentum+event_driven | $0.00 | `pattern:qqq-amplifies` `pattern:qqq-up-reliable` `pattern:spy-amplifies` `pattern:spy-up-reliable` `source:dowjones-market-wrap` `source:dowjones-market-wrap-reliable` `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:reuters-palantir-nvidia-battlefield-ai` `source:reuters-palantir-nvidia-battlefield-ai-reliable` `source:watchlist-NVDA` `source:watchlist-NVDA-reliable` |
+| [2026-07-30b](#2026-07-30b) | DOWN 62% | TBD | DOWN 75% -> UP 55% | MISS (gapped +2%) | SPY PUT @ 731 (rerun) | open | `bug:market-order-premarket` `pattern:qqq-down-BROKEN` `pattern:model-pivot-correct` `luck:bug-saved-loss` `fix:limit-order-only` `lesson:premarket-gap-can-invert` |
+| [2026-07-30a](#2026-07-30a) | DOWN 65% | HIT | DOWN 75% | HIT | QQQ PUT @ $658.0, strategy=llm_trade | $0.00 | `pattern:qqq-down-reliable` `pattern:spy-down-reliable` `source:market-QQQ` `source:market-QQQ-reliable` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-ANET` `source:watchlist-ANET-reliable` `source:watchlist-LITE` `source:watchlist-LITE-reliable` `source:watchlist-NVDA` `source:watchlist-NVDA-reliable` |
+| [2026-07-29](#2026-07-29) | UP 45% | HIT | DOWN 70% | HIT | QQQ PUT @ $671, strategy=llm_trade (not filled) | $0.00 | `bug:occ-symbol` `pattern:qqq-down-reliable` `pattern:qqq-amplifies` `system:exit-monitoring-dies` `source:market-qqq-reliable` `source:news-sentiment-unreliable` `fix:occ-symbol-6-digit` `fix:datetime-serialization` `fix:two-sell-orders` `fix:tpat-alpaca-not-in-process` `fix:adguard-dns-exception` `fix:paper-chain-truncation` |
+| [2026-07-18b](#2026-07-18b) | -- | -- | -- | -- | N/A | N/A | `arch:redesign` `model:prediction-engine` `fix:strike-calculation` `fix:source-citation` `fix:forecast-table` |
+| [2026-07-18](#2026-07-18) | -- | -- | -- | -- | N/A | N/A | `system:degraded-briefing` `fix:quality-detection` `upstream:atlas` `source:status-json` |
 
 ## Persistent Patterns
 
@@ -46,6 +65,483 @@ Observations that recur across multiple days. Each gets stronger (or weaker) wit
 | How reliable is the briefing when overnight catalysts (GOOGL earnings) invert direction? | 7/30: briefing missed QQQ gap-up |
 | Do deterministic strategies out- perform the LLM? | event_driven selected today (SPY PUT) |
 | Should we focus on SPY over QQQ? | SPY 2/3 HITs this week; QQQ 3/4 HITs overall but broke today |
+
+---
+
+## 2026-08-27
+
+```yaml
+date: 2026-08-27
+spy:
+  direction: UP
+  confidence: 0.45
+  predicted_move_pct: 0.15
+  actual_move_pct: 0.34
+  result: HIT
+  note: "hit target (H=$772.35)"
+qqq:
+  direction: UP
+  confidence: 0.52
+  predicted_move_pct: 0.3
+  actual_move_pct: 0.58
+  result: HIT
+  note: "hit target (H=$721.35)"
+trade_filled: false
+engine_pnl: 0.00
+tags:
+  - pattern:qqq-amplifies
+  - pattern:spy-amplifies
+  - source:market-SPY
+  - source:market-SPY-reliable
+  - source:news-sentiment
+  - source:news-sentiment-reliable
+  - source:watchlist-LITE
+  - source:watchlist-LITE-reliable
+  - source:watchlist-NVDA
+  - source:watchlist-NVDA-reliable
+```
+
+### Pre-market context
+
+Market vibe: Mildly positive, AI/edge-computing-led tape (NVDA Jetson Orin Nano 2, optical demand surge) offset by defense and space sector selloffs, keeping indexes near flat with negligible gaps.
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | UP | 45% | 0.1% | Tech mega-caps (NVDA, MSFT, META) outperform, outweighing the defense/space selloff, though broad indexes are near flat  |
+| QQQ | UP | 52% | 0.3% | Strong AI/edge-optics bid across NVDA, LITE, META and ANET with mildly positive sentiment favors tech-led upside. |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $768.50 | $772.35 | $767.16 | $771.10 | +0.34% | :white_check_mark: HIT |
+| QQQ | $716.93 | $721.35 | $714.53 | $721.11 | +0.58% | :white_check_mark: HIT |
+
+### Trade execution
+
+No trades executed today.
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: UP | :white_check_mark: UP |
+
+**Cumulative prediction record**: 27/45 (60%)
+
+---
+
+## 2026-08-26
+
+```yaml
+date: 2026-08-26
+spy:
+  direction: DOWN
+  confidence: 1.0
+  predicted_move_pct: -0.42
+  actual_move_pct: 0.18
+  result: HIT
+  note: "hit target, but reversed — closed +0.18%"
+qqq:
+  direction: ?
+  confidence: 0.0
+  predicted_move_pct: 0.0
+  actual_move_pct: 0.42
+  result: MISS
+  note: "never hit target, closed +0.42%"
+best_trade: "SPY PUT @ $761.0, strategy=momentum"
+trade_filled: true
+engine_pnl: -36.00
+tags:
+  - pattern:spy-down-reliable
+```
+
+### Pre-market context
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 100% | -0.4% |  |
+| QQQ | ? | 0% | 0.0% |  |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $764.73 | $767.35 | $763.93 | $766.08 | +0.18% | :white_check_mark: HIT |
+| QQQ | $708.41 | $713.02 | $707.97 | $711.37 | +0.42% | :x: MISS |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   SPY PUT @ $0.43/contract → $-36.00 (safety_close)
+
+Engine-tracked PnL: $-36.00
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | — | — |
+
+**Cumulative prediction record**: 27/44 (61%)
+
+---
+
+## 2026-08-25
+
+```yaml
+date: 2026-08-25
+spy:
+  direction: DOWN
+  confidence: 0.45
+  predicted_move_pct: -0.3
+  actual_move_pct: -0.03
+  result: HIT
+  note: "hit target (L=$763.05)"
+qqq:
+  direction: DOWN
+  confidence: 0.58
+  predicted_move_pct: -0.6
+  actual_move_pct: -0.07
+  result: HIT
+  note: "hit target (L=$707.45)"
+best_trade: "SPY PUT @ $759.0, strategy=momentum"
+trade_filled: true
+engine_pnl: -8.00
+tags:
+  - source:market-LUNR
+  - source:market-LUNR-reliable
+  - source:market-META
+  - source:market-META-reliable
+  - source:market-NVDA
+  - source:market-NVDA-reliable
+  - source:market-megacap-rotation
+  - source:market-megacap-rotation-reliable
+  - source:nyt-autonomous-drone
+  - source:nyt-autonomous-drone-reliable
+```
+
+### Pre-market context
+
+Market vibe: All active strategies (LLM, momentum, event-driven) align bearish on SPY and QQQ with no cross-strategy contradictions and no gap-fade triggers, so validation passes despite a minor internal event-driven polarity inconsistency.
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 45% | -0.3% | Nvidia-led semiconductor selloff and speculative rout outweigh megacap flight-to-safety, with aggregate sentiment mildly |
+| QQQ | DOWN | 58% | -0.6% | NVDA-led chip selloff (-2.9%) dragged QQQ -1.0% with aggregate sentiment at -0.28, and megacap rotation is only partiall |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $766.16 | $766.78 | $763.05 | $765.91 | -0.03% | :white_check_mark: HIT |
+| QQQ | $711.22 | $714.04 | $707.45 | $710.72 | -0.07% | :white_check_mark: HIT |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   SPY PUT @ $0.09/contract → $-8.00 (safety_close)
+
+Engine-tracked PnL: $-8.00
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: DOWN | :white_check_mark: DOWN |
+
+**Cumulative prediction record**: 26/42 (62%)
+
+---
+
+## 2026-08-24
+
+```yaml
+date: 2026-08-24
+spy:
+  direction: UP
+  confidence: 0.4
+  predicted_move_pct: 0.25
+  actual_move_pct: -0.17
+  result: MISS
+  note: "never hit target, closed -0.17%"
+qqq:
+  direction: UP
+  confidence: 0.55
+  predicted_move_pct: 0.3
+  actual_move_pct: -0.47
+  result: MISS
+  note: "never hit target, closed -0.47%"
+trade_filled: false
+engine_pnl: 0.00
+tags:
+  - pattern:qqq-up-unreliable
+  - source:market-SPY
+  - source:market-SPY-unreliable
+  - source:watchlist-ANET
+  - source:watchlist-ANET-unreliable
+  - source:watchlist-NVDA
+  - source:watchlist-NVDA-unreliable
+  - source:watchlist-PLTR
+  - source:watchlist-PLTR-unreliable
+```
+
+### Pre-market context
+
+Market vibe: SPY's bullish LLM prediction directly contradicts a strong event-driven bearish signal (veto), while QQQ's prediction stands with no deterministic contradiction.
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | UP | 40% | 0.2% | Broad mega-cap tech strength (META +0.75%, GOOGL +1.22%, MSFT +0.43%) outweighs NVDA profit-taking and defense-prime rot |
+| QQQ | UP | 55% | 0.3% | Broad AI/defense-AI strength (PLTR +3.4%, ANET +2.7%, GOOGL/META gains) outweighs isolated NVDA chip profit-taking (-1.0 |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $764.78 | $765.22 | $762.08 | $763.47 | -0.17% | :x: MISS |
+| QQQ | $709.66 | $709.79 | $702.70 | $706.32 | -0.47% | :x: MISS |
+
+### Trade execution
+
+No trades executed today.
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :x: UP | :x: UP |
+
+**Cumulative prediction record**: 26/40 (65%)
+
+---
+
+## 2026-08-21
+
+```yaml
+date: 2026-08-21
+spy:
+  direction: DOWN
+  confidence: 0.58
+  predicted_move_pct: -0.6
+  actual_move_pct: -0.04
+  result: HIT
+  note: "hit target (L=$764.17)"
+qqq:
+  direction: DOWN
+  confidence: 0.55
+  predicted_move_pct: -0.35
+  actual_move_pct: -0.25
+  result: HIT
+  note: "hit target (L=$709.21)"
+best_trade: "QQQ PUT @ $707.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: 38.00
+tags:
+  - source:market-QQQ
+  - source:market-QQQ-reliable
+  - source:market-news-sentiment
+  - source:market-news-sentiment-reliable
+  - source:nytimes-ai-borrowing-bond-yields
+  - source:nytimes-ai-borrowing-bond-yields-reliable
+  - source:nytimes.com-AI-borrowing-bond-yields
+  - source:nytimes.com-AI-borrowing-bond-yields-reliable
+  - source:watchlist-AMZN/GOOGL/MSFT
+  - source:watchlist-AMZN/GOOGL/MSFT-reliable
+  - source:watchlist-LMT
+  - source:watchlist-LMT-reliable
+```
+
+### Pre-market context
+
+Market vibe: Both SPY and QQQ predictions are well-formed, source-cited, and moderately confident with no cross-strategy contradiction (all deterministic strategies are neutral/skipped) and no gap-fade trigger, so validation passes cleanly.
+
+Key catalysts:   No standard catalyst keywords detected
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 58% | -0.6% | Defense rout (LMT/NOC/RTX) plus broad tech selloff (AMZN -2.16%, QQQ -0.72%) and rising AI-driven Treasury yields overwh |
+| QQQ | DOWN | 55% | -0.3% | Broad mega-cap tech selloff (AMZN -2.16%, GOOGL -1.17%, MSFT -0.65%) plus AI-driven yield pressure outweigh resilient AI |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $766.05 | $767.85 | $764.17 | $765.72 | -0.04% | :white_check_mark: HIT |
+| QQQ | $715.23 | $715.67 | $709.21 | $713.44 | -0.25% | :white_check_mark: HIT |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   QQQ PUT @ $0.38/contract → +$38.00 (take_profit)
+
+Engine-tracked PnL: +$38.00
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: DOWN | :white_check_mark: DOWN |
+
+**Cumulative prediction record**: 25/38 (66%)
+
+---
+
+## 2026-08-20
+
+```yaml
+date: 2026-08-20
+spy:
+  direction: UP
+  confidence: 1.0
+  predicted_move_pct: 0.42
+  actual_move_pct: -0.44
+  result: MISS
+  note: "never hit target, closed -0.44%"
+qqq:
+  direction: ?
+  confidence: 0.0
+  predicted_move_pct: 0.0
+  actual_move_pct: -0.16
+  result: HIT
+  note: "hit target, but reversed — closed -0.16%"
+best_trade: "SPY CALL @ $774.0, strategy=event_driven"
+trade_filled: true
+engine_pnl: 0.00
+tags:
+  - pattern:qqq-amplifies
+  - pattern:spy-up-unreliable
+```
+
+### Pre-market context
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | UP | 100% | 0.4% |  |
+| QQQ | ? | 0% | 0.0% |  |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $765.96 | $768.15 | $762.05 | $762.60 | -0.44% | :x: MISS |
+| QQQ | $712.09 | $714.94 | $708.52 | $710.93 | -0.16% | :white_check_mark: HIT |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   SPY CALL @ $0.04/contract → not closed by engine (pending)
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | — | — |
+
+**Cumulative prediction record**: 25/37 (68%)
+
+---
+
+## 2026-08-19
+
+```yaml
+date: 2026-08-19
+spy:
+  direction: DOWN
+  confidence: 0.58
+  predicted_move_pct: -0.45
+  actual_move_pct: -0.17
+  result: HIT
+  note: "hit target (L=$768.11)"
+qqq:
+  direction: DOWN
+  confidence: 0.7
+  predicted_move_pct: -1.1
+  actual_move_pct: -0.60
+  result: HIT
+  note: "hit target (L=$712.61)"
+trade_filled: false
+engine_pnl: 0.00
+tags:
+  - pattern:qqq-down-reliable
+  - source:market-QQQ
+  - source:market-QQQ-reliable
+  - source:market-SPY
+  - source:market-SPY-reliable
+  - source:news-sentiment
+  - source:news-sentiment-reliable
+  - source:watchlist-META
+  - source:watchlist-META-reliable
+  - source:watchlist-NVDA
+  - source:watchlist-NVDA-reliable
+```
+
+### Pre-market context
+
+Market vibe: Rotation out of AI/data-center buildout into defense; tech selloff on capex jitters with weak positive sentiment (+0.078).
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 58% | -0.5% | Broad market dipped as tech/AI weakness outweighed a defense rally, with SPY gapping -0.5% pre-market and trading -0.68% |
+| QQQ | DOWN | 70% | -1.1% | AI-infrastructure complex sold off sharply (NVDA -2.3%, META -4.4%, VRT -6.8%, ANET -4.3%) as money rotated into defense |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $770.36 | $772.47 | $768.11 | $769.06 | -0.17% | :white_check_mark: HIT |
+| QQQ | $720.39 | $721.50 | $712.61 | $716.08 | -0.60% | :white_check_mark: HIT |
+
+### Trade execution
+
+No trades executed today.
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: DOWN | :white_check_mark: DOWN |
+
+**Cumulative prediction record**: 25/35 (71%)
 
 ---
 
@@ -858,7 +1354,7 @@ Market vibe: Risk-on tech bid; AI infrastructure via NVDA battlefield-AI pact an
 
 ---
 
-## 2026-07-30
+## 2026-07-30a
 
 ```yaml
 date: 2026-07-30
@@ -935,7 +1431,7 @@ Key catalysts: tech
 
 ---
 
-## 2026-07-30
+## 2026-07-30b
 
 ```yaml
 date: 2026-07-30

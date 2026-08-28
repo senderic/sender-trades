@@ -6,6 +6,12 @@ Models are tried in the order declared by :class:`src.config.LLMConfig`:
 served via the OpenCode Go gateway (``opencode-go/*``) and OpenRouter
 (``openrouter/*``), respectively. :attr:`OpencodeLLMClient.paid_used`
 is always ``True`` after a successful call.
+
+When :attr:`~LLMConfig.preflight` is enabled, that configured order is a
+starting point, not the final word: ``.model-availability.json`` (written
+by ``src.preflight``, run ahead of the pipeline by a separate cron entry)
+is consulted once per client instance to reorder — never shrink — the
+chain. See :meth:`OpencodeLLMClient._resolve_chain`.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +98,10 @@ class OpencodeLLMClient:
         # `.opencode/agent/<name>.md` file is read at most once per agent
         # per client lifetime (see `_agent_system_prompt`).
         self._agent_prompt_chars_cache: dict[str, str] = {}
+        # The preflight-reordered model chain, resolved once and cached
+        # (see `_resolve_chain`) so the `.model-availability.json` file is
+        # read at most once per client lifetime rather than once per call.
+        self._resolved_chain: list[str] | None = None
 
     @property
     def available(self) -> bool:
@@ -106,6 +117,59 @@ class OpencodeLLMClient:
         else:
             logger.warning("opencode_binary_missing", path=self.config.opencode_path)
         return self._available
+
+    def _resolve_chain(self) -> list[str]:
+        """Return the model chain to try, reordered by the preflight probe if configured.
+
+        Resolved once and cached on the instance under ``self._lock``, so
+        concurrent graph nodes (:meth:`invoke_agent` runs via
+        ``asyncio.to_thread``, several at once) share a single read of
+        ``.model-availability.json`` instead of each re-reading and
+        re-parsing it. :meth:`invoke` and :meth:`invoke_agent` both call
+        this instead of building the chain independently, so the two
+        paths cannot drift out of sync with each other.
+
+        A preflight result may only ever REORDER the configured chain,
+        never drop a model from it — a probe is a hint (the model could
+        recover between probe time and run time), not a verdict. See
+        :class:`~src.config.PreflightConfig` for the config contract and
+        :func:`_reorder_chain` for the reordering rules themselves.
+
+        Returns:
+            The model chain, deduplicated, in the order calls should try
+            it.
+        """
+        with self._lock:
+            if self._resolved_chain is not None:
+                return self._resolved_chain
+
+            configured = _dedupe([self.config.primary_model, *self.config.fallback_models])
+            preflight = self.config.preflight
+            resolved = configured
+            if preflight.enabled:
+                data = _load_preflight_data(preflight.file_path, preflight.max_age_sec)
+                if data is not None:
+                    resolved = _reorder_chain(
+                        configured, data.get("models", {}), preflight.select_by
+                    )
+
+            if resolved != configured:
+                logger.info(
+                    "preflight_chain_reordered",
+                    select_by=preflight.select_by,
+                    configured=configured,
+                    resolved=resolved,
+                    pinned=resolved[0],
+                )
+            elif preflight.enabled:
+                logger.info(
+                    "preflight_chain_unchanged",
+                    select_by=preflight.select_by,
+                    pinned=resolved[0] if resolved else None,
+                )
+
+            self._resolved_chain = resolved
+            return self._resolved_chain
 
     def _try_reserve(self, reserve: int) -> tuple[bool, bool]:
         """Atomically check the call budget and claim one slot if available.
@@ -243,7 +307,7 @@ class OpencodeLLMClient:
         if not self.available:
             return None
 
-        chain = _dedupe([self.config.primary_model, *self.config.fallback_models])
+        chain = self._resolve_chain()
 
         full_prompt = f"{system_prompt}\n\nUser Request: {prompt}" if system_prompt else prompt
 
@@ -406,7 +470,7 @@ class OpencodeLLMClient:
         if not self.available:
             return None
 
-        chain = _dedupe([self.config.primary_model, *self.config.fallback_models])
+        chain = self._resolve_chain()
         timeout = timeout_sec if timeout_sec is not None else self.config.timeout_sec
         first_model = chain[0] if chain else ""
         # Inline the agent's system prompt (frontmatter stripped) instead
@@ -658,6 +722,107 @@ def _strip_frontmatter(content: str) -> str:
         if lines[idx].strip() == "---":
             return "\n".join(lines[idx + 1 :]).strip()
     return content
+
+
+def _load_preflight_data(file_path: str, max_age_sec: int) -> dict[str, Any] | None:
+    """Load and validate ``.model-availability.json``, written by ``src.preflight``.
+
+    Returns ``None`` — meaning "use the configured chain order unchanged"
+    — when the file is missing, unreadable, malformed, or older than
+    ``max_age_sec``. Model health changes hour to hour (an outage clears,
+    a rate limit resets), so a stale result is worse than none: it would
+    keep pinning a model that failed hours ago and may be fine now. This
+    never raises; a broken preflight file must never break a trading run.
+
+    Args:
+        file_path: Path to the preflight results file
+            (:attr:`~src.config.PreflightConfig.file_path`).
+        max_age_sec: Maximum age in seconds before the file is ignored
+            (:attr:`~src.config.PreflightConfig.max_age_sec`).
+
+    Returns:
+        The parsed dict (with ``timestamp`` and ``models`` keys), or
+        ``None`` if it should be ignored.
+    """
+    path = Path(file_path)
+    if not path.exists():
+        logger.info("preflight_file_missing", path=file_path)
+        return None
+
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("preflight_file_unreadable", path=file_path, error=str(e))
+        return None
+
+    if not isinstance(data, dict) or "models" not in data or "timestamp" not in data:
+        logger.warning("preflight_file_malformed", path=file_path)
+        return None
+
+    try:
+        probed_at = datetime.fromisoformat(str(data["timestamp"]))
+    except ValueError as e:
+        logger.warning("preflight_file_bad_timestamp", path=file_path, error=str(e))
+        return None
+    if probed_at.tzinfo is None:
+        probed_at = probed_at.replace(tzinfo=UTC)
+
+    age_sec = (datetime.now(UTC) - probed_at).total_seconds()
+    if age_sec > max_age_sec:
+        logger.info(
+            "preflight_file_stale", path=file_path, age_sec=round(age_sec), max_age_sec=max_age_sec
+        )
+        return None
+
+    return data
+
+
+def _reorder_chain(chain: list[str], models: dict[str, Any], select_by: str) -> list[str]:
+    """Reorder ``chain`` using preflight probe records, without ever dropping a model.
+
+    A probe is a hint, not a verdict — a model marked unavailable at
+    probe time (network blip, rate limit) can easily recover before the
+    run starts a few minutes later, so it is only ever demoted to the
+    back of the chain, never removed. The returned list always contains
+    every model in ``chain``.
+
+    ``select_by`` diverges from atlas on purpose (see
+    :class:`~src.config.PreflightConfig`): atlas pins the first model
+    that answers because its failure mode is hard outages, so
+    ``"order"`` (configured order, unavailable models demoted) matches
+    its behaviour. Here the failure mode is a slow model burning a whole
+    node's timeout budget rather than actually being down, so
+    ``"latency"`` instead pins the fastest model that answered.
+
+    Args:
+        chain: The configured, deduplicated model chain.
+        models: The ``models`` mapping from the preflight results file
+            (model id -> probe record).
+        select_by: ``"latency"`` or ``"order"``.
+
+    Returns:
+        ``chain`` reordered; same elements, same length.
+    """
+
+    def is_available(model: str) -> bool:
+        record = models.get(model)
+        return bool(isinstance(record, dict) and record.get("available"))
+
+    available = [m for m in chain if is_available(m)]
+    unavailable = [m for m in chain if not is_available(m)]
+
+    if select_by == "latency":
+
+        def latency_ms(model: str) -> float:
+            record = models.get(model) or {}
+            value = record.get("latency_ms")
+            return float(value) if isinstance(value, int | float) else float("inf")
+
+        available = sorted(available, key=latency_ms)
+
+    # "order" (and any other value) falls through with `available` left in
+    # configured order — unavailable models are still demoted to the back.
+    return available + unavailable
 
 
 def _dedupe(models: list[str]) -> list[str]:

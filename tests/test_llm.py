@@ -4,16 +4,18 @@ import json
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from src.config import LLMConfig
+from src.config import LLMConfig, PreflightConfig
 from src.llm.client import (
     OpencodeLLMClient,
+    _load_preflight_data,
     _parse_ndjson_response,
+    _reorder_chain,
     _strip_frontmatter,
     is_paid_model,
 )
@@ -804,6 +806,336 @@ class TestInvokeAgentChainDeadline:
         # Configured per-attempt timeout is 45s but only ~5s of budget
         # remains, so every attempt must be clamped below it.
         assert all(t <= 5 for t in seen_timeouts)
+
+
+class TestLoadPreflightData:
+    """`_load_preflight_data` must never raise -- a broken preflight file
+    is a hint that's gone bad, not a reason to break a trading run.
+    """
+
+    @staticmethod
+    def _write(tmp_path: Path, models: dict, *, timestamp: datetime | None = None) -> str:
+        path = tmp_path / ".model-availability.json"
+        data = {
+            "timestamp": (timestamp or datetime.now(UTC)).isoformat(),
+            "models": models,
+        }
+        path.write_text(json.dumps(data))
+        return str(path)
+
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        assert _load_preflight_data(str(tmp_path / "nope.json"), 21600) is None
+
+    def test_malformed_json_returns_none(self, tmp_path: Path) -> None:
+        path = tmp_path / ".model-availability.json"
+        path.write_text("{not json")
+        assert _load_preflight_data(str(path), 21600) is None
+
+    def test_missing_required_keys_returns_none(self, tmp_path: Path) -> None:
+        path = tmp_path / ".model-availability.json"
+        path.write_text(json.dumps({"unrelated": True}))
+        assert _load_preflight_data(str(path), 21600) is None
+
+    def test_stale_file_returns_none(self, tmp_path: Path) -> None:
+        old = datetime.now(UTC) - timedelta(hours=10)
+        path = self._write(
+            tmp_path, {"m": {"available": True, "latency_ms": 1, "error": None}}, timestamp=old
+        )
+        assert _load_preflight_data(path, max_age_sec=21600) is None
+
+    def test_fresh_file_loads(self, tmp_path: Path) -> None:
+        path = self._write(tmp_path, {"m": {"available": True, "latency_ms": 1, "error": None}})
+        data = _load_preflight_data(path, max_age_sec=21600)
+        assert data is not None
+        assert "m" in data["models"]
+
+
+class TestReorderChain:
+    """`_reorder_chain` may only reorder the configured chain, never drop
+    a model from it -- a probe is a hint, not a verdict.
+    """
+
+    def test_order_keeps_configured_order_and_demotes_unavailable(self) -> None:
+        chain = ["a", "b", "c"]
+        models = {
+            "a": {"available": False, "latency_ms": 10, "error": "down"},
+            "b": {"available": True, "latency_ms": 500, "error": None},
+            "c": {"available": True, "latency_ms": 100, "error": None},
+        }
+        # "b" then "c" is configured order among the available models;
+        # "a" (unavailable) is demoted to the back.
+        assert _reorder_chain(chain, models, "order") == ["b", "c", "a"]
+
+    def test_latency_orders_available_ascending_then_appends_unavailable(self) -> None:
+        chain = ["a", "b", "c"]
+        models = {
+            "a": {"available": True, "latency_ms": 900, "error": None},
+            "b": {"available": False, "latency_ms": 5, "error": "down"},
+            "c": {"available": True, "latency_ms": 100, "error": None},
+        }
+        assert _reorder_chain(chain, models, "latency") == ["c", "a", "b"]
+
+    def test_unavailable_model_is_never_dropped(self) -> None:
+        """The most important guarantee: reorder only, never remove."""
+        chain = ["primary", "fallback1", "fallback2"]
+        models = {
+            "primary": {"available": False, "latency_ms": 0, "error": "down"},
+            "fallback1": {"available": False, "latency_ms": 0, "error": "down"},
+            "fallback2": {"available": False, "latency_ms": 0, "error": "down"},
+        }
+        result = _reorder_chain(chain, models, "latency")
+        assert set(result) == set(chain)
+        assert len(result) == len(chain)
+        assert "primary" in result
+
+    def test_model_missing_from_probe_data_treated_as_unavailable(self) -> None:
+        chain = ["a", "b"]
+        models = {"a": {"available": True, "latency_ms": 1, "error": None}}
+        assert _reorder_chain(chain, models, "order") == ["a", "b"]
+
+
+class TestClientConsumesPreflight:
+    """Integration: `OpencodeLLMClient.invoke`/`invoke_agent` actually use
+    the preflight-reordered chain, resolved once and shared between them.
+    """
+
+    @staticmethod
+    def _success_completed(stdout: str, rc: int = 0) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args=["opencode"], returncode=rc, stdout=stdout, stderr=""
+        )
+
+    @staticmethod
+    def _write_preflight(tmp_path: Path, models: dict) -> str:
+        path = tmp_path / ".model-availability.json"
+        path.write_text(json.dumps({"timestamp": datetime.now(UTC).isoformat(), "models": models}))
+        return str(path)
+
+    def test_invoke_pins_fastest_available_model(self, tmp_path: Path) -> None:
+        file_path = self._write_preflight(
+            tmp_path,
+            {
+                "opencode-go/deepseek-v4-pro": {
+                    "available": True,
+                    "latency_ms": 900,
+                    "error": None,
+                },
+                "openrouter/deepseek/deepseek-v4-pro": {
+                    "available": True,
+                    "latency_ms": 50,
+                    "error": None,
+                },
+            },
+        )
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+            preflight=PreflightConfig(enabled=True, file_path=file_path, select_by="latency"),
+        )
+        client = OpencodeLLMClient(cfg)
+        attempted: list[str] = []
+
+        def run_side_effect(cmd, **kwargs):  # type: ignore[no-untyped-def]
+            attempted.append(cmd[cmd.index("-m") + 1])
+            return self._success_completed(_ndjson_output("ok"))
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            response = client.invoke("prompt")
+
+        assert response == "ok"
+        # Despite being configured as the fallback, the faster model
+        # (per the preflight probe) must be tried first.
+        assert attempted[0] == "openrouter/deepseek/deepseek-v4-pro"
+
+    def test_invoke_agent_pins_fastest_available_model(self, tmp_path: Path) -> None:
+        file_path = self._write_preflight(
+            tmp_path,
+            {
+                "opencode-go/deepseek-v4-pro": {
+                    "available": True,
+                    "latency_ms": 900,
+                    "error": None,
+                },
+                "openrouter/deepseek/deepseek-v4-pro": {
+                    "available": True,
+                    "latency_ms": 50,
+                    "error": None,
+                },
+            },
+        )
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+            preflight=PreflightConfig(enabled=True, file_path=file_path, select_by="latency"),
+        )
+        client = OpencodeLLMClient(cfg)
+        attempted: list[str] = []
+
+        def run_side_effect(cmd, **kwargs):  # type: ignore[no-untyped-def]
+            attempted.append(cmd[cmd.index("-m") + 1])
+            return self._success_completed(_ndjson_output("ok"))
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            response = client.invoke_agent("research-spy", "prompt")
+
+        assert response == "ok"
+        assert attempted[0] == "openrouter/deepseek/deepseek-v4-pro"
+
+    def test_probed_unavailable_model_is_still_reachable(self, tmp_path: Path) -> None:
+        """Both models probed unavailable, but neither may be dropped from
+        the chain -- a model can recover between probe time and run time.
+        """
+        file_path = self._write_preflight(
+            tmp_path,
+            {
+                "opencode-go/deepseek-v4-pro": {
+                    "available": False,
+                    "latency_ms": 0,
+                    "error": "down",
+                },
+                "openrouter/deepseek/deepseek-v4-pro": {
+                    "available": False,
+                    "latency_ms": 0,
+                    "error": "down",
+                },
+            },
+        )
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+            preflight=PreflightConfig(enabled=True, file_path=file_path, select_by="order"),
+        )
+        client = OpencodeLLMClient(cfg)
+        attempted: list[str] = []
+
+        def run_side_effect(cmd, **kwargs):  # type: ignore[no-untyped-def]
+            model = cmd[cmd.index("-m") + 1]
+            attempted.append(model)
+            if model == "opencode-go/deepseek-v4-pro":
+                return subprocess.CompletedProcess(cmd, 1, "", "still down")
+            # Simulates recovery between the preflight probe and the run:
+            # this model was probed unavailable too, but must still be
+            # reachable rather than dropped from the chain.
+            return self._success_completed(_ndjson_output("recovered"))
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+        ):
+            response = client.invoke_agent("research-spy", "prompt")
+
+        assert attempted == [
+            "opencode-go/deepseek-v4-pro",
+            "openrouter/deepseek/deepseek-v4-pro",
+        ]
+        assert response == "recovered"
+
+    def test_missing_preflight_file_falls_back_to_configured_order(self, tmp_path: Path) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+            preflight=PreflightConfig(
+                enabled=True, file_path=str(tmp_path / "nope.json"), select_by="latency"
+            ),
+        )
+        client = OpencodeLLMClient(cfg)
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=self._success_completed(_ndjson_output("ok")),
+            ) as mock_run,
+        ):
+            client.invoke("prompt")
+        args = mock_run.call_args_list[0].args[0]
+        assert args[args.index("-m") + 1] == "opencode-go/deepseek-v4-pro"
+
+    def test_preflight_disabled_skips_reordering(self, tmp_path: Path) -> None:
+        # File says the fallback is faster, but preflight is off -- must
+        # still pin the configured primary.
+        file_path = self._write_preflight(
+            tmp_path,
+            {
+                "opencode-go/deepseek-v4-pro": {
+                    "available": True,
+                    "latency_ms": 900,
+                    "error": None,
+                },
+                "openrouter/deepseek/deepseek-v4-pro": {
+                    "available": True,
+                    "latency_ms": 50,
+                    "error": None,
+                },
+            },
+        )
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+            preflight=PreflightConfig(enabled=False, file_path=file_path, select_by="latency"),
+        )
+        client = OpencodeLLMClient(cfg)
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=self._success_completed(_ndjson_output("ok")),
+            ) as mock_run,
+        ):
+            client.invoke("prompt")
+        args = mock_run.call_args_list[0].args[0]
+        assert args[args.index("-m") + 1] == "opencode-go/deepseek-v4-pro"
+
+    def test_preflight_file_read_once_not_per_call(self, tmp_path: Path) -> None:
+        file_path = self._write_preflight(
+            tmp_path,
+            {
+                "opencode-go/deepseek-v4-pro": {"available": True, "latency_ms": 10, "error": None},
+                "openrouter/deepseek/deepseek-v4-pro": {
+                    "available": True,
+                    "latency_ms": 5,
+                    "error": None,
+                },
+            },
+        )
+        cfg = LLMConfig(
+            enabled=True,
+            opencode_path="opencode",
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+            preflight=PreflightConfig(enabled=True, file_path=file_path, select_by="latency"),
+        )
+        client = OpencodeLLMClient(cfg)
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client._load_preflight_data", wraps=_load_preflight_data) as spy,
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=self._success_completed(_ndjson_output("ok")),
+            ),
+        ):
+            client.invoke("first call")
+            client.invoke_agent("research-spy", "second call")
+
+        # Resolved once and cached -- invoke() and invoke_agent() must
+        # share the same resolution rather than each re-reading the file.
+        assert spy.call_count == 1
 
 
 if __name__ == "__main__":

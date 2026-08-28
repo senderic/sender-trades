@@ -516,6 +516,16 @@ class Pipeline:
         as the primary forecast data, falling back to the legacy
         CALL/PUT aggregation for deterministic strategies.
 
+        In the fallback path, a per-asset forecast is "unsupported" when
+        it draws on exactly one contributing strategy and that strategy
+        is not ``llm_trade`` -- i.e. a single deterministic signal with no
+        corroboration, either from a second deterministic strategy or
+        from the LLM. Such forecasts have their confidence clamped to
+        ``config.graph.unsupported_confidence_cap``. Two or more
+        deterministic strategies that independently agree are NOT
+        unsupported and are left untouched, since agreement across
+        independent signals is itself a form of corroboration.
+
         Args:
             results: Raw strategy results (pre-risk).
             decision: The final decision (for rationale / selected trade).
@@ -561,6 +571,7 @@ class Pipeline:
 
         # Fallback: legacy aggregation from deterministic strategies.
         forecasts = []
+        confidence_cap = self.config.graph.unsupported_confidence_cap
         for asset in assets:
             up_sum = 0.0
             down_sum = 0.0
@@ -568,11 +579,13 @@ class Pipeline:
             mag_count = 0
             up_sources: list[str] = []
             down_sources: list[str] = []
+            contributing_labels: set[str] = set()
 
             for r in results:
                 rec = r.recommendation
                 if rec is None or rec.asset != asset:
                     continue
+                contributing_labels.add(r.label)
                 src_labels = r.forecast_source_labels or [r.label]
                 if rec.direction == Direction.CALL:
                     up_sum += r.confidence
@@ -602,6 +615,32 @@ class Pipeline:
             direction: Literal["UP", "DOWN"] | None = (
                 "UP" if up_conf > down_conf else ("DOWN" if down_conf > up_conf else None)
             )
+            confidence = max(up_conf, down_conf)
+
+            # Unsupported forecast: exactly one contributing strategy, and
+            # it isn't the LLM. This DirectionalForecast is computed after
+            # DecisionAggregator.aggregate() has already selected today's
+            # trade from the raw (uncapped) StrategyResult confidences, so
+            # this cap does not change today's execution -- it corrects
+            # what gets published in the summary JSON and, via
+            # prediction_tracker.read_previous_forecasts, what confidence
+            # tomorrow's LLM prompt sees for this (date, asset) in its
+            # prediction history.
+            if (
+                len(contributing_labels) == 1
+                and "llm_trade" not in contributing_labels
+                and confidence > confidence_cap
+            ):
+                (sole_strategy,) = contributing_labels
+                logger.warning(
+                    "forecast_confidence_capped",
+                    asset=asset,
+                    strategy=sole_strategy,
+                    original_confidence=confidence,
+                    cap=confidence_cap,
+                )
+                confidence = confidence_cap
+
             pct = round((weighted_magnitude / mag_count) * 100 if mag_count > 0 else 0.0, 2)
             target_strike: float | None = None
             if direction and abs(pct) >= 0.1:
@@ -616,7 +655,7 @@ class Pipeline:
                 AssetForecast(
                     asset=asset,
                     direction=direction,
-                    confidence=max(up_conf, down_conf),
+                    confidence=confidence,
                     predicted_move_pct=pct if direction else 0.0,
                     target_strike=target_strike,
                     sources=up_sources + down_sources,

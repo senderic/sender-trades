@@ -113,11 +113,14 @@ class TestConsensusScoring:
         assert decision.recommendation.confidence == pytest.approx(0.50)
 
     def test_single_strategy_no_consensus_effect(self, tmp_path) -> None:
+        # Uses llm_trade rather than a deterministic strategy: a lone
+        # deterministic signal is now capped by the unsupported-signal guard,
+        # which would mask the consensus behaviour under test here.
         agg = DecisionAggregator(_make_settings(tmp_path))
-        rec = _make_rec("event", asset="SPY", direction=Direction.CALL)
+        rec = _make_rec("llm", asset="SPY", direction=Direction.CALL)
         rec.confidence = 0.60
         results = [
-            _make_result("event_driven", rec, 0.60),
+            _make_result("llm_trade", rec, 0.60),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
@@ -204,6 +207,10 @@ class TestForecastAlignment:
             _make_result(
                 "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
             ),
+            # Corroborating second strategy: without it the unsupported-signal
+            # cap blocks the trade for its own reasons and this test would no
+            # longer isolate the forecast-alignment behaviour it is named for.
+            _make_result("momentum", _make_rec("mom", asset="SPY", direction=Direction.CALL), 0.60),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
@@ -214,6 +221,10 @@ class TestForecastAlignment:
             _make_result(
                 "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
             ),
+            # Corroborating second strategy: without it the unsupported-signal
+            # cap blocks the trade for its own reasons and this test would no
+            # longer isolate the forecast-alignment behaviour it is named for.
+            _make_result("momentum", _make_rec("mom", asset="SPY", direction=Direction.CALL), 0.60),
             self._llm_prediction(asset="QQQ", direction="DOWN", confidence=0.60),
         ]
         decision = agg.aggregate(results)
@@ -227,7 +238,80 @@ class TestForecastAlignment:
             _make_result(
                 "event_driven", _make_rec("event", asset="SPY", direction=Direction.CALL), 0.77
             ),
+            # Corroborating second strategy: without it the unsupported-signal
+            # cap blocks the trade for its own reasons and this test would no
+            # longer isolate the forecast-alignment behaviour it is named for.
+            _make_result("momentum", _make_rec("mom", asset="SPY", direction=Direction.CALL), 0.60),
             self._llm_prediction(asset="SPY", direction="DOWN", confidence=0.52),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation is not None
+
+
+class TestUnsupportedSignalCap:
+    """A lone deterministic strategy must not be able to trade on its own.
+
+    Replays the two real incidents: on 2026-08-20 event_driven traded alone
+    at 0.75 (-$4) and on 2026-08-26 momentum traded alone at 0.80 (-$36),
+    both while the LLM graph and its monolithic fallback produced nothing.
+    Capping the forecast alone would not have stopped either, because
+    `_compute_forecast` runs AFTER `_phase_decide` and the trading path
+    never reads the forecast back.
+    """
+
+    @staticmethod
+    def _result(label: str, confidence: float, asset: str = "SPY", direction=Direction.CALL):
+        rec = _make_rec(label, asset=asset, direction=direction)
+        rec.confidence = confidence
+        return _make_result(label, rec, confidence)
+
+    def test_solo_deterministic_is_capped_and_blocked(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        # 2026-08-20 shape: event_driven alone at 0.75, everyone else silent.
+        results = [self._result("event_driven", 0.7519)]
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is None, "uncorroborated signal must not trade"
+        assert results[0].confidence == config.graph.unsupported_confidence_cap
+
+    def test_solo_momentum_is_blocked(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        # 2026-08-26 shape: momentum alone at 0.80.
+        decision = DecisionAggregator(config).aggregate([self._result("momentum", 0.7983)])
+        assert decision.recommendation is None
+
+    def test_corroborating_strategy_prevents_the_cap(self, tmp_path) -> None:
+        """Two deterministic strategies agreeing is real corroboration."""
+        config = Settings()
+        config.logging.json_dir = str(tmp_path)
+        results = [
+            self._result("event_driven", 0.75),
+            self._result("momentum", 0.70),
+        ]
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is not None
+        assert decision.recommendation.confidence > config.graph.unsupported_confidence_cap
+
+    def test_disagreeing_second_strategy_is_not_corroboration(self, tmp_path) -> None:
+        """A second strategy pointing the OTHER way must not count as support."""
+        config = Settings()
+        config.logging.json_dir = str(tmp_path)
+        results = [
+            self._result("event_driven", 0.75, direction=Direction.CALL),
+            self._result("momentum", 0.70, direction=Direction.PUT),
+        ]
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is None
+
+    def test_llm_trade_alone_is_not_capped(self, tmp_path) -> None:
+        """The LLM path carries its own checker/veto validation upstream."""
+        config = Settings()
+        config.logging.json_dir = str(tmp_path)
+        decision = DecisionAggregator(config).aggregate([self._result("llm_trade", 0.62)])
+        assert decision.recommendation is not None
+        assert decision.recommendation.confidence > config.graph.unsupported_confidence_cap
+
+    def test_cap_sits_below_both_strategy_gates(self) -> None:
+        """The cap only blocks if it is below the gates it must clear."""
+        config = Settings()
+        assert config.graph.unsupported_confidence_cap < config.strategies.momentum.min_confidence
+        assert config.graph.unsupported_confidence_cap < config.llm.trade_signal_min_confidence

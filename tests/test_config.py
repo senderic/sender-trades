@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import ClassVar
 
 from src.config import Settings
 
@@ -48,8 +49,9 @@ class TestGraphConfig:
         assert gc.prediction_timeout_sec == 30
         assert gc.checker_timeout_sec == 30
         assert gc.pick_trade_timeout_sec == 30
-        assert gc.total_deadline_sec == 240
+        assert gc.total_deadline_sec == 360
         assert gc.reserved_calls_for_fallback == 1
+        assert gc.unsupported_confidence_cap == 0.35
 
     def test_deadline_leaves_room_in_entry_window(self) -> None:
         """The graph must not be able to eat the whole entry window.
@@ -80,6 +82,81 @@ graph:
         assert settings.graph.enabled is True
         assert settings.graph.checker_contradiction_action == "penalize"
         assert settings.graph.checker_confidence_penalty == 0.25
+
+
+class TestObservedLatencyHeadroom:
+    """Node timeouts must clear the worst latency actually observed.
+
+    Sized from cron logs 2026-08-14..28. The original values gave the two
+    SLOWEST nodes the least headroom — research 60s vs 58.0s observed,
+    checker 45s vs 42.0s observed — which is why the checker node timed
+    out on 5 of 11 runs and dropped the graph into its fallback path.
+    These assertions exist so a future timeout edit cannot silently
+    recreate that failure.
+    """
+
+    # p100 latency per node, in seconds, from opencode_agent_ok events.
+    OBSERVED_PEAK: ClassVar[dict[str, float]] = {
+        "research": 58.0,
+        "prediction": 22.6,
+        "checker": 42.1,
+        "pick_trade": 28.8,
+    }
+    MIN_HEADROOM_SEC = 15.0
+
+    def test_every_node_timeout_clears_observed_peak(self) -> None:
+        gc = Settings.from_yaml("config.yaml").graph
+        for node, peak in self.OBSERVED_PEAK.items():
+            configured = getattr(gc, f"{node}_timeout_sec")
+            assert configured - peak >= self.MIN_HEADROOM_SEC, (
+                f"{node}: {configured}s leaves only {configured - peak:.1f}s over the "
+                f"observed {peak}s peak (need >= {self.MIN_HEADROOM_SEC}s)"
+            )
+
+    def test_monolithic_fallback_timeout_clears_graph_node_peaks(self) -> None:
+        """The fallback prompt is at least as heavy as any single node, so
+        its timeout must not be tighter than theirs. On 2026-08-26 it was
+        45s, timed out on both models, and left the run with no LLM output
+        at all."""
+        settings = Settings.from_yaml("config.yaml")
+        assert settings.llm.timeout_sec >= max(self.OBSERVED_PEAK.values()) + self.MIN_HEADROOM_SEC
+
+    def test_typical_full_graph_path_fits_the_deadline(self) -> None:
+        """Every node succeeding on its first model must fit the wall-clock
+        budget with room for one checker retry."""
+        gc = Settings.from_yaml("config.yaml").graph
+        typical = (
+            self.OBSERVED_PEAK["research"]
+            + self.OBSERVED_PEAK["prediction"]
+            + self.OBSERVED_PEAK["checker"]
+            + self.OBSERVED_PEAK["pick_trade"]
+        )
+        assert typical + self.OBSERVED_PEAK["checker"] < gc.total_deadline_sec
+
+
+class TestPreflightConfig:
+    def test_defaults_are_off(self) -> None:
+        """Preflight is opt-in: absent config must not change behaviour."""
+        pf = Settings().llm.preflight
+        assert pf.enabled is False
+        assert pf.select_by == "latency"
+        assert pf.max_age_sec == 6 * 3600
+
+    def test_enabled_in_project_config(self) -> None:
+        pf = Settings.from_yaml("config.yaml").llm.preflight
+        assert pf.enabled is True
+        assert pf.file_path == ".model-availability.json"
+
+    def test_probe_timeout_is_not_longer_than_the_run_it_protects(self) -> None:
+        """A probe slower than the real call teaches nothing useful."""
+        settings = Settings.from_yaml("config.yaml")
+        assert settings.llm.preflight.probe_timeout_sec <= settings.llm.timeout_sec
+
+    def test_staleness_window_covers_the_gap_to_the_run(self) -> None:
+        """Preflight fires ~15 min before the pipeline; the max age must
+        comfortably span that, but not so long it pins yesterday's winner."""
+        pf = Settings.from_yaml("config.yaml").llm.preflight
+        assert 15 * 60 < pf.max_age_sec <= 24 * 3600
 
 
 class TestGapFadeConfig:

@@ -249,7 +249,16 @@ class TestStreakDampening:
         agg = DecisionAggregator(settings)
         rec = self._rec(conf=0.8)
         results = [
-            StrategyResult(label="momentum", recommendation=rec, confidence=0.8, duration_ms=1.0)
+            StrategyResult(label="momentum", recommendation=rec, confidence=0.8, duration_ms=1.0),
+            # Corroborating strategy on the same asset+direction. Without it
+            # the unsupported-signal cap blocks the trade outright and this
+            # test can no longer observe the streak penalty it is asserting.
+            StrategyResult(
+                label="event_driven",
+                recommendation=self._rec(conf=0.5),
+                confidence=0.5,
+                duration_ms=1.0,
+            ),
         ]
         decision = agg.aggregate(results)
         # 2-loss streak → -0.10 penalty on 0.80 → 0.70
@@ -264,7 +273,16 @@ class TestStreakDampening:
         agg = DecisionAggregator(settings)
         rec = self._rec(conf=0.8)
         results = [
-            StrategyResult(label="momentum", recommendation=rec, confidence=0.8, duration_ms=1.0)
+            StrategyResult(label="momentum", recommendation=rec, confidence=0.8, duration_ms=1.0),
+            # Corroborating strategy on the same asset+direction. Without it
+            # the unsupported-signal cap blocks the trade outright and this
+            # test can no longer observe the streak penalty it is asserting.
+            StrategyResult(
+                label="event_driven",
+                recommendation=self._rec(conf=0.5),
+                confidence=0.5,
+                duration_ms=1.0,
+            ),
         ]
         decision = agg.aggregate(results)
         assert decision.recommendation.confidence == pytest.approx(0.80)

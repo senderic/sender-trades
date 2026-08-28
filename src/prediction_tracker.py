@@ -237,15 +237,45 @@ def load_history(log_dir: str | Path) -> list[dict]:
 
 
 def append_outcomes(log_dir: str | Path, outcomes: list[PredictionOutcome]) -> None:
+    """Merge new prediction outcomes into the history file, keyed by ``(date, asset)``.
+
+    Idempotent on ``(date, asset)``: re-running the pipeline for a day
+    that was already recorded REPLACES the existing record for that key
+    with the newer one rather than appending a second one. Duplicates
+    would otherwise silently double-weight that day when the history is
+    fed back to the LLM via :func:`format_history_for_prompt`.
+
+    Ordering is preserved: a replaced record keeps its original position
+    (so the file still reads chronologically), and a genuinely new
+    ``(date, asset)`` key is appended at the end, same as before. Any
+    pre-existing duplicate keys already in the file are collapsed to
+    their last occurrence as a side effect of the merge.
+
+    Args:
+        log_dir: Directory containing the prediction history file.
+        outcomes: New outcomes to record.
+    """
     if not outcomes:
         return
     path = _history_path(log_dir)
     existing = load_history(log_dir)
-    existing.extend(o.model_dump(mode="json") for o in outcomes)
+
+    indexed: dict[tuple[str, str], dict] = {
+        (entry.get("date", ""), entry.get("asset", "")): entry for entry in existing
+    }
+    order: list[tuple[str, str]] = list(indexed.keys())
+
+    for outcome in outcomes:
+        key = (outcome.date, outcome.asset)
+        if key not in indexed:
+            order.append(key)
+        indexed[key] = outcome.model_dump(mode="json")
+
+    merged = [indexed[key] for key in order]
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
-            json.dump(existing, f, indent=2)
+            json.dump(merged, f, indent=2)
     except OSError as e:
         logger.error("prediction_history_write_error", path=str(path), error=str(e))
 

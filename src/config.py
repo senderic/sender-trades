@@ -240,19 +240,17 @@ class LLMConfig(BaseModel):
     Covers every consumer in the pipeline: the graph nodes (research,
     predict, checker, pick-trade), the monolithic trade-signal fallback,
     and the re-synthesis of a degraded Atlas briefing. All of these are
-    analysis tasks, so every call uses a DeepSeek **Pro** model.
+    analysis tasks, so every call uses a capable reasoning model.
 
     Models are tried in order: :attr:`primary_model` first, then
-    :attr:`fallback_models`. The primary is served by the OpenCode Go
-    gateway (``opencode-go/*``); the fallback is served via OpenRouter
-    (``openrouter/*``). Both are paid. The free Zen namespace is
-    deliberately unused here — its flash-tier models are not up to the
-    research/prediction workload.
+    :attr:`fallback_models`. The primary is served via nvidia-direct
+    (``nvidia-direct/*``); the fallback is served via OpenRouter
+    (``openrouter/*``).
     """
 
     enabled: bool = True
     opencode_path: str = "opencode"
-    primary_model: str = "opencode-go/deepseek-v4-pro"
+    primary_model: str = "nvidia-direct/nemotron-3-ultra"
     fallback_models: list[str] = Field(
         default_factory=lambda: [
             "openrouter/deepseek/deepseek-v4-pro",

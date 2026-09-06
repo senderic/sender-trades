@@ -97,8 +97,8 @@ gap_fade:
 llm:
   enabled: true
   # Chain order: primary_model first, then fallback_models in order.
-  # Both are DeepSeek V4 Pro — the only model used for analysis/prediction.
-  primary_model: opencode-go/deepseek-v4-pro
+  # Primary is Nemotron 3 Ultra via nvidia-direct; fallback is DeepSeek V4 Pro via OpenRouter.
+  primary_model: nvidia-direct/nemotron-3-ultra
   fallback_models:
     - openrouter/deepseek/deepseek-v4-pro
   # Raised from 45s: the monolithic fallback prompt is large, and on

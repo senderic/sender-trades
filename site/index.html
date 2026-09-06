@@ -257,7 +257,7 @@
     <h1>sender-<span>trades</span></h1>
     <p>LLM-powered intraday directional prediction engine with optional 0DTE options execution for SPY and QQQ. Ingest the Atlas Morning Briefing, run LLM research, get a clear % direction prediction, and automatically execute paper/live trades via Alpaca with automatic exit management.</p>
     <div class="hero-badges">
-      <span class="badge green">● 135 tests</span>
+      <span class="badge green">● 127 tests</span>
       <span class="badge blue">● LLM-driven predictions</span>
       <span class="badge orange">● Per-asset % forecasts</span>
       <span class="badge green">● Paper trading</span>
@@ -356,9 +356,9 @@
           <p>When best_trade execution is enabled: max loss cap, realistic 0DTE strikes, bid/ask spread ≤20%, time checks (no entries after 2PM), and OCC chain existence validation.</p>
         </div>
         <div class="feature">
-          <div class="icon">🐳</div>
-          <h3>Docker + CI/CD</h3>
-          <p>Multi-stage Dockerfile, docker-compose for app + docs, GitHub Actions for CI (ruff + pytest, 127 tests) and GitHub Pages deploy.</p>
+          <div class="icon">⚙️</div>
+          <h3>CI/CD Pipeline</h3>
+          <p>GitHub Actions for CI (ruff + pytest, 127 tests) and GitHub Pages deploy. Multi-stage Dockerfile available for containerized runs.</p>
         </div>
       </div>
     </div>
@@ -482,13 +482,13 @@ Atlas-Briefing-2026.07.18.md              │     │ Live API   │     │
           <div class="stage-header">
             <span class="stage-num">2</span>
             <span class="stage-title">LLM prediction — per-asset forecast</span>
-            <span class="stage-meta">opencode/deepseek-v4-flash-free · 17.2s · free Zen tier</span>
+            <span class="stage-meta">nvidia-direct/nemotron-3-ultra · 17.2s · nvidia-direct</span>
           </div>
           <div class="stage-body">
             <p>
               <strong>LLM prompt</strong> asked for predictions covering ALL target
               assets (SPY and QQQ), not just a single trade. The free Zen model
-              <code>opencode/deepseek-v4-flash-free</code> responded first.
+              <code>nvidia-direct/nemotron-3-ultra</code> responded first.
             </p>
             <p>
               The LLM was instructed to cite <strong>root provenance</strong> — tracing

@@ -97,12 +97,12 @@ class TestOpencodeLLMClientInvoke:
             response = client.invoke("test prompt")
         assert response == "synthetic summary"
         # First successful model is the primary_model.
-        assert client.last_served_by == "opencode-go/deepseek-v4-pro"
+        assert client.last_served_by == "nvidia-direct/nemotron-3-ultra"
         assert client.last_fallback_hit is False
         assert client.paid_used is True
         assert mock_run.call_args.kwargs["timeout"] == 60
         args = mock_run.call_args.args[0]
-        assert "opencode-go/deepseek-v4-pro" in args
+        assert "nvidia-direct/nemotron-3-ultra" in args
 
     def test_primary_timeout_falls_back_to_fallback(self) -> None:
         cfg = LLMConfig(

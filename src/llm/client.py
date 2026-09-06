@@ -42,10 +42,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def is_paid_model(model_id: str) -> bool:
     """Return True for paid provider namespaces.
 
-    Both the OpenCode Go gateway (``opencode-go/*``) and OpenRouter
-    (``openrouter/*``) incur real charges.
+    The OpenCode Go gateway (``opencode-go/*``), OpenRouter
+    (``openrouter/*``), and nvidia-direct (``nvidia-direct/*``) incur real charges.
     """
-    return model_id.startswith("opencode-go/") or model_id.startswith("openrouter/")
+    return (
+        model_id.startswith("opencode-go/")
+        or model_id.startswith("openrouter/")
+        or model_id.startswith("nvidia-direct/")
+    )
 
 
 class OpencodeLLMClient:

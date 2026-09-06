@@ -97,26 +97,54 @@ gap_fade:
 llm:
   enabled: true
   # Chain order: primary_model first, then fallback_models in order.
-  # Both are DeepSeek V4 Pro — the only model used for analysis/prediction.
-  primary_model: opencode-go/deepseek-v4-pro
+  # Primary is Nemotron 3 Ultra via nvidia-direct; fallback is DeepSeek V4 Pro via OpenRouter.
+  primary_model: nvidia-direct/nemotron-3-ultra
   fallback_models:
     - openrouter/deepseek/deepseek-v4-pro
-  timeout_sec: 45
+  # Raised from 45s: the monolithic fallback prompt is large, and on
+  # 2026-08-26 both models timed out at 45s, leaving the fallback useless
+  # exactly when the graph had already failed.
+  timeout_sec: 90
   max_calls_per_run: 14
+
+  # Pre-flight model availability probe (see src/preflight.py). Runs ahead
+  # of the pipeline, probes the model chain, and writes file_path. The
+  # pipeline pins the healthiest model instead of discovering a dead or
+  # slow one mid-run at the cost of a full node timeout.
+  preflight:
+    enabled: true
+    file_path: .model-availability.json
+    # Ignore results older than this — model health changes hour to hour.
+    max_age_sec: 21600
+    probe_timeout_sec: 45
+    # "latency" pins the fastest healthy model; "order" keeps chain order
+    # (atlas behaviour). Latency is preferred here because node timeouts,
+    # not hard outages, are what actually break this pipeline.
+    select_by: latency
 
 graph:
   enabled: true
   fallback_to_monolithic: true
   checker_contradiction_action: veto
   checker_confidence_penalty: 0.15
-  research_timeout_sec: 60
-  prediction_timeout_sec: 45
-  checker_timeout_sec: 45
+  # Timeouts are per ATTEMPT and are sized from observed p100 latency
+  # (2026-08-14..28): research 58.0s, predict 22.6s, checker 42.0s,
+  # pick-trade 28.7s. The old values gave the two SLOWEST nodes the least
+  # headroom (research 2s, checker 3s), which is why the checker timed out
+  # on 5 of 11 runs. Raising them lowers end-to-end latency rather than
+  # raising it: a node that succeeds at 42s beats one that burns 45s,
+  # retries the fallback for another 45s, then fails into the monolithic path.
+  research_timeout_sec: 90
+  prediction_timeout_sec: 40
+  checker_timeout_sec: 90
   pick_trade_timeout_sec: 45
   # Wall-clock ceiling for the whole graph, sized against the 15-min
   # entry window (pipeline starts ~2 min before the open).
-  total_deadline_sec: 300
+  total_deadline_sec: 360
   reserved_calls_for_fallback: 1
+  # Below both strategy gates (0.40 / 0.45) so a lone deterministic signal
+  # with no LLM corroboration cannot clear them unaided. See src/config.py.
+  unsupported_confidence_cap: 0.35
 
 execution:
   entry:

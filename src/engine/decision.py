@@ -46,6 +46,7 @@ class DecisionAggregator:
 
         best = self._apply_consensus_scoring(best, results, valid_sorted)
         best = self._apply_streak_dampening(best)
+        best = self._apply_unsupported_cap(best, valid_sorted, results)
 
         if best.confidence < self.config.strategies.momentum.min_confidence:
             return DecisionOutput(
@@ -140,6 +141,108 @@ class DecisionAggregator:
         rec_a.rationale = merged_rationale
         rec_a.strategy_label = f"{a.label}+{b.label}"
         return rec_a
+
+    def _apply_unsupported_cap(
+        self,
+        best: StrategyResult,
+        valid_sorted: list[StrategyResult],
+        all_results: list[StrategyResult],
+    ) -> StrategyResult:
+        """Cap a recommendation that no other signal corroborates.
+
+        A trade resting on one deterministic strategy, with the LLM silent
+        and no second strategy agreeing, is the weakest evidence this
+        system can act on — yet nothing previously distinguished it from a
+        consensus pick, because the aggregator only ever compared
+        confidence numbers. On 2026-08-20 and 2026-08-26 the graph failed
+        AND the monolithic fallback returned nothing, leaving a lone
+        deterministic strategy to trade at 0.75 and 0.80 confidence. Both
+        lost.
+
+        Capping to :attr:`GraphConfig.unsupported_confidence_cap` (0.35,
+        below the 0.40 gate applied immediately after this call) turns
+        those into no-trade days rather than merely quieter ones.
+
+        Both ``recommendation.confidence`` and ``StrategyResult.confidence``
+        are set, because the gate downstream reads the latter and the
+        execution path reads the former.
+
+        Args:
+            best: The leading strategy result (mutated in place).
+            valid_sorted: Every result that produced a recommendation.
+            all_results: Every result, including LLM predictions that
+                carry no recommendation of their own.
+
+        Returns:
+            The (possibly capped) ``best``.
+        """
+        rec = best.recommendation
+        if rec is None:
+            return best
+        if best.label == "llm_trade":
+            return best
+
+        # Corroboration means any OTHER strategy recommending the same
+        # asset and direction. A second strategy pointing somewhere else is
+        # not support, so agreement is checked rather than mere presence.
+        corroborated = any(
+            other is not best
+            and other.recommendation is not None
+            and other.recommendation.asset == rec.asset
+            and other.recommendation.direction == rec.direction
+            for other in valid_sorted
+        )
+        # An LLM directional prediction counts too, even when the LLM
+        # declined to name a best_trade. That is the common case: the graph
+        # produces per-asset predictions on most days but only sometimes
+        # proposes a trade, and a deterministic pick moving the same way as
+        # the LLM's forecast is corroborated in every sense that matters.
+        # Only a run where the LLM produced nothing at all — the 08-20 and
+        # 08-26 shape — leaves a deterministic strategy genuinely alone.
+        if not corroborated:
+            wanted = "UP" if rec.direction == Direction.CALL else "DOWN"
+            corroborated = any(
+                r.label == "llm_trade"
+                and (pred := (r.predictions or {}).get(rec.asset)) is not None
+                and pred.direction == wanted
+                for r in all_results
+            )
+        if corroborated:
+            return best
+
+        # An LLM prediction that explicitly DISAGREES is a stronger and more
+        # specific condition than "nothing corroborates this", and
+        # `_forecast_conflict` already blocks it downstream with a rationale
+        # naming the conflict. Capping here would pre-empt that check and
+        # replace an actionable message with a generic "below threshold",
+        # so defer — but only while that guard is actually enabled.
+        if self.config.general.require_forecast_alignment:
+            wanted = "UP" if rec.direction == Direction.CALL else "DOWN"
+            disagrees = any(
+                r.label == "llm_trade"
+                and (pred := (r.predictions or {}).get(rec.asset)) is not None
+                and pred.direction != wanted
+                for r in all_results
+            )
+            if disagrees:
+                return best
+
+        cap = self.config.graph.unsupported_confidence_cap
+        if best.confidence <= cap:
+            return best
+
+        original = best.confidence
+        rec.confidence = cap
+        best.confidence = cap
+        logger.warning(
+            "unsupported_signal_capped",
+            strategy=best.label,
+            asset=rec.asset,
+            direction=rec.direction.value,
+            original_confidence=round(original, 4),
+            cap=cap,
+        )
+        return best
 
     def _apply_consensus_scoring(
         self,

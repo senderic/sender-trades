@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 .env
 .atlas-state.json
+.model-availability.json
 .DS_Store
 *.egg-info/
 dist/

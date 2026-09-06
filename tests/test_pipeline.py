@@ -274,6 +274,174 @@ async def test_compute_forecast_falls_back_to_strategy_label_when_unset(
     assert "momentum" in spy.sources
 
 
+@pytest.mark.asyncio
+async def test_compute_forecast_caps_single_strategy_unsupported_confidence(
+    tmp_path,
+) -> None:
+    """Reproduces the 2026-08-26 shape: the LLM graph AND the monolithic
+    fallback both returned nothing, so ``_compute_forecast`` fell into the
+    legacy aggregation with exactly one deterministic strategy
+    (``event_driven``) at confidence 1.0. That is an unsupported forecast
+    and must be clamped to ``config.graph.unsupported_confidence_cap``.
+    """
+    config = Settings()
+    config.logging.json_dir = str(tmp_path / "logs")
+    cid = uuid.uuid4().hex[:12]
+    logger = setup_logging(config, cid)
+    pipeline = Pipeline(config, cid, logger)
+
+    recommendation = TradeRecommendation(
+        correlation_id=cid,
+        strategy_label="event_driven",
+        asset="SPY",
+        direction=Direction.CALL,
+        confidence=1.0,
+        target_strike=773.6,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={},
+        expires_at="2026-08-26",
+        must_close_before="15:30",
+    )
+    results = [
+        StrategyResult(
+            label="llm_trade",
+            recommendation=None,
+            predictions=None,
+            confidence=0.0,
+            debug_trace={"skip_reason": "llm_no_response"},
+        ),
+        StrategyResult(
+            label="event_driven",
+            recommendation=recommendation,
+            confidence=1.0,
+        ),
+    ]
+
+    forecast = pipeline._compute_forecast(
+        results,
+        DecisionOutput(
+            selected_label="event_driven",
+            recommendation=recommendation,
+            rationale="test",
+        ),
+    )
+
+    spy = next(f for f in forecast.forecasts if f.asset == "SPY")
+    assert spy.direction == "UP"
+    assert spy.confidence == config.graph.unsupported_confidence_cap
+    assert spy.confidence < 1.0
+
+
+@pytest.mark.asyncio
+async def test_compute_forecast_does_not_cap_two_agreeing_strategies(tmp_path) -> None:
+    """Two deterministic strategies that independently agree corroborate
+    each other and must NOT be treated as unsupported, even though neither
+    is the LLM.
+    """
+    config = Settings()
+    config.logging.json_dir = str(tmp_path / "logs")
+    cid = uuid.uuid4().hex[:12]
+    logger = setup_logging(config, cid)
+    pipeline = Pipeline(config, cid, logger)
+
+    rec_momentum = TradeRecommendation(
+        correlation_id=cid,
+        strategy_label="momentum",
+        asset="SPY",
+        direction=Direction.CALL,
+        confidence=0.9,
+        target_strike=773.6,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={},
+        expires_at="2026-08-26",
+        must_close_before="15:30",
+    )
+    rec_event = TradeRecommendation(
+        correlation_id=cid,
+        strategy_label="event_driven",
+        asset="SPY",
+        direction=Direction.CALL,
+        confidence=0.95,
+        target_strike=774.0,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={},
+        expires_at="2026-08-26",
+        must_close_before="15:30",
+    )
+    results = [
+        StrategyResult(label="momentum", recommendation=rec_momentum, confidence=0.9),
+        StrategyResult(label="event_driven", recommendation=rec_event, confidence=0.95),
+    ]
+
+    forecast = pipeline._compute_forecast(
+        results,
+        DecisionOutput(
+            selected_label="event_driven",
+            recommendation=rec_event,
+            rationale="test",
+        ),
+    )
+
+    spy = next(f for f in forecast.forecasts if f.asset == "SPY")
+    assert spy.direction == "UP"
+    # Both strategies agree UP, so up_conf == (0.9+0.95)/(0.9+0.95) == 1.0
+    # and it must NOT be capped despite exceeding the cap.
+    assert spy.confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_compute_forecast_does_not_cap_llm_only_single_strategy(tmp_path) -> None:
+    """A single contributing strategy labelled ``llm_trade`` must not be
+    treated as unsupported -- it carries LLM corroboration even when it
+    is the sole contributor in the legacy aggregation branch.
+    """
+    config = Settings()
+    config.logging.json_dir = str(tmp_path / "logs")
+    cid = uuid.uuid4().hex[:12]
+    logger = setup_logging(config, cid)
+    pipeline = Pipeline(config, cid, logger)
+
+    recommendation = TradeRecommendation(
+        correlation_id=cid,
+        strategy_label="llm_trade",
+        asset="SPY",
+        direction=Direction.CALL,
+        confidence=0.9,
+        target_strike=773.6,
+        contracts=1,
+        order_type="market",
+        position_intent=PositionIntent.BUY_TO_OPEN,
+        rationale={},
+        expires_at="2026-08-26",
+        must_close_before="15:30",
+    )
+    results = [
+        StrategyResult(label="llm_trade", recommendation=recommendation, confidence=0.9),
+    ]
+
+    forecast = pipeline._compute_forecast(
+        results,
+        DecisionOutput(
+            selected_label="llm_trade",
+            recommendation=recommendation,
+            rationale="test",
+        ),
+    )
+
+    spy = next(f for f in forecast.forecasts if f.asset == "SPY")
+    assert spy.direction == "UP"
+    # up_conf normalises to 1.0 for a single voting strategy (up_sum/total),
+    # same as the event_driven case -- the cap must not apply here because
+    # the sole contributor is llm_trade.
+    assert spy.confidence == 1.0
+
+
 class TestPreMarketGapGuardIntegration:
     def _market_with_gap(self, asset: str, current: float, prev_close: float) -> dict:
         return {

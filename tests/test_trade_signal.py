@@ -255,7 +255,7 @@ class TestLLMTradeStrategy:
         assert result.recommendation.direction == Direction.PUT
         assert result.recommendation.confidence == 0.78
         assert result.recommendation.strategy_label == "llm_trade"
-        assert result.debug_trace["served_by"] == "opencode-go/deepseek-v4-pro"
+        assert result.debug_trace["served_by"] == "nvidia-direct/nemotron-3-ultra"
         assert result.debug_trace["paid_used"] is True
         assert "tech selloff" in result.recommendation.rationale["llm_rationale"].lower()
         assert result.recommendation.rationale["llm_sources"] == [

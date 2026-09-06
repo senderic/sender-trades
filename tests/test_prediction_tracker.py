@@ -1,7 +1,16 @@
+import collections
+import json
+from pathlib import Path
+
+import pytest
+
+from src.models.recommendation import PredictionOutcome
 from src.prediction_tracker import (
     _compute_per_asset_record,
     _compute_source_reliability,
+    append_outcomes,
     format_history_for_prompt,
+    load_history,
 )
 
 
@@ -147,3 +156,73 @@ class TestFormatHistoryForPrompt:
         ]
         prompt = format_history_for_prompt(history)
         assert "Source reliability" not in prompt
+
+
+def _outcome(date, asset, direction="UP", confidence=0.6, result="success"):
+    return PredictionOutcome(
+        date=date,
+        correlation_id="cid-1",
+        asset=asset,
+        predicted_direction=direction,
+        confidence=confidence,
+        result=result,
+    )
+
+
+class TestAppendOutcomes:
+    def test_new_date_asset_appends(self, tmp_path) -> None:
+        log_dir = tmp_path / "logs"
+        append_outcomes(str(log_dir), [_outcome("2026-08-14", "SPY")])
+        append_outcomes(str(log_dir), [_outcome("2026-08-15", "SPY")])
+
+        history = load_history(str(log_dir))
+        assert len(history) == 2
+        assert [(h["date"], h["asset"]) for h in history] == [
+            ("2026-08-14", "SPY"),
+            ("2026-08-15", "SPY"),
+        ]
+
+    def test_rerun_same_date_asset_replaces_not_appends(self, tmp_path) -> None:
+        log_dir = tmp_path / "logs"
+        append_outcomes(str(log_dir), [_outcome("2026-08-14", "SPY", result="fail")])
+        append_outcomes(str(log_dir), [_outcome("2026-08-14", "SPY", result="success")])
+
+        history = load_history(str(log_dir))
+        assert len(history) == 1
+        assert history[0]["result"] == "success"
+
+    def test_replace_keeps_original_position(self, tmp_path) -> None:
+        log_dir = tmp_path / "logs"
+        append_outcomes(
+            str(log_dir),
+            [
+                _outcome("2026-08-14", "SPY"),
+                _outcome("2026-08-14", "QQQ"),
+            ],
+        )
+        # Re-run SPY only -- it must keep its original (first) slot, not
+        # move to the end, so the file still reads chronologically.
+        append_outcomes(str(log_dir), [_outcome("2026-08-14", "SPY", result="fail")])
+
+        history = load_history(str(log_dir))
+        assert [(h["date"], h["asset"]) for h in history] == [
+            ("2026-08-14", "SPY"),
+            ("2026-08-14", "QQQ"),
+        ]
+        assert history[0]["result"] == "fail"
+
+    def test_empty_outcomes_is_noop(self, tmp_path) -> None:
+        log_dir = tmp_path / "logs"
+        append_outcomes(str(log_dir), [])
+        assert load_history(str(log_dir)) == []
+
+
+class TestPredictionHistoryFileHasNoDuplicates:
+    def test_cleaned_history_file_has_no_duplicate_date_asset_pairs(self) -> None:
+        history_path = Path(__file__).resolve().parent.parent / "logs" / "prediction-history.json"
+        if not history_path.exists():
+            pytest.skip("logs/prediction-history.json not present in this environment")
+        history = json.loads(history_path.read_text())
+        counts = collections.Counter((r["date"], r["asset"]) for r in history)
+        duplicates = [key for key, count in counts.items() if count > 1]
+        assert duplicates == []

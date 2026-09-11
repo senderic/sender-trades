@@ -282,11 +282,10 @@ class LLMConfig(BaseModel):
     analysis tasks, so every call uses a capable reasoning model.
 
     Models are tried in order: :attr:`primary_model` first, then
-    :attr:`fallback_models`. The primary is served via the Zen opencode
-    route (``opencode/*``); the fallbacks are served via nvidia-direct
-    (``nvidia-direct/*``), then the paid OpenCode Go gateway
-    (``opencode-go/*``), then OpenRouter (``openrouter/*``) as a last
-    resort (its account was nearly out of credits as of 2026-09-10).
+    :attr:`fallback_models`. Muse Spark 1.3 via the Zen opencode route
+    (``opencode/*``) is the model of record; Nemotron 3 Ultra via
+    nvidia-direct (``nvidia-direct/*``) is the only fallback. DeepSeek
+    was removed from the chain on 2026-09-11 (owner decision).
     """
 
     enabled: bool = True
@@ -295,8 +294,6 @@ class LLMConfig(BaseModel):
     fallback_models: list[str] = Field(
         default_factory=lambda: [
             "nvidia-direct/nvidia/nemotron-3-ultra-550b-a55b",
-            "opencode-go/deepseek-v4-pro",
-            "openrouter/deepseek/deepseek-v4-pro",
         ]
     )
     timeout_sec: int = 45

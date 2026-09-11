@@ -23,12 +23,17 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$DIR/logs/cron/safety-close-$TIMESTAMP.log"
 mkdir -p "$DIR/logs/cron"
 
-uv run python -c "
+# Serialize with the intraday monitor so the two writers cannot race on the
+# same audit JSON (the monitor may fire the SL while this sweep reconciles).
+(
+  flock -n 200 || exit 0
+  uv run python -c "
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import LimitOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, QueryOrderStatus
 import structlog, os, sys, json, pytz, time
 import datetime as _dt
+from src.json_utils import load_json_tolerant
 
 logger = structlog.get_logger()
 
@@ -98,8 +103,14 @@ for day_dir in sorted(os.listdir(log_root)):
         fpath = os.path.join(day_path, fname)
         try:
             with open(fpath, 'r') as fh:
-                trade_data = json.load(fh)
+                # Tolerates both a normal single-JSON-object file and a
+                # legacy file left as several concatenated JSON objects
+                # by a trade that never reached finalize() (see
+                # src.json_utils and src.execution.context.TradeContext).
+                trade_data = load_json_tolerant(fh.read())
         except Exception:
+            continue
+        if not trade_data:
             continue
 
         exit_reason = trade_data.get('exit_reason')
@@ -197,8 +208,10 @@ for day_dir in sorted(os.listdir(log_root)):
                 'timestamp': _dt.datetime.now(la_tz).isoformat(),
             })
 
-        with open(fpath, 'w') as fh:
+        tmp_path = fpath + '.tmp'
+        with open(tmp_path, 'w') as fh:
             json.dump(trade_data, fh, indent=2, default=str)
+        os.replace(tmp_path, fpath)
 
         logger.info('safety_close_audit_reconciled',
                      trade_id=trade_data.get('trade_id'),
@@ -211,5 +224,6 @@ for day_dir in sorted(os.listdir(log_root)):
                      pnl=pnl,
                      pnl_pct=pnl_pct)
 " > "$LOG_FILE" 2>&1
+) 200>"$DIR/.safety_close.lock"
 
 logger -t sender-trades "safety-close complete log=$LOG_FILE"

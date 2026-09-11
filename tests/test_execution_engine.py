@@ -12,7 +12,7 @@ import pytest
 
 from src.execution.client import AlpacaBrokerClient
 from src.execution.engine import ExecutionEngine
-from src.execution.models import ExecutionConfig, OrderResult, TenacityConfig
+from src.execution.models import ExecutionConfig, ExitAdvisorConfig, OrderResult, TenacityConfig
 from src.models.recommendation import Direction, PositionIntent, TradeRecommendation
 
 
@@ -238,3 +238,107 @@ class TestExecutionEngineExceptionHandling:
         result = await engine.execute(_rec(), "test-corr")
         assert result is not None
         assert result["trade_id"] is not None
+
+
+def _make_engine_with_exec_config(
+    client: AlpacaBrokerClient, tmp_path: Path, exec_config: ExecutionConfig
+) -> ExecutionEngine:
+    engine = ExecutionEngine(client, exec_config, log_dir=str(tmp_path))
+    engine._monitor_interval = 0.01
+    engine._wait_for_option_open = False
+    return engine
+
+
+def _make_filled_client() -> AlpacaBrokerClient:
+    config = ExecutionConfig(tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05))
+    config.entry.entry_window_minutes = 1
+    client = AlpacaBrokerClient("key", "secret", paper=True, config=config)
+    client.submit_order = AsyncMock(return_value=_make_result(status="new"))
+    client.cancel_order = AsyncMock()
+    client.get_option_quote = AsyncMock(return_value=None)
+    client.get_underlying_quote = AsyncMock(
+        return_value={"symbol": "SPY", "last": 600.0, "bid": 599.0, "ask": 600.1}
+    )
+    return client
+
+
+class TestExecutionEngineAdvisorTpPlacement:
+    """TP placement at entry, with the profit-exit advisor enabled vs disabled.
+
+    See src/execution/exit_advisor.py: when the advisor is enabled, the
+    fixed +100% TP that cuts off winning days is replaced by a far
+    safety cap (or no resting order at all).
+    """
+
+    @pytest.mark.asyncio
+    async def test_advisor_disabled_places_configured_tp(self, tmp_path: Path) -> None:
+        client = _make_filled_client()
+        exec_config = ExecutionConfig(
+            tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05),
+            exit_advisor=ExitAdvisorConfig(enabled=False),
+        )
+        exec_config.entry.entry_window_minutes = 1
+        exec_config.exit_strategy.time_deadline_est = "23:59"
+        engine = _make_engine_with_exec_config(client, tmp_path, exec_config)
+        fill_result = _make_result(status="filled", filled_qty="1", filled_avg_price="0.50")
+        engine._wait_for_fill = AsyncMock(return_value=fill_result)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        assert client.submit_order.await_count == 2  # entry + TP
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        exits_placed = next(e for e in data["entries"] if e["event_type"] == "exits_placed")
+        assert exits_placed["tp_order_id"] == ORD_ID
+        assert exits_placed["tp_level"] == pytest.approx(1.00)  # 0.50 * (1 + 100/100)
+        assert "TP placed at Alpaca" in exits_placed["note"]
+
+    @pytest.mark.asyncio
+    async def test_advisor_enabled_places_safety_cap_tp(self, tmp_path: Path) -> None:
+        client = _make_filled_client()
+        exec_config = ExecutionConfig(
+            tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05),
+            exit_advisor=ExitAdvisorConfig(enabled=True, safety_cap_pct=400.0),
+        )
+        exec_config.entry.entry_window_minutes = 1
+        exec_config.exit_strategy.time_deadline_est = "23:59"
+        engine = _make_engine_with_exec_config(client, tmp_path, exec_config)
+        fill_result = _make_result(status="filled", filled_qty="1", filled_avg_price="0.50")
+        engine._wait_for_fill = AsyncMock(return_value=fill_result)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        assert client.submit_order.await_count == 2  # entry + safety-cap TP
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        exits_placed = next(e for e in data["entries"] if e["event_type"] == "exits_placed")
+        assert exits_placed["tp_order_id"] == ORD_ID
+        assert exits_placed["tp_level"] == pytest.approx(2.50)  # 0.50 * (1 + 400/100)
+        assert "advisor" in exits_placed["note"].lower()
+
+    @pytest.mark.asyncio
+    async def test_advisor_enabled_with_no_safety_cap_places_no_tp(self, tmp_path: Path) -> None:
+        client = _make_filled_client()
+        exec_config = ExecutionConfig(
+            tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05),
+            exit_advisor=ExitAdvisorConfig(enabled=True, safety_cap_pct=None),
+        )
+        exec_config.entry.entry_window_minutes = 1
+        exec_config.exit_strategy.time_deadline_est = "23:59"
+        engine = _make_engine_with_exec_config(client, tmp_path, exec_config)
+        fill_result = _make_result(status="filled", filled_qty="1", filled_avg_price="0.50")
+        engine._wait_for_fill = AsyncMock(return_value=fill_result)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        assert client.submit_order.await_count == 1  # entry only, no TP order
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        exits_placed = next(e for e in data["entries"] if e["event_type"] == "exits_placed")
+        assert exits_placed["tp_order_id"] is None
+        assert exits_placed["tp_level"] is None
+        # SL is unaffected regardless of the advisor -- always set.
+        assert exits_placed["sl_level"] == pytest.approx(0.25)  # 0.50 * (1 - 50/100)

@@ -15,6 +15,7 @@ any position whose mark has fallen to or below its recorded ``sl_level``.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -22,13 +23,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as dtime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from src.execution import exit_advisor
 from src.execution.client import AlpacaBrokerClient
 from src.json_utils import load_json_tolerant
 from src.timezone import ET_TZ
+
+if TYPE_CHECKING:
+    from src.execution.models import ExecutionConfig
 
 logger = structlog.get_logger()
 
@@ -37,6 +42,16 @@ MONITOR_OPEN = dtime(9, 30)
 MONITOR_CLOSE = dtime(15, 25)
 
 PENDING_REASONS = (None, "pending")
+
+# Fill-confirmation polling for a close order (SL / advisor_exit /
+# trailing_stop all go through the same close path). Bounded well under
+# the 3-minute cron interval -- 5 attempts * 3s = 15s worst case.
+CLOSE_FILL_POLL_ATTEMPTS = 5
+CLOSE_FILL_POLL_INTERVAL_SEC = 3.0
+# Each unfilled retry escalates (lower limit_mult = more aggressive,
+# closer to/through the bid) up to this floor.
+CLOSE_LIMIT_MULT_STEP = 0.1
+CLOSE_LIMIT_MULT_FLOOR = 0.5
 
 
 @dataclass
@@ -195,12 +210,205 @@ def write_result(
     os.replace(tmp, trade.path)
 
 
+def write_close_attempt(
+    trade: OpenTrade,
+    attempted_exit_reason: str,
+    attempted_limit_price: float,
+    order_id: str | None,
+    now: datetime | None = None,
+) -> int:
+    """Record an UNFILLED close attempt without resolving the trade.
+
+    Deliberately leaves ``exit_reason`` untouched (still "pending" / not
+    yet set) so the trade is still picked up as open by
+    :func:`extract_open_trade` on the NEXT monitor run and the close is
+    retried -- more aggressively, see :func:`_close_position` -- instead
+    of the trade being silently orphaned: writing a terminal
+    ``exit_reason`` for a sell that never actually filled would leave
+    the real position open at Alpaca while the audit already reads as
+    closed, with nothing left to notice or retry it.
+
+    Returns:
+        The new ``close_attempts`` count (used to escalate aggressiveness
+        on the next retry).
+    """
+    data = dict(trade.data)
+    attempts = int(data.get("close_attempts", 0) or 0) + 1
+    data["close_attempts"] = attempts
+    now = now if now is not None else datetime.now(ET_TZ)
+
+    events = data.get("entries") if isinstance(data.get("entries"), list) else None
+    if events is None and isinstance(data.get("events"), list):
+        events = data["events"]
+    entry = {
+        "event_type": "close_attempt_unfilled",
+        "attempted_exit_reason": attempted_exit_reason,
+        "attempted_limit_price": attempted_limit_price,
+        "order_id": order_id,
+        "attempt_number": attempts,
+        "timestamp": now.isoformat(),
+    }
+    if isinstance(events, list):
+        events.append(entry)
+        data["entries"] = events
+
+    trade.data = data
+    tmp = trade.path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str))
+    os.replace(tmp, trade.path)
+    return attempts
+
+
+async def _poll_fill(client: AlpacaBrokerClient, order_id: str) -> Any | None:
+    """Poll an order until it fills or reaches a terminal non-fill state.
+
+    Returns the filled :class:`OrderResult` only when ``status ==
+    "filled"``. Returns ``None`` for anything else (still open,
+    partially filled, rejected, cancelled, or unreachable) -- callers
+    must treat all of those as "did not resolve the position" and never
+    write a terminal ``exit_reason``. Partially-filled orders are
+    deliberately treated the same as unfilled here rather than closing
+    out a partial position: a true partial-fill reconciliation (residual
+    qty accounting) is out of scope for this monitor and would risk
+    over-selling on the next retry.
+    """
+    for _ in range(CLOSE_FILL_POLL_ATTEMPTS):
+        try:
+            order = await client.get_order(order_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("intraday_monitor_poll_fill_error", order_id=order_id, error=str(exc))
+            return None
+        if order.status == "filled":
+            return order
+        if order.status in ("rejected", "canceled", "expired"):
+            return None
+        await asyncio.sleep(CLOSE_FILL_POLL_INTERVAL_SEC)
+    return None
+
+
+async def _close_position(
+    trade: OpenTrade,
+    client: AlpacaBrokerClient,
+    mark: float,
+    exit_reason: str,
+    limit_mult: float,
+    now: datetime | None,
+) -> dict[str, Any] | None:
+    """Cancel any resting TP, sell at an aggressive limit, and CONFIRM the fill.
+
+    Shared by the stop-loss hard rail and the profit-exit advisor path --
+    both close a position the same way, they differ only in why. A 0DTE
+    bid/ask spread can be wider than ``limit_mult``'s cushion, so the
+    sell is not assumed to have filled just because it was submitted:
+    this polls for an actual fill (see :func:`_poll_fill`) before ever
+    writing a terminal ``exit_reason``. If it doesn't fill, the order is
+    cancelled, the attempt is recorded via :func:`write_close_attempt`
+    (which leaves the trade "pending"), and the next monitor run retries
+    with a more aggressive limit (``limit_mult`` steps down by
+    ``CLOSE_LIMIT_MULT_STEP`` per prior attempt, floored at
+    ``CLOSE_LIMIT_MULT_FLOOR``).
+
+    Returns:
+        The closed-trade summary dict when the sell actually filled, or
+        ``None`` when it did not -- callers must NOT treat ``None`` as a
+        failure to be ignored; the trade is still open and will be
+        retried on the next pass.
+    """
+    if trade.tp_order_id:
+        try:
+            await client.cancel_order(trade.tp_order_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "intraday_monitor_cancel_tp_failed",
+                trade_id=trade.trade_id,
+                tp_order_id=trade.tp_order_id,
+                error=str(exc),
+            )
+
+    prior_attempts = int(trade.data.get("close_attempts", 0) or 0)
+    effective_mult = max(
+        limit_mult - CLOSE_LIMIT_MULT_STEP * prior_attempts, CLOSE_LIMIT_MULT_FLOOR
+    )
+    limit_price = round(max(mark * effective_mult, 0.01), 2)
+    sell = await client.submit_order(
+        {
+            "symbol": trade.occ_symbol,
+            "qty": trade.contracts,
+            "side": "sell",
+            "type": "limit",
+            "limit_price": limit_price,
+            "time_in_force": "day",
+        }
+    )
+    sell_order_id = getattr(sell, "order_id", None)
+
+    filled_order = await _poll_fill(client, sell_order_id) if sell_order_id else None
+    if filled_order is None:
+        if sell_order_id:
+            try:
+                await client.cancel_order(sell_order_id)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug(
+                    "intraday_monitor_cancel_unfilled_close_failed",
+                    trade_id=trade.trade_id,
+                    order_id=sell_order_id,
+                    error=str(exc),
+                )
+        attempts = write_close_attempt(trade, exit_reason, limit_price, sell_order_id, now)
+        logger.warning(
+            "intraday_monitor_close_unfilled",
+            trade_id=trade.trade_id,
+            exit_reason=exit_reason,
+            attempted_limit_price=limit_price,
+            attempt=attempts,
+        )
+        return None
+
+    exit_price = float(filled_order.filled_avg_price) if filled_order.filled_avg_price else mark
+    pnl, pnl_pct = compute_pnl(trade.entry_price, exit_price, trade.contracts)
+    write_result(
+        trade,
+        exit_price=exit_price,
+        exit_reason=exit_reason,
+        pnl=pnl,
+        pnl_pct=pnl_pct,
+        sell_order_id=filled_order.order_id,
+        now=now,
+    )
+    logger.info(
+        "intraday_monitor_closed",
+        trade_id=trade.trade_id,
+        exit_price=exit_price,
+        exit_reason=exit_reason,
+        pnl=pnl,
+        pnl_pct=pnl_pct,
+    )
+    return {
+        "trade_id": trade.trade_id,
+        "asset": trade.asset,
+        "direction": trade.direction,
+        "symbol": trade.occ_symbol,
+        "exit_price": exit_price,
+        "exit_reason": exit_reason,
+        "pnl": pnl,
+        "succeeded": True,
+    }
+
+
 async def monitor_trade(
     trade: OpenTrade,
     client: AlpacaBrokerClient,
     now: datetime | None = None,
+    exec_config: ExecutionConfig | None = None,
+    llm_primary_model: str = "",
 ) -> dict[str, Any] | None:
-    """Poll one open trade's mark and close it if the stop is breached.
+    """Poll one open trade's mark and close it if a rail (or the advisor) fires.
+
+    Hard rail FIRST, always, unconditionally: the -50% stop-loss below is
+    evaluated and can close the trade before anything else runs. Only
+    once it does NOT fire does the (optional) profit-exit advisor get a
+    turn -- see ``src.execution.exit_advisor``, which manages only the
+    profit side of the exit and can never touch the stop-loss.
 
     Returns an info dict when triggered, else None.
     """
@@ -213,70 +421,41 @@ async def monitor_trade(
         logger.debug("intraday_monitor_no_quote", trade_id=trade.trade_id, symbol=trade.occ_symbol)
         return None
 
-    if not should_trigger(mark, trade.sl_level):
-        return None
+    # Hard rail: stop-loss. Deterministic, always first, cannot be
+    # overridden or delayed by the advisor below.
+    if should_trigger(mark, trade.sl_level):
+        logger.info(
+            "intraday_monitor_sl_triggered",
+            trade_id=trade.trade_id,
+            asset=trade.asset,
+            direction=trade.direction,
+            symbol=trade.occ_symbol,
+            mark=round(mark, 2),
+            sl_level=trade.sl_level,
+        )
+        return await _close_position(trade, client, mark, "stop_loss", 0.7, now)
 
-    logger.info(
-        "intraday_monitor_sl_triggered",
-        trade_id=trade.trade_id,
-        asset=trade.asset,
-        direction=trade.direction,
-        symbol=trade.occ_symbol,
-        mark=round(mark, 2),
-        sl_level=trade.sl_level,
-    )
+    if exec_config is not None and exec_config.exit_advisor.enabled:
+        from src.execution.engine import ExecutionEngine  # deferred, avoids import-time coupling
 
-    if trade.tp_order_id:
-        try:
-            await client.cancel_order(trade.tp_order_id)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning(
-                "intraday_monitor_cancel_tp_failed",
-                trade_id=trade.trade_id,
-                tp_order_id=trade.tp_order_id,
-                error=str(exc),
+        underlying = await client.get_underlying_quote(trade.asset or "")
+        underlying_spot = ExecutionEngine._extract_spot(underlying)
+
+        decision = await exit_advisor.process(
+            trade,
+            mark,
+            quote,
+            underlying_spot,
+            exec_config,
+            llm_primary_model,
+            now=now,
+        )
+        if decision is not None and decision.should_exit:
+            return await _close_position(
+                trade, client, mark, decision.exit_reason, decision.limit_mult, now
             )
 
-    limit_price = round(max(mark * 0.7, 0.01), 2)
-    sell = await client.submit_order(
-        {
-            "symbol": trade.occ_symbol,
-            "qty": trade.contracts,
-            "side": "sell",
-            "type": "limit",
-            "limit_price": limit_price,
-            "time_in_force": "day",
-        }
-    )
-
-    exit_price = mark
-    pnl, pnl_pct = compute_pnl(trade.entry_price, mark, trade.contracts)
-    write_result(
-        trade,
-        exit_price=exit_price,
-        exit_reason="stop_loss",
-        pnl=pnl,
-        pnl_pct=pnl_pct,
-        sell_order_id=getattr(sell, "order_id", None),
-        now=now,
-    )
-    logger.info(
-        "intraday_monitor_closed",
-        trade_id=trade.trade_id,
-        exit_price=exit_price,
-        exit_reason="stop_loss",
-        pnl=pnl,
-        pnl_pct=pnl_pct,
-    )
-    return {
-        "trade_id": trade.trade_id,
-        "asset": trade.asset,
-        "direction": trade.direction,
-        "symbol": trade.occ_symbol,
-        "exit_price": exit_price,
-        "pnl": pnl,
-        "succeeded": True,
-    }
+    return None
 
 
 def find_open_trades(log_dir: str | Path, trade_date: str | None = None) -> list[OpenTrade]:
@@ -304,7 +483,31 @@ def find_open_trades(log_dir: str | Path, trade_date: str | None = None) -> list
     return open_trades
 
 
-async def run(log_dir: str | Path = "logs", trade_date: str | None = None) -> dict[str, Any]:
+def _load_exec_config(config_path: str) -> tuple[ExecutionConfig, str]:
+    """Load ``execution:`` config + ``llm.primary_model`` for this run.
+
+    Never raises: a broken/missing config file must not break the
+    stop-loss rail, which does not depend on this at all -- only the
+    optional profit-exit advisor does. Falls back to defaults
+    (``exit_advisor.enabled = False``) on any failure.
+    """
+    from src.config import Settings  # deferred, see module import notes elsewhere in this package
+
+    try:
+        settings = Settings.from_yaml(config_path).resolve_env_vars()
+        return settings.execution, settings.llm.primary_model
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("intraday_monitor_config_load_failed", path=config_path, error=str(exc))
+        from src.execution.models import ExecutionConfig as _ExecutionConfig
+
+        return _ExecutionConfig(), "opencode/muse-spark-1.3-contributor-free"
+
+
+async def run(
+    log_dir: str | Path = "logs",
+    trade_date: str | None = None,
+    config_path: str = "config.yaml",
+) -> dict[str, Any]:
     """Run one pass of the intraday stop-loss monitor."""
     now = datetime.now(ET_TZ)
     result: dict[str, Any] = {
@@ -331,10 +534,18 @@ async def run(log_dir: str | Path = "logs", trade_date: str | None = None) -> di
         result["skipped"] = "no_alpaca_keys"
         return result
 
+    exec_config, llm_primary_model = _load_exec_config(config_path)
+
     client = AlpacaBrokerClient(api_key, secret_key, paper=paper)
     try:
         for trade in trades:
-            outcome = await monitor_trade(trade, client, now=now)
+            outcome = await monitor_trade(
+                trade,
+                client,
+                now=now,
+                exec_config=exec_config,
+                llm_primary_model=llm_primary_model,
+            )
             if outcome:
                 result["closed_trades"].append(outcome)
                 result["action_taken"] = True
@@ -351,9 +562,12 @@ async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Intraday 0DTE stop-loss monitor")
     parser.add_argument("--log-dir", default=os.environ.get("LOG_DIR", "logs"))
     parser.add_argument("--date", default=None, help="Override trade date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--config", default=os.environ.get("CONFIG_PATH", "config.yaml"), help="Path to config YAML"
+    )
     args = parser.parse_args(argv)
 
-    result = await run(log_dir=args.log_dir, trade_date=args.date)
+    result = await run(log_dir=args.log_dir, trade_date=args.date, config_path=args.config)
     logger.info("intraday_monitor_run_complete", **result)
     return 0
 

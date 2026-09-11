@@ -300,18 +300,48 @@ class ExecutionEngine:
             exit_mgr = ExitManager(self.exec_config.exit_strategy)
             exit_mgr.on_entry_filled(entry_price)
 
-            tp_spec = exit_mgr.build_tp_order(occ_sym, filled_qty)
-            tp_result = await self.client.submit_order(tp_spec)
+            # With the profit-exit advisor enabled, the fixed +100% TP
+            # limit order is exactly what was cutting off the big winning
+            # days (see src/execution/exit_advisor.py docstring) -- skip
+            # it and place only a far safety cap (or nothing at all, if
+            # `safety_cap_pct` is null), leaving profit-taking to the
+            # advisor via the intraday monitor cron. Disabled (the
+            # default), behaviour is unchanged: the configured TP is
+            # placed exactly as before.
+            advisor_cfg = self.exec_config.exit_advisor
+            tp_order_id: str | None = None
+            tp_level: float | None = exit_mgr.tp_level
+            if not advisor_cfg.enabled:
+                tp_spec = exit_mgr.build_tp_order(occ_sym, filled_qty)
+                tp_result = await self.client.submit_order(tp_spec)
+                tp_order_id = tp_result.order_id
+            elif advisor_cfg.safety_cap_pct is not None:
+                safety_exit_config = self.exec_config.exit_strategy.model_copy(
+                    update={"take_profit_pct": advisor_cfg.safety_cap_pct}
+                )
+                safety_mgr = ExitManager(safety_exit_config)
+                safety_mgr.on_entry_filled(entry_price)
+                tp_spec = safety_mgr.build_tp_order(occ_sym, filled_qty)
+                tp_result = await self.client.submit_order(tp_spec)
+                tp_order_id = tp_result.order_id
+                tp_level = safety_mgr.tp_level
+            else:
+                tp_level = None
+
             lifecycle.transition(
                 TradeState.EXITS_PLACED,
-                {"tp_order_id": tp_result.order_id, "exit_via_cron": True},
+                {"tp_order_id": tp_order_id, "exit_via_cron": True},
             )
             ctx.record_entry(
                 "exits_placed",
-                tp_order_id=tp_result.order_id,
-                tp_level=exit_mgr.tp_level,
+                tp_order_id=tp_order_id,
+                tp_level=tp_level,
                 sl_level=exit_mgr.sl_level,
-                note="TP placed at Alpaca. SL enforced by intraday monitor cron (~3 min, 9:30-15:25 ET); safety-close sweep (12:20 PM PT) is the final backstop.",
+                note=(
+                    "Profit exit managed by the exit-advisor cron; TP is a far safety cap only."
+                    if advisor_cfg.enabled
+                    else "TP placed at Alpaca. SL enforced by intraday monitor cron (~3 min, 9:30-15:25 ET); safety-close sweep (12:20 PM PT) is the final backstop."
+                ),
             )
 
             lifecycle.transition(TradeState.CLOSED)

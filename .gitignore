@@ -4,6 +4,7 @@ __pycache__/
 .env
 .atlas-state.json
 .model-availability.json
+.opencode-models-cache.json
 .DS_Store
 *.egg-info/
 dist/
@@ -11,3 +12,5 @@ build/
 site/docs/
 logs/
 .coverage
+.intraday_monitor.lock
+.safety_close.lock

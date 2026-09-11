@@ -199,6 +199,8 @@ def check_outcome(
                 f"Daily range: ${lo:.2f} - ${h:.2f} | Close: ${c_val:.2f}"
             )
 
+    oc_correct = (c_val > o) if direction == "UP" else (c_val < o)
+
     return PredictionOutcome(
         date=pred_date,
         correlation_id=cid,
@@ -213,6 +215,7 @@ def check_outcome(
         high_price=h,
         low_price=lo,
         close_price=c_val,
+        open_close_correct=oc_correct,
         triggered_at=triggered_at_str,
         duration_hours=duration_h,
         sources=pred.get("sources", []),

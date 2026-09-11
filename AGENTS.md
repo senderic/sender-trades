@@ -121,6 +121,7 @@ To add a node: create `.opencode/agent/<name>.md` (the system prompt for that no
 | `models.py` | Pydantic models: ExecutionConfig, OrderResult, TradeState, etc. |
 | `retry.py` | Tenacity config: 3 attempts, expo backoff 1s→30s, 5xx only |
 | `context.py` | TradeContext — writes audit JSON to `logs/<date>/trade-<id>.json` |
+| `intraday_monitor.py` | Cron SL enforcer — polls option mark, closes trades at `sl_level`, writes `exit_reason: stop_loss` |
 
 ### Trade Lifecycle
 
@@ -135,10 +136,24 @@ Terminal: CLOSED, REJECTED, EXPIRED, FAILED
 
 ### Exit Strategies
 
-- **Take-profit**: limit sell at `entry_price * (1 + take_profit_pct/100)`
-- **Stop-loss**: stop sell at `entry_price * (1 + stop_loss_pct/100)`
-- **Trailing stop**: activates after `activate_after_pct`, trails `trail_pct` below peak
-- **Time deadline**: force-close market order at `time_deadline_est`
+- **Take-profit**: limit sell at `entry_price * (1 + take_profit_pct/100)` — the only exit placed at Alpaca. Pipeline then exits (`exit_via_cron: true`).
+- **Stop-loss**: enforced by the **intraday monitor cron** (`intraday_monitor.sh`, `*/3 6-12 * * 1-5`), NOT in-process. The pipeline's `_monitor_exits` / `ExitManager.evaluate` are dead code within the pipeline process. The monitor (`src/execution/intraday_monitor.py`) polls the live option mark, and force-closes any open trade whose mark ≤ `sl_level`, idempotently writing `exit_reason: stop_loss` to the audit JSON. Without it, every loser bled ~-86% to the once-daily safety-close sweep instead of -50%.
+- **Trailing stop**: configured but not yet enforced by the monitor (peak would need persisting). Time deadline backstop is `safety_close.sh` (12:20 PM PT).
+
+### Sizing (conservative 2-stage)
+
+`DecisionAggregator._apply_sizing` scales a selected trade 1 → 2 contracts only when confidence ≥ `risk.sizing_tier2_min_confidence` (0.60) AND the pick is LLM-backed or corroborated by a second strategy. Hardcoded `contracts=1` remains in the strategy files as the base.
+
+### De-risking (2026-09-07 review)
+
+- **Momentum confidence capped** (`strategies.momentum.max_confidence: 0.50`) — momentum was 0/4 for -$182 with formula-inflated 0.65-0.91 confidence outranking the LLM.
+- **Min-move gate** (`risk.min_predicted_move_pct: 0.30`) — `DecisionAggregator._min_move_gate` blocks LLM picks whose predicted move is too small to survive theta (skipped when no LLM prediction exists).
+- **QQQ-first tie-break** (`risk.preferred_asset: QQQ`) — aggregation sort prefers QQQ at equal confidence (QQQ +$86 vs SPY -$26, 70% vs 67% accuracy).
+- **Honest open→close metric** — `PredictionOutcome.open_close_correct` surfaces end-of-day direction correctness in the email recap alongside the flattering target-strike "HIT".
+
+### De-risking (2026-09-10 review)
+
+- **Premium-aware entry gate** (`risk.predicted_move_shrink: 0.4`, `risk.breakeven_margin_pct: 0.03`) — `DecisionAggregator.premium_gate` blocks a trade unless the LLM's predicted move, *shrunk* by `predicted_move_shrink` (predicted moves ran ~3x hotter than realized moves across 2026-07-29..09-09, e.g. -0.7/-0.8% predicted vs ~-0.2% actual on 09-09), clears the option's true expiry breakeven plus a small margin. `min_predicted_move_pct` compared the model's raw (inflated) number against a flat floor and never looked at what the option cost — a correct-direction call on a 0.2% move still expires worthless when the premium paid exceeds the payoff. Breakeven is OTM-distance-aware: the underlying must first cover the gap from spot to strike, then the premium — PUT `((underlying − strike) + ask) / underlying × 100`, CALL `((strike − underlying) + ask) / underlying × 100` (an ITM strike gives a negative distance, correctly *reducing* the requirement). A 2026-09-10 follow-up review found the first version used `ask / strike × 100` with the strike standing in for a live underlying price it didn't have — dropping the distance term entirely and understating breakeven by roughly the ~0.6% OTM offset every strike here is chosen at (`compute_otm_strike`); `breakeven_margin_pct` dropped from 0.15 to 0.03 accordingly, since it no longer needs to stand in for that distance, only for spread/slippage (not fitted from data — the audits don't retain the quoted ask, only the fill price). Runs in `ExecutionEngine.execute` (not at decision time) because neither the option ask nor a fresh underlying quote exist until after market open; falls back to the old ask/strike approximation (logged via `premium_gate_fallback_formula`) when a live underlying quote can't be fetched. `TradeRecommendation.predicted_move_pct` carries the LLM's per-asset move from `DecisionAggregator.aggregate` through to execution for this purpose. **Backtest (n=22 filled trades, 2026-07-29..09-09, strike/fill as ask, open price as spot proxy)**: keeps 3 trades (net +$145.00: two losers plus the single biggest winner, +$282 on 08-18), blocks 19 (net −$142.50, including 8 winning trades totaling +$452 — e.g. +$91 on 09-03, +$74 on 08-13, +$73 on 08-07). At this sample size the gate mainly reduces trade frequency (22 → 3) rather than cleanly separating winners from losers: with ~30-delta (~0.6% OTM) strikes and typical shrunk predicted moves of 0.1-0.3%, true (distance + premium)/spot breakeven (~0.3-1.2%) is almost never cleared by construction, independent of shrink/margin tuning. Treat this as a frequency dial, not a proven edge filter, until more trades accumulate.
 
 ### Entry Flow
 

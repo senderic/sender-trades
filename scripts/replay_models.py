@@ -27,6 +27,21 @@ Caching: raw responses are cached at ``logs/replay/<model-slug>/<date>.json``.
 A rerun with the same date range and models is free — cached entries
 (successes AND failures) are reused unless ``--force`` or
 ``--retry-failures`` is passed.
+
+Pre-market mode (``--premarket``): rebuilds each day's prompt with the
+RECONSTRUCTED pre-market block (live price/gap/volume-reliability as of
+the 09:28 ET cutoff, via ``src.ingestion.premarket`` against real Alpaca
+history) and PRIOR SESSION labeling on the stale snapshot quote — see
+``src.models.market.Quote.prior_session_close`` and
+``src.config.PremarketConfig`` for the underlying fix. Requires
+``APCA_API_KEY_ID``/``APCA_API_SECRET_KEY`` in the environment (loaded
+from ``.env`` via ``python-dotenv`` if present). Responses cache under
+``logs/replay/<model-slug>__premarket/<date>.json`` — a DIFFERENT
+directory from the stale-input cache above, so this mode never reads or
+overwrites the existing (stale-input) results, and the two can be
+compared side by side. Alpaca's own historical-bar responses are cached
+separately at ``logs/replay/premarket_cache/<symbol>/<date>.json`` so
+reruns cost zero new Alpaca calls, only LLM calls.
 """
 
 from __future__ import annotations
@@ -37,11 +52,12 @@ import csv
 import glob
 import json
 import math
+import os
 import statistics
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -62,9 +78,17 @@ import structlog  # noqa: E402
 # src.execution.engine before src.config sidesteps it without touching
 # either file. Safe to remove once that edit lands cleanly.
 import src.execution.engine as _execution_engine_import_order_workaround  # noqa: F401,E402
-from src.config import GapFadeConfig, GraphConfig, LLMConfig, Settings  # noqa: E402
+from src.config import (  # noqa: E402
+    GapFadeConfig,
+    GraphConfig,
+    LLMConfig,
+    PremarketConfig,
+    Settings,
+)
+from src.execution.client import AlpacaBrokerClient  # noqa: E402
 from src.ingestion.candle_providers import CandleProviderChain, build_candle_chain  # noqa: E402
 from src.ingestion.parser import read_briefing  # noqa: E402
+from src.ingestion.premarket import fetch_premarket_day, fetch_premarket_quote  # noqa: E402
 from src.ingestion.snapshot_loader import SnapshotLoader  # noqa: E402
 from src.llm.client import OpencodeLLMClient  # noqa: E402
 from src.llm.trade_signal import (  # noqa: E402
@@ -81,6 +105,13 @@ from src.trade_tracker import (  # noqa: E402
     format_outcomes_for_prompt,
     load_trade_outcomes,
 )
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:  # pragma: no cover - python-dotenv is a project dependency
+    pass
 
 logger = structlog.get_logger()
 
@@ -129,6 +160,14 @@ CALL_TIMEOUT_SEC = 150
 # broken" — retried with backoff before being recorded as a failure.
 _RATE_LIMIT_MARKERS = ("rate limit", "429", "too many requests", "rate_limit")
 _RETRY_BACKOFF_SEC = (5, 20, 60)
+# Local opencode CLI/session errors (its own sqlite session store), not a
+# model or network problem — seen when another process (e.g. a
+# concurrently-running pipeline or the exit-advisor's own opencode calls)
+# hits the same local opencode session store at once. Retried up to 2
+# times (a subset of the attempts in _RETRY_BACKOFF_SEC above), then
+# recorded as a failure like anything else.
+_LOCAL_OPENCODE_ERROR_MARKERS = ("failed query: insert into", "session not found")
+_LOCAL_OPENCODE_MAX_RETRIES = 2
 
 CONFIDENCE_BUCKETS: list[tuple[float, float]] = [
     (0.0, 0.5),
@@ -205,6 +244,108 @@ def build_prompt_for_day(day: date, briefing: BriefingData, market: MarketSnapsh
     )
 
 
+def _alpaca_client_for_replay() -> AlpacaBrokerClient | None:
+    """Build an AlpacaBrokerClient from env creds, or None if unset.
+
+    ``--premarket`` needs a live/historical Alpaca data connection;
+    without keys it fails loudly at startup (see ``main_async``) rather
+    than silently falling back to the stale snapshot data this mode
+    exists to fix.
+    """
+    api_key = os.environ.get("APCA_API_KEY_ID", "")
+    api_secret = os.environ.get("APCA_API_SECRET_KEY", "")
+    if not api_key or not api_secret:
+        return None
+    return AlpacaBrokerClient(api_key, api_secret, paper=True)
+
+
+def _premarket_bars_cache_path(symbol: str, day: date) -> Path:
+    return REPLAY_DIR / "premarket_cache" / symbol / f"{day.isoformat()}.json"
+
+
+async def _cached_premarket_day(
+    client: AlpacaBrokerClient,
+    symbol: str,
+    day: date,
+    session_start_et: str,
+    cutoff_et: str,
+) -> list[dict[str, Any]]:
+    """On-disk-cached day-fetcher for ``fetch_premarket_quote``.
+
+    Overlapping trailing-median windows across many replayed days would
+    otherwise re-fetch the same (symbol, day) bars from Alpaca on every
+    script run; this caches each (symbol, day) exactly once regardless
+    of whether it was fetched as a day's own pre-market data or as
+    another day's lookback comparison. A day with zero bars (holiday, or
+    a real bar-less session) is cached too, as an empty list, so it is
+    not re-queried forever; a genuine fetch FAILURE (exception) is not
+    cached and will retry on the next run.
+    """
+    path = _premarket_bars_cache_path(symbol, day)
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text())
+            for bar in raw:
+                if bar.get("timestamp"):
+                    bar["timestamp"] = datetime.fromisoformat(bar["timestamp"])
+            return raw
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass  # corrupt cache entry — fall through and re-fetch
+
+    bars = await fetch_premarket_day(client, symbol, day, session_start_et, cutoff_et)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serializable = [
+        {**bar, "timestamp": bar["timestamp"].isoformat() if bar.get("timestamp") else None}
+        for bar in bars
+    ]
+    path.write_text(json.dumps(serializable))
+    return bars
+
+
+async def enrich_market_with_premarket(
+    day: date,
+    market: MarketSnapshot,
+    client: AlpacaBrokerClient,
+    config: PremarketConfig,
+) -> MarketSnapshot:
+    """Attach live pre-market price/volume/reliability to ``market`` in place.
+
+    Mirrors ``Pipeline._enrich_premarket``, except ``day`` is a
+    historical replay date instead of "today", and two things the live
+    pipeline does are deliberately NOT reproduced here (2026-09-11
+    follow-up review):
+
+    - ``quote_fetcher=None`` -- there is no cheap way to reconstruct a
+      past bid/ask NBBO quote for a historical date, so replay always
+      falls back straight to the bar-close / prior-close tiers (see
+      ``fetch_premarket_quote``'s MECHANICS price resolution). This is a
+      known, documented gap between replay and live, not an oversight.
+    - ``range_fetcher=None`` -- keeps the existing per-day
+      :func:`_cached_premarket_day` on-disk cache reuse across
+      overlapping lookback windows (which already makes reruns free)
+      instead of switching to the single-ranged-request optimization
+      added for the live pipeline's latency. Re-deriving that caching
+      against a bulk fetch is out of scope here: this replay's bar-based
+      inputs are unchanged by the latency fix.
+    """
+    for asset in TARGET_ASSETS:
+        quote = market.quotes.get(asset)
+        prior_close = quote.prior_session_close if quote is not None else 0.0
+        pm = await fetch_premarket_quote(
+            client,
+            asset,
+            day,
+            prior_close,
+            config,
+            day_fetcher=_cached_premarket_day,
+            range_fetcher=None,
+            quote_fetcher=None,
+            source="replay",
+        )
+        market.premarket[asset] = pm
+    return market
+
+
 def enumerate_trading_days(start: date, end: date) -> list[date]:
     """Weekdays in ``[start, end]`` that have an atlas snapshot on disk."""
     days: list[date] = []
@@ -246,7 +387,11 @@ def _prediction_history_outcomes(log_dir: Path = LOG_DIR) -> dict[tuple[str, str
         if None in (o, hi, lo, c):
             continue
         out[(d, a)] = DailyOutcome(
-            asset=a, open=float(o), high=float(hi), low=float(lo), close=float(c),
+            asset=a,
+            open=float(o),
+            high=float(hi),
+            low=float(lo),
+            close=float(c),
             source="prediction-history",
         )
     return out
@@ -299,13 +444,23 @@ def model_slug(model: str) -> str:
     return model.replace("/", "__")
 
 
-def cache_path(model: str, day: date) -> Path:
-    return REPLAY_DIR / model_slug(model) / f"{day.isoformat()}.json"
+def cache_path(model: str, day: date, cache_suffix: str = "") -> Path:
+    """Cache file for one (model, day). ``cache_suffix`` (e.g.
+    ``"__premarket"``) puts pre-market-mode results in a separate
+    directory from the stale-input cache so reruns of one mode never
+    read or clobber the other's results.
+    """
+    return REPLAY_DIR / (model_slug(model) + cache_suffix) / f"{day.isoformat()}.json"
 
 
 def _is_rate_limited(error: str) -> bool:
     low = error.lower()
     return any(marker in low for marker in _RATE_LIMIT_MARKERS)
+
+
+def _is_local_opencode_error(error: str) -> bool:
+    low = error.lower()
+    return any(marker in low for marker in _LOCAL_OPENCODE_ERROR_MARKERS)
 
 
 def _write_cache(path: Path, record: dict[str, Any]) -> None:
@@ -359,13 +514,14 @@ async def call_model_monolithic(
     retry_failures: bool = False,
     offline: bool = False,
     budget: CallBudget | None = None,
+    cache_suffix: str = "",
 ) -> dict[str, Any]:
     """Invoke ``model`` — pinned, with NO fallback chain — for one day.
 
-    Cached at ``logs/replay/<model-slug>/<date>.json``. A failed call is
-    recorded with ``ok: False`` and the error text; it is never silently
-    retried against a different model (``fallback_models=[]`` below is
-    what guarantees that).
+    Cached at ``logs/replay/<model-slug><cache_suffix>/<date>.json``. A
+    failed call is recorded with ``ok: False`` and the error text; it is
+    never silently retried against a different model
+    (``fallback_models=[]`` below is what guarantees that).
 
     ``offline=True`` makes this function NEVER place a network call: a
     cache miss is returned as a synthetic ``skipped`` record instead of
@@ -376,8 +532,11 @@ async def call_model_monolithic(
     run (:attr:`CallBudget.max_new_calls`) and aborts the run (skips all
     further fresh calls) the moment any call fails with a billing/credits
     error — see :class:`CallBudget`.
+
+    ``cache_suffix`` (e.g. ``"__premarket"``) namespaces the cache
+    directory for ``--premarket`` runs — see :func:`cache_path`.
     """
-    path = cache_path(model, day)
+    path = cache_path(model, day, cache_suffix)
     if path.exists() and not force:
         try:
             cached = json.loads(path.read_text())
@@ -439,8 +598,18 @@ async def call_model_monolithic(
             _write_cache(path, record)
             return {**record, "_from_cache": False}
         last_error = client.last_error
-        if not _is_rate_limited(last_error):
-            break
+        if _is_rate_limited(last_error):
+            continue
+        if _is_local_opencode_error(last_error) and attempt < _LOCAL_OPENCODE_MAX_RETRIES:
+            logger.info(
+                "replay_local_opencode_error_retry",
+                model=model,
+                date=str(day),
+                attempt=attempt + 1,
+                error=last_error[:200],
+            )
+            continue
+        break
 
     if budget is not None:
         await budget.maybe_abort_on(last_error)
@@ -618,7 +787,9 @@ def score_direction(direction: str, open_: float, close: float) -> bool:
     return (close > open_) if direction == "UP" else (close < open_)
 
 
-def score_target_hit(direction: str, predicted_move_pct: float, open_: float, high: float, low: float) -> bool:
+def score_target_hit(
+    direction: str, predicted_move_pct: float, open_: float, high: float, low: float
+) -> bool:
     """Whether the predicted direction reached ``|predicted_move_pct|`` from
     the open intraday, using the session's high/low. Mirrors
     ``prediction_tracker.check_outcome``: below a 0.1% magnitude the
@@ -895,7 +1066,9 @@ def aggregate(records: list[ReplayRecord]) -> dict[str, dict[str, Any]]:
             "mean_expiry_return": round(statistics.mean(r.expiry_return for r in return_scored), 3)
             if return_scored
             else None,
-            "expiry_win_rate": round(expiry_wins / len(return_scored), 3) if return_scored else None,
+            "expiry_win_rate": round(expiry_wins / len(return_scored), 3)
+            if return_scored
+            else None,
             "tp_touch_rate": round(tp_touches / len(tp_scored), 3) if tp_scored else None,
             "calibration": calibration,
         }
@@ -920,11 +1093,19 @@ def compute_sensitivity_table(
     ``{model: {otm: mean_return}}`` and ``premiums`` is ``{otm:
     premium_pct}`` (so the report can show what premium each column used).
     """
-    premiums = {otm: premium_for_otm(otm, atm_premium_pct, anchor_otm_pct, anchor_premium_pct) for otm in otm_grid}
+    premiums = {
+        otm: premium_for_otm(otm, atm_premium_pct, anchor_otm_pct, anchor_premium_pct)
+        for otm in otm_grid
+    }
 
     by_model: dict[str, list[ReplayRecord]] = {}
     for r in records:
-        if r.status != "predict" or r.open_price is None or r.close_price is None or r.direction is None:
+        if (
+            r.status != "predict"
+            or r.open_price is None
+            or r.close_price is None
+            or r.direction is None
+        ):
             continue
         by_model.setdefault(r.model, []).append(r)
 
@@ -934,7 +1115,8 @@ def compute_sensitivity_table(
         for otm in otm_grid:
             premium = premiums[otm]
             returns = [
-                score_expiry_return(r.direction, r.open_price, r.close_price, otm, premium) for r in recs
+                score_expiry_return(r.direction, r.open_price, r.close_price, otm, premium)
+                for r in recs
             ]
             row[otm] = round(statistics.mean(returns), 3) if returns else None
         table[model] = row
@@ -976,7 +1158,9 @@ def find_excluded_models(records: list[ReplayRecord]) -> dict[str, str]:
 
     excluded: dict[str, str] = {}
     for model, recs in by_model.items():
-        credit_fails = [r for r in recs if r.status == "fail" and _is_credit_exhausted_error(r.error)]
+        credit_fails = [
+            r for r in recs if r.status == "fail" and _is_credit_exhausted_error(r.error)
+        ]
         if not credit_fails:
             continue
         ok_n = sum(1 for r in recs if r.status == "predict")
@@ -987,7 +1171,9 @@ def find_excluded_models(records: list[ReplayRecord]) -> dict[str, str]:
     return excluded
 
 
-def write_csv(rows: dict[str, dict[str, Any]], path: Path, excluded: dict[str, str] | None = None) -> None:
+def write_csv(
+    rows: dict[str, dict[str, Any]], path: Path, excluded: dict[str, str] | None = None
+) -> None:
     excluded = excluded or {}
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
@@ -1252,25 +1438,49 @@ async def run_replay(
     budget: CallBudget | None = None,
     otm_pct: float = DEFAULT_OTM_PCT,
     premium_pct: float = DEFAULT_PREMIUM_PCT,
+    premarket: bool = False,
+    premarket_config: PremarketConfig | None = None,
+    alpaca_client: AlpacaBrokerClient | None = None,
 ) -> tuple[list[ReplayRecord], int, int]:
     """Returns ``(records, total_tasks, fresh_calls)`` — ``total_tasks`` is
     every (day, model) attempted (cache hit or not), ``fresh_calls`` is how
     many of those actually hit the network *this run* (0 when ``offline``).
+
+    ``premarket=True`` rebuilds each day's ``MarketSnapshot`` with the
+    reconstructed live pre-market block (see
+    :func:`enrich_market_with_premarket`) before building the prompt, and
+    routes LLM responses to a separate ``__premarket``-suffixed cache
+    directory (see :func:`cache_path`) so this never collides with the
+    stale-input cache. Requires ``alpaca_client``.
     """
     outcomes = OutcomeStore()
     sem = asyncio.Semaphore(concurrency)
     records: list[ReplayRecord] = []
+    cache_suffix = "__premarket" if premarket else ""
 
-    async def bounded_call(model: str, day: date, briefing: BriefingData, market: MarketSnapshot, prompt: str):
+    async def bounded_call(
+        model: str, day: date, briefing: BriefingData, market: MarketSnapshot, prompt: str
+    ):
         async with sem:
             if graph_mode:
                 return await call_model_graph(
-                    model, day, briefing, market,
-                    force=force, retry_failures=retry_failures, offline=offline,
+                    model,
+                    day,
+                    briefing,
+                    market,
+                    force=force,
+                    retry_failures=retry_failures,
+                    offline=offline,
                 )
             return await call_model_monolithic(
-                model, day, prompt,
-                force=force, retry_failures=retry_failures, offline=offline, budget=budget,
+                model,
+                day,
+                prompt,
+                force=force,
+                retry_failures=retry_failures,
+                offline=offline,
+                budget=budget,
+                cache_suffix=cache_suffix,
             )
 
     day_inputs: dict[date, tuple[BriefingData, MarketSnapshot]] = {}
@@ -1279,6 +1489,11 @@ async def run_replay(
         if market is None:
             logger.warning("replay_skip_day_no_market", date=str(day))
             continue
+        if premarket:
+            assert alpaca_client is not None, "--premarket requires an Alpaca client"
+            market = await enrich_market_with_premarket(
+                day, market, alpaca_client, premarket_config or PremarketConfig()
+            )
         briefing = load_briefing_for_day(day)
         day_inputs[day] = (briefing, market)
 
@@ -1297,7 +1512,11 @@ async def run_replay(
     total_calls = len(call_records)
     fresh_calls = sum(1 for r in call_records if not r.get("_from_cache") and not r.get("skipped"))
     if budget is not None and budget.aborted_reason is not None:
-        logger.warning("replay_budget_aborted", reason=budget.aborted_reason, new_calls_made=budget.new_calls_made)
+        logger.warning(
+            "replay_budget_aborted",
+            reason=budget.aborted_reason,
+            new_calls_made=budget.new_calls_made,
+        )
 
     for (day, model), record in zip(task_meta, call_records, strict=True):
         briefing, market = day_inputs[day]
@@ -1319,20 +1538,36 @@ async def run_replay(
                 continue  # can't score without ground truth
 
             if not record.get("ok"):
-                records.append(ReplayRecord(date=day.isoformat(), asset=asset, model=model, status="fail", error=record.get("error", "")))
+                records.append(
+                    ReplayRecord(
+                        date=day.isoformat(),
+                        asset=asset,
+                        model=model,
+                        status="fail",
+                        error=record.get("error", ""),
+                    )
+                )
                 continue
 
             pred = preds.get(asset)
             if pred is None:
-                records.append(ReplayRecord(date=day.isoformat(), asset=asset, model=model, status="abstain"))
+                records.append(
+                    ReplayRecord(date=day.isoformat(), asset=asset, model=model, status="abstain")
+                )
                 continue
 
             direction = pred["direction"]
             move_pct = pred["predicted_move_pct"]
             dir_correct = score_direction(direction, outcome.open, outcome.close)
-            target_hit = score_target_hit(direction, move_pct, outcome.open, outcome.high, outcome.low)
-            expiry_return = score_expiry_return(direction, outcome.open, outcome.close, otm_pct, premium_pct)
-            tp_touch = score_tp_touch(direction, outcome.open, outcome.high, outcome.low, otm_pct, premium_pct)
+            target_hit = score_target_hit(
+                direction, move_pct, outcome.open, outcome.high, outcome.low
+            )
+            expiry_return = score_expiry_return(
+                direction, outcome.open, outcome.close, otm_pct, premium_pct
+            )
+            tp_touch = score_tp_touch(
+                direction, outcome.open, outcome.high, outcome.low, otm_pct, premium_pct
+            )
             records.append(
                 ReplayRecord(
                     date=day.isoformat(),
@@ -1363,8 +1598,12 @@ async def run_replay(
 
             # always-UP baseline
             dir_correct = score_direction("UP", outcome.open, outcome.close)
-            expiry_return = score_expiry_return("UP", outcome.open, outcome.close, otm_pct, premium_pct)
-            tp_touch = score_tp_touch("UP", outcome.open, outcome.high, outcome.low, otm_pct, premium_pct)
+            expiry_return = score_expiry_return(
+                "UP", outcome.open, outcome.close, otm_pct, premium_pct
+            )
+            tp_touch = score_tp_touch(
+                "UP", outcome.open, outcome.high, outcome.low, otm_pct, premium_pct
+            )
             records.append(
                 ReplayRecord(
                     date=day.isoformat(),
@@ -1388,14 +1627,21 @@ async def run_replay(
             if prev_outcome is None:
                 records.append(
                     ReplayRecord(
-                        date=day.isoformat(), asset=asset, model="baseline:yesterday-direction", status="abstain"
+                        date=day.isoformat(),
+                        asset=asset,
+                        model="baseline:yesterday-direction",
+                        status="abstain",
                     )
                 )
                 continue
             yest_direction = "UP" if prev_outcome.close > prev_outcome.open else "DOWN"
             dir_correct = score_direction(yest_direction, outcome.open, outcome.close)
-            expiry_return = score_expiry_return(yest_direction, outcome.open, outcome.close, otm_pct, premium_pct)
-            tp_touch = score_tp_touch(yest_direction, outcome.open, outcome.high, outcome.low, otm_pct, premium_pct)
+            expiry_return = score_expiry_return(
+                yest_direction, outcome.open, outcome.close, otm_pct, premium_pct
+            )
+            tp_touch = score_tp_touch(
+                yest_direction, outcome.open, outcome.high, outcome.low, otm_pct, premium_pct
+            )
             records.append(
                 ReplayRecord(
                     date=day.isoformat(),
@@ -1418,19 +1664,48 @@ async def run_replay(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--start", required=True, help="YYYY-MM-DD")
     p.add_argument("--end", required=True, help="YYYY-MM-DD")
-    p.add_argument("--models", default=",".join(DEFAULT_MODELS), help="Comma-separated opencode model IDs")
+    p.add_argument(
+        "--models", default=",".join(DEFAULT_MODELS), help="Comma-separated opencode model IDs"
+    )
     p.add_argument("--concurrency", type=int, default=3)
-    p.add_argument("--graph", action="store_true", help="Use the graph orchestrator instead of one monolithic call/day")
-    p.add_argument("--force", action="store_true", help="Ignore cache entirely and re-call every model/day")
-    p.add_argument("--retry-failures", action="store_true", help="Reuse cached successes but re-attempt cached failures")
-    p.add_argument("--out-dir", default=str(REPLAY_DIR))
+    p.add_argument(
+        "--graph",
+        action="store_true",
+        help="Use the graph orchestrator instead of one monolithic call/day",
+    )
+    p.add_argument(
+        "--force", action="store_true", help="Ignore cache entirely and re-call every model/day"
+    )
+    p.add_argument(
+        "--retry-failures",
+        action="store_true",
+        help="Reuse cached successes but re-attempt cached failures",
+    )
+    p.add_argument(
+        "--out-dir",
+        default=None,
+        help="Where to write leaderboard.csv/report.md. Defaults to logs/replay/ "
+        "(or logs/replay/premarket/ when --premarket is set, so the two modes' "
+        "aggregate reports never clobber each other).",
+    )
     p.add_argument(
         "--offline",
         action="store_true",
         help="Never place a network call — rescore purely from whatever is already cached",
+    )
+    p.add_argument(
+        "--premarket",
+        action="store_true",
+        help="Rebuild each day's prompt with the reconstructed live pre-market block "
+        "(price/gap/volume-reliability as of the cutoff, via real Alpaca history) and "
+        "prior-session labeling, instead of the stale snapshot quote treated as today. "
+        "Requires APCA_API_KEY_ID/APCA_API_SECRET_KEY. Caches LLM responses under a "
+        "separate '<model>__premarket' directory — never touches the stale-input cache.",
     )
     p.add_argument(
         "--max-new-calls",
@@ -1460,7 +1735,24 @@ async def main_async(argv: list[str] | None = None) -> None:
     start = date.fromisoformat(args.start)
     end = date.fromisoformat(args.end)
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    out_dir = Path(args.out_dir)
+    if args.out_dir is not None:
+        out_dir = Path(args.out_dir)
+    elif args.premarket:
+        out_dir = REPLAY_DIR / "premarket"
+    else:
+        out_dir = REPLAY_DIR
+
+    alpaca_client: AlpacaBrokerClient | None = None
+    premarket_config = PremarketConfig()
+    if args.premarket:
+        alpaca_client = _alpaca_client_for_replay()
+        if alpaca_client is None:
+            print(  # noqa: T201
+                "ERROR: --premarket requires APCA_API_KEY_ID/APCA_API_SECRET_KEY "
+                "in the environment (or a .env file) — refusing to silently fall "
+                "back to stale-input data."
+            )
+            sys.exit(1)
 
     pricing = estimate_option_pricing_from_fills()
     otm_pct = args.otm_pct if args.otm_pct is not None else pricing["otm_pct"]
@@ -1469,16 +1761,30 @@ async def main_async(argv: list[str] | None = None) -> None:
     days = enumerate_trading_days(start, end)
     print(  # noqa: T201
         f"Replaying {len(days)} trading days x {len(models)} models "
-        f"(graph={args.graph}, offline={args.offline}, max_new_calls={args.max_new_calls}, "
-        f"otm_pct={otm_pct:.3f}, premium_pct={premium_pct:.3f}, priced from {pricing['n']} real fills)"
+        f"(graph={args.graph}, premarket={args.premarket}, offline={args.offline}, "
+        f"max_new_calls={args.max_new_calls}, otm_pct={otm_pct:.3f}, "
+        f"premium_pct={premium_pct:.3f}, priced from {pricing['n']} real fills)"
     )
 
-    budget = CallBudget(max_new_calls=args.max_new_calls) if args.max_new_calls is not None else None
+    budget = (
+        CallBudget(max_new_calls=args.max_new_calls) if args.max_new_calls is not None else None
+    )
 
     t0 = time.monotonic()
     records, total_calls, fresh_calls = await run_replay(
-        days, models, args.concurrency, args.graph, args.force, args.retry_failures,
-        offline=args.offline, budget=budget, otm_pct=otm_pct, premium_pct=premium_pct,
+        days,
+        models,
+        args.concurrency,
+        args.graph,
+        args.force,
+        args.retry_failures,
+        offline=args.offline,
+        budget=budget,
+        otm_pct=otm_pct,
+        premium_pct=premium_pct,
+        premarket=args.premarket,
+        premarket_config=premarket_config,
+        alpaca_client=alpaca_client,
     )
     elapsed = time.monotonic() - t0
 
@@ -1502,7 +1808,10 @@ async def main_async(argv: list[str] | None = None) -> None:
         otm_pct,
         premium_pct,
         pricing["n"],
-        {m: MODEL_CUTOFF_NOTES.get(m, "Unknown — not in the built-in cutoff notes table.") for m in models},
+        {
+            m: MODEL_CUTOFF_NOTES.get(m, "Unknown — not in the built-in cutoff notes table.")
+            for m in models
+        },
         args.graph,
         md_path,
         excluded=excluded,
@@ -1510,7 +1819,9 @@ async def main_async(argv: list[str] | None = None) -> None:
         sensitivity_premiums=sensitivity_premiums,
     )
 
-    print(f"Done in {elapsed:.1f}s. Total (day,model) tasks: {total_calls}. Fresh calls this run: {fresh_calls}")  # noqa: T201
+    print(  # noqa: T201
+        f"Done in {elapsed:.1f}s. Total (day,model) tasks: {total_calls}. Fresh calls this run: {fresh_calls}"
+    )
     print(f"CSV:      {csv_path}")  # noqa: T201
     print(f"Markdown: {md_path}")  # noqa: T201
     for model, r in rows.items():

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -134,26 +135,44 @@ def test_expiry_return_move_past_otm_scales_by_excess_only():
 
 def test_tp_touch_up_reaches_two_premium_widths():
     # ATM (otm=0): 2x 0.15% of 100 = 0.30 threshold; high - open = 0.35 clears it.
-    assert rm.score_tp_touch("UP", open_=100.0, high=100.35, low=99.8, otm_pct=0.0, premium_pct=0.15) is True
+    assert (
+        rm.score_tp_touch("UP", open_=100.0, high=100.35, low=99.8, otm_pct=0.0, premium_pct=0.15)
+        is True
+    )
 
 
 def test_tp_touch_up_falls_short_of_two_premium_widths():
     # high - open = 0.20 clears one premium-width but not two.
-    assert rm.score_tp_touch("UP", open_=100.0, high=100.20, low=99.8, otm_pct=0.0, premium_pct=0.15) is False
+    assert (
+        rm.score_tp_touch("UP", open_=100.0, high=100.20, low=99.8, otm_pct=0.0, premium_pct=0.15)
+        is False
+    )
 
 
 def test_tp_touch_down_reaches_two_premium_widths():
-    assert rm.score_tp_touch("DOWN", open_=100.0, high=100.1, low=99.65, otm_pct=0.0, premium_pct=0.15) is True
+    assert (
+        rm.score_tp_touch("DOWN", open_=100.0, high=100.1, low=99.65, otm_pct=0.0, premium_pct=0.15)
+        is True
+    )
 
 
 def test_tp_touch_down_falls_short_of_two_premium_widths():
-    assert rm.score_tp_touch("DOWN", open_=100.0, high=100.1, low=99.85, otm_pct=0.0, premium_pct=0.15) is False
+    assert (
+        rm.score_tp_touch("DOWN", open_=100.0, high=100.1, low=99.85, otm_pct=0.0, premium_pct=0.15)
+        is False
+    )
 
 
 def test_tp_touch_accounts_for_otm_distance():
     # otm=0.37, premium=0.10 -> threshold = 0.37 + 2*0.10 = 0.57 (0.57 pts on 100).
-    assert rm.score_tp_touch("UP", open_=100.0, high=100.58, low=99.8, otm_pct=0.37, premium_pct=0.10) is True
-    assert rm.score_tp_touch("UP", open_=100.0, high=100.50, low=99.8, otm_pct=0.37, premium_pct=0.10) is False
+    assert (
+        rm.score_tp_touch("UP", open_=100.0, high=100.58, low=99.8, otm_pct=0.37, premium_pct=0.10)
+        is True
+    )
+    assert (
+        rm.score_tp_touch("UP", open_=100.0, high=100.50, low=99.8, otm_pct=0.37, premium_pct=0.10)
+        is False
+    )
 
 
 # ─────────────────────────── confidence_bucket ───────────────────────────
@@ -204,7 +223,13 @@ def test_wilson_ci_widens_with_smaller_sample():
 
 def test_normalize_prediction_valid():
     out = rm.normalize_prediction(
-        {"direction": "UP", "confidence": 0.7, "predicted_move_pct": 1.25, "rationale": "x", "sources": ["reuters:foo"]}
+        {
+            "direction": "UP",
+            "confidence": 0.7,
+            "predicted_move_pct": 1.25,
+            "rationale": "x",
+            "sources": ["reuters:foo"],
+        }
     )
     assert out == {
         "direction": "UP",
@@ -216,7 +241,9 @@ def test_normalize_prediction_valid():
 
 
 def test_normalize_prediction_clamps_confidence():
-    out = rm.normalize_prediction({"direction": "DOWN", "confidence": 5.0, "predicted_move_pct": -1.0})
+    out = rm.normalize_prediction(
+        {"direction": "DOWN", "confidence": 5.0, "predicted_move_pct": -1.0}
+    )
     assert out is not None
     assert out["confidence"] == 1.0
 
@@ -275,17 +302,35 @@ def test_parse_monolithic_predictions_ignores_unknown_assets():
 def test_aggregate_basic_counts():
     records = [
         rm.ReplayRecord(
-            date="2026-08-01", asset="SPY", model="model-a", status="predict",
-            direction="UP", confidence=0.7, predicted_move_pct=1.0,
-            direction_correct=True, target_hit=True, expiry_return=1.0, tp_touch=True,
+            date="2026-08-01",
+            asset="SPY",
+            model="model-a",
+            status="predict",
+            direction="UP",
+            confidence=0.7,
+            predicted_move_pct=1.0,
+            direction_correct=True,
+            target_hit=True,
+            expiry_return=1.0,
+            tp_touch=True,
         ),
         rm.ReplayRecord(
-            date="2026-08-02", asset="SPY", model="model-a", status="predict",
-            direction="DOWN", confidence=0.6, predicted_move_pct=-1.0,
-            direction_correct=False, target_hit=False, expiry_return=-1.0, tp_touch=False,
+            date="2026-08-02",
+            asset="SPY",
+            model="model-a",
+            status="predict",
+            direction="DOWN",
+            confidence=0.6,
+            predicted_move_pct=-1.0,
+            direction_correct=False,
+            target_hit=False,
+            expiry_return=-1.0,
+            tp_touch=False,
         ),
         rm.ReplayRecord(date="2026-08-03", asset="SPY", model="model-a", status="abstain"),
-        rm.ReplayRecord(date="2026-08-04", asset="SPY", model="model-a", status="fail", error="timeout"),
+        rm.ReplayRecord(
+            date="2026-08-04", asset="SPY", model="model-a", status="fail", error="timeout"
+        ),
     ]
     rows = rm.aggregate(records)
     row = rows["model-a"]
@@ -303,12 +348,22 @@ def test_aggregate_basic_counts():
 def test_aggregate_separates_models():
     records = [
         rm.ReplayRecord(
-            date="2026-08-01", asset="SPY", model="model-a", status="predict",
-            direction="UP", confidence=0.9, direction_correct=True,
+            date="2026-08-01",
+            asset="SPY",
+            model="model-a",
+            status="predict",
+            direction="UP",
+            confidence=0.9,
+            direction_correct=True,
         ),
         rm.ReplayRecord(
-            date="2026-08-01", asset="SPY", model="model-b", status="predict",
-            direction="DOWN", confidence=0.9, direction_correct=False,
+            date="2026-08-01",
+            asset="SPY",
+            model="model-b",
+            status="predict",
+            direction="DOWN",
+            confidence=0.9,
+            direction_correct=False,
         ),
     ]
     rows = rm.aggregate(records)
@@ -329,8 +384,13 @@ def test_aggregate_all_abstain_direction_accuracy_is_none():
 def test_aggregate_calibration_buckets_by_confidence():
     records = [
         rm.ReplayRecord(
-            date=f"2026-08-{i:02d}", asset="SPY", model="model-a", status="predict",
-            direction="UP", confidence=0.9, direction_correct=(i % 2 == 0),
+            date=f"2026-08-{i:02d}",
+            asset="SPY",
+            model="model-a",
+            status="predict",
+            direction="UP",
+            confidence=0.9,
+            direction_correct=(i % 2 == 0),
         )
         for i in range(1, 5)
     ]
@@ -347,11 +407,17 @@ def test_aggregate_calibration_buckets_by_confidence():
 def test_find_excluded_models_detects_all_credit_exhausted_failures():
     records = [
         rm.ReplayRecord(
-            date="2026-08-01", asset="SPY", model="broke-model", status="fail",
+            date="2026-08-01",
+            asset="SPY",
+            model="broke-model",
+            status="fail",
             error="...but can only afford 9532...add more credits...",
         ),
         rm.ReplayRecord(
-            date="2026-08-02", asset="QQQ", model="broke-model", status="fail",
+            date="2026-08-02",
+            asset="QQQ",
+            model="broke-model",
+            status="fail",
             error="...insufficient credits...",
         ),
     ]
@@ -366,10 +432,17 @@ def test_find_excluded_models_excludes_even_with_some_earlier_successes():
     # the sample rather than just shrinking it. The count of successes is
     # surfaced in the reason string for transparency.
     records = [
-        rm.ReplayRecord(date="2026-08-01", asset="SPY", model="ok-then-broke", status="predict", direction="UP"),
-        rm.ReplayRecord(date="2026-08-01", asset="QQQ", model="ok-then-broke", status="predict", direction="UP"),
         rm.ReplayRecord(
-            date="2026-08-02", asset="QQQ", model="ok-then-broke", status="fail",
+            date="2026-08-01", asset="SPY", model="ok-then-broke", status="predict", direction="UP"
+        ),
+        rm.ReplayRecord(
+            date="2026-08-01", asset="QQQ", model="ok-then-broke", status="predict", direction="UP"
+        ),
+        rm.ReplayRecord(
+            date="2026-08-02",
+            asset="QQQ",
+            model="ok-then-broke",
+            status="fail",
             error="...can only afford...",
         ),
     ]
@@ -380,7 +453,13 @@ def test_find_excluded_models_excludes_even_with_some_earlier_successes():
 
 def test_find_excluded_models_ignores_non_credit_failures():
     records = [
-        rm.ReplayRecord(date="2026-08-01", asset="SPY", model="flaky-model", status="fail", error="timeout after 150s"),
+        rm.ReplayRecord(
+            date="2026-08-01",
+            asset="SPY",
+            model="flaky-model",
+            status="fail",
+            error="timeout after 150s",
+        ),
     ]
     assert rm.find_excluded_models(records) == {}
 
@@ -475,10 +554,18 @@ def test_estimate_option_pricing_from_fills_skips_unresolved_and_bak(tmp_path):
     day_dir = tmp_path / "2026-08-01"
     day_dir.mkdir()
     # No entry_filled event -> not a real fill -> skipped.
-    (day_dir / "trade-nofill.json").write_text(json.dumps({"asset": "SPY", "entry_strike": 103.0, "entries": []}))
+    (day_dir / "trade-nofill.json").write_text(
+        json.dumps({"asset": "SPY", "entry_strike": 103.0, "entries": []})
+    )
     # .bak files are always skipped.
     (day_dir / "trade-abc123.json.bak").write_text(
-        json.dumps({"asset": "SPY", "entry_strike": 103.0, "entries": [{"event_type": "entry_filled", "avg_price": 0.2}]})
+        json.dumps(
+            {
+                "asset": "SPY",
+                "entry_strike": 103.0,
+                "entries": [{"event_type": "entry_filled", "avg_price": 0.2}],
+            }
+        )
     )
     pricing = rm.estimate_option_pricing_from_fills(log_dir=tmp_path)
     assert pricing["n"] == 0
@@ -507,7 +594,9 @@ def test_premium_for_otm_extrapolates_beyond_anchor():
 def test_premium_for_otm_never_returns_non_positive():
     # Even a pathological anchor shouldn't produce a zero/negative premium
     # that would divide-by-zero downstream.
-    p = rm.premium_for_otm(100.0, atm_premium_pct=0.30, anchor_otm_pct=0.37, anchor_premium_pct=0.10)
+    p = rm.premium_for_otm(
+        100.0, atm_premium_pct=0.30, anchor_otm_pct=0.37, anchor_premium_pct=0.10
+    )
     assert p > 0.0
 
 
@@ -517,8 +606,13 @@ def test_premium_for_otm_never_returns_non_positive():
 def test_compute_sensitivity_table_recomputes_from_stored_prices():
     records = [
         rm.ReplayRecord(
-            date="2026-08-01", asset="SPY", model="model-a", status="predict",
-            direction="UP", open_price=100.0, close_price=100.60,
+            date="2026-08-01",
+            asset="SPY",
+            model="model-a",
+            status="predict",
+            direction="UP",
+            open_price=100.0,
+            close_price=100.60,
         ),
     ]
     table, premiums = rm.compute_sensitivity_table(
@@ -537,3 +631,149 @@ def test_compute_sensitivity_table_ignores_non_predict_records():
     ]
     table, _ = rm.compute_sensitivity_table(records, otm_grid=(0.0,))
     assert table == {}
+
+
+# ─────────────────────────── --premarket mode ───────────────────────────
+
+
+def test_cache_path_suffix_separates_premarket_directory():
+    stale = rm.cache_path("opencode/muse-spark-1.3-contributor-free", date(2026, 8, 1))
+    premarket = rm.cache_path(
+        "opencode/muse-spark-1.3-contributor-free", date(2026, 8, 1), cache_suffix="__premarket"
+    )
+    assert stale != premarket
+    assert stale.parent != premarket.parent
+    assert premarket.parent.name.endswith("__premarket")
+    assert stale.name == premarket.name == "2026-08-01.json"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "Failed query: insert into sessions ...",
+        "failed query: INSERT INTO messages values (...)",
+        "Error: Session not found for id abc123",
+    ],
+)
+def test_is_local_opencode_error_matches_known_markers(error):
+    assert rm._is_local_opencode_error(error) is True
+
+
+def test_is_local_opencode_error_does_not_match_unrelated_errors():
+    assert rm._is_local_opencode_error("connection timed out") is False
+    assert rm._is_local_opencode_error("rate limit exceeded") is False
+
+
+def test_alpaca_client_for_replay_none_without_env(monkeypatch):
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+    assert rm._alpaca_client_for_replay() is None
+
+
+def test_alpaca_client_for_replay_builds_with_env(monkeypatch):
+    monkeypatch.setenv("APCA_API_KEY_ID", "key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "secret")
+    client = rm._alpaca_client_for_replay()
+    assert client is not None
+    assert client.paper is True
+
+
+@pytest.mark.asyncio
+async def test_cached_premarket_day_writes_and_reuses_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(rm, "REPLAY_DIR", tmp_path)
+    calls = {"n": 0}
+
+    async def fake_fetch_premarket_day(client, symbol, day, session_start_et, cutoff_et):
+        calls["n"] += 1
+        return [
+            {
+                "open": 700.0,
+                "high": 701.0,
+                "low": 699.0,
+                "close": 700.5,
+                "volume": 500.0,
+                "vwap": 700.4,
+                "trade_count": 3.0,
+                "timestamp": datetime(2026, 9, 11, 13, 28),
+            }
+        ]
+
+    monkeypatch.setattr(rm, "fetch_premarket_day", fake_fetch_premarket_day)
+
+    bars1 = await rm._cached_premarket_day(object(), "QQQ", date(2026, 9, 11), "04:00", "09:28")
+    bars2 = await rm._cached_premarket_day(object(), "QQQ", date(2026, 9, 11), "04:00", "09:28")
+
+    assert calls["n"] == 1  # second call served from cache, not re-fetched
+    assert bars1[0]["close"] == 700.5
+    assert bars2[0]["close"] == 700.5
+    cache_file = rm._premarket_bars_cache_path("QQQ", date(2026, 9, 11))
+    assert cache_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_cached_premarket_day_caches_empty_result(tmp_path, monkeypatch):
+    monkeypatch.setattr(rm, "REPLAY_DIR", tmp_path)
+    calls = {"n": 0}
+
+    async def fake_fetch_premarket_day(client, symbol, day, session_start_et, cutoff_et):
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(rm, "fetch_premarket_day", fake_fetch_premarket_day)
+
+    await rm._cached_premarket_day(object(), "QQQ", date(2026, 9, 12), "04:00", "09:28")
+    await rm._cached_premarket_day(object(), "QQQ", date(2026, 9, 12), "04:00", "09:28")
+
+    assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_enrich_market_with_premarket_populates_each_target_asset(tmp_path, monkeypatch):
+    monkeypatch.setattr(rm, "REPLAY_DIR", tmp_path)
+    from src.models.market import DataSource, MarketSnapshot, PremarketQuote, Quote
+
+    market = MarketSnapshot(
+        quotes={
+            "SPY": Quote(
+                symbol="SPY",
+                current_price=762.0,
+                open_price=762.0,
+                high_price=762.0,
+                low_price=762.0,
+                previous_close=760.0,
+                change_pct=0.0,
+                volume=0,
+                source=DataSource.FINNHUB,
+                timestamp=datetime.now(),
+            ),
+            "QQQ": Quote(
+                symbol="QQQ",
+                current_price=708.69,
+                open_price=708.69,
+                high_price=708.69,
+                low_price=708.69,
+                previous_close=716.31,
+                change_pct=0.0,
+                volume=0,
+                source=DataSource.FINNHUB,
+                timestamp=datetime.now(),
+            ),
+        }
+    )
+
+    async def fake_fetch_premarket_quote(
+        client, symbol, session_date, prior_session_close, config, **kwargs
+    ):
+        return PremarketQuote(
+            symbol=symbol, available=True, price=prior_session_close + 1.0, source="replay"
+        )
+
+    monkeypatch.setattr(rm, "fetch_premarket_quote", fake_fetch_premarket_quote)
+
+    result = await rm.enrich_market_with_premarket(
+        date(2026, 9, 11), market, object(), rm.PremarketConfig()
+    )
+    assert set(result.premarket.keys()) == {"SPY", "QQQ"}
+    assert result.premarket["SPY"].price == 763.0
+    assert result.premarket["QQQ"].price == 709.69
+    assert all(pm.source == "replay" for pm in result.premarket.values())

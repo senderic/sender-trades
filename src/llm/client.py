@@ -1,11 +1,14 @@
-"""OpenCode CLI LLM client with DeepSeek-Pro ordered fallback chain.
+"""OpenCode CLI LLM client with an ordered model fallback chain.
 
 Models are tried in the order declared by :class:`src.config.LLMConfig`:
 :attr:`~LLMConfig.primary_model` first, then
-:attr:`~LLMConfig.fallback_models`. Both tiers use DeepSeek V4 Pro
-served via the OpenCode Go gateway (``opencode-go/*``) and OpenRouter
-(``openrouter/*``), respectively. :attr:`OpencodeLLMClient.paid_used`
-is always ``True`` after a successful call.
+:attr:`~LLMConfig.fallback_models` in order (as of 2026-09-10: the
+contributor-free Zen Muse primary, then nvidia-direct Nemotron 3 Ultra,
+then DeepSeek V4 Pro via the paid OpenCode Go gateway
+(``opencode-go/*``), then DeepSeek V4 Pro via OpenRouter
+(``openrouter/*``) as a last resort). :attr:`OpencodeLLMClient.paid_used`
+reflects whether the model that actually served the last successful
+call is in a paid namespace -- see :func:`is_paid_model`.
 
 When :attr:`~LLMConfig.preflight` is enabled, that configured order is a
 starting point, not the final word: ``.model-availability.json`` (written
@@ -50,6 +53,189 @@ def is_paid_model(model_id: str) -> bool:
         or model_id.startswith("openrouter/")
         or model_id.startswith("nvidia-direct/")
     )
+
+
+# Cache for `opencode models` output. `opencode models` takes a few
+# seconds, so the roster is cached to disk with a timestamp and reused
+# across processes (the pipeline, preflight, and any ad-hoc invocation
+# within the same window) instead of being re-shelled-out-to on every
+# client construction. A one-hour TTL is generous: the opencode model
+# roster changes on the order of days, not minutes -- this incident was
+# caused by a wrong *id*, not a roster change.
+_KNOWN_MODELS_CACHE_PATH = ".opencode-models-cache.json"
+_KNOWN_MODELS_CACHE_MAX_AGE_SEC = 3600
+
+
+def _fetch_known_model_ids(opencode_path: str, timeout_sec: int = 20) -> set[str] | None:
+    """Run ``opencode models`` and return the set of valid model ids.
+
+    Returns ``None`` (never an empty set) when the command cannot be run,
+    times out, or produces no usable output, so callers can distinguish
+    "validation unavailable" from "everything is invalid" and fail open
+    rather than dropping every configured model.
+
+    Args:
+        opencode_path: Path/name of the ``opencode`` binary.
+        timeout_sec: Timeout for the ``opencode models`` subprocess.
+
+    Returns:
+        The set of model ids ``opencode`` currently recognizes, or
+        ``None`` if the listing could not be obtained.
+    """
+    try:
+        result = subprocess.run(
+            [opencode_path, "models"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except Exception as e:
+        logger.warning("opencode_models_list_failed", error=f"{type(e).__name__}: {e}")
+        return None
+
+    if result.returncode != 0:
+        logger.warning(
+            "opencode_models_list_failed",
+            rc=result.returncode,
+            error=(result.stderr or result.stdout or "")[:300],
+        )
+        return None
+
+    ids = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    if not ids:
+        logger.warning("opencode_models_list_empty")
+        return None
+    return ids
+
+
+def get_known_model_ids(
+    opencode_path: str,
+    cache_path: str = _KNOWN_MODELS_CACHE_PATH,
+    max_age_sec: int = _KNOWN_MODELS_CACHE_MAX_AGE_SEC,
+) -> set[str] | None:
+    """Return the known ``opencode`` model ids, cached on disk.
+
+    ``opencode models`` takes a few seconds, so the result is cached to
+    ``cache_path`` with a timestamp and reused for ``max_age_sec``. A
+    failed refresh falls back to a stale cache (better than skipping
+    validation) if one exists, else ``None``.
+
+    Args:
+        opencode_path: Path/name of the ``opencode`` binary.
+        cache_path: Where to persist the cached roster.
+        max_age_sec: Maximum cache age before a refresh is attempted.
+
+    Returns:
+        The set of known model ids, or ``None`` if it could not be
+        determined (no cache and the live fetch failed) -- callers must
+        treat ``None`` as "skip validation", not "nothing is valid".
+    """
+    path = Path(cache_path)
+    cached_ids: set[str] | None = None
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            models = data.get("models")
+            if isinstance(models, list):
+                cached_ids = set(models)
+            cached_at = datetime.fromisoformat(str(data["timestamp"]))
+            if cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=UTC)
+            age_sec = (datetime.now(UTC) - cached_at).total_seconds()
+            if age_sec <= max_age_sec and cached_ids:
+                return cached_ids
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+            cached_ids = None
+
+    fresh = _fetch_known_model_ids(opencode_path)
+    if fresh is not None:
+        try:
+            path.write_text(
+                json.dumps({"timestamp": datetime.now(UTC).isoformat(), "models": sorted(fresh)})
+            )
+        except OSError as e:
+            logger.debug("opencode_models_cache_write_failed", error=str(e))
+        return fresh
+
+    # Live refresh failed; fall back to a stale cache rather than
+    # skipping validation outright.
+    return cached_ids
+
+
+def drop_unknown_models(chain: list[str], known: set[str] | None) -> list[str]:
+    """Filter ``chain`` down to model ids ``opencode`` actually recognizes.
+
+    Unknown ids are reported loudly (ERROR, since a typo'd/renamed model
+    id is a silent-fallback trap identical to the 2026-09-05 Nemotron
+    incident this validation exists to catch) and dropped. Never raises
+    and never returns an empty chain when the input wasn't empty: if
+    ``known`` is ``None`` (validation unavailable) or every model in
+    ``chain`` is unknown (validation itself is probably unreliable, e.g.
+    ``opencode models`` output changed shape), the original chain is
+    returned unchanged so the pipeline still has something to try.
+
+    Args:
+        chain: Configured model ids, in order.
+        known: Set of ids ``opencode models`` reports, or ``None`` if
+            that could not be determined.
+
+    Returns:
+        ``chain`` with unknown ids removed, or ``chain`` unchanged when
+        validation can't be trusted.
+    """
+    if known is None:
+        return chain
+
+    valid = [m for m in chain if m in known]
+    unknown = [m for m in chain if m not in known]
+    if unknown:
+        logger.error(
+            "unknown_model_id_dropped",
+            unknown=unknown,
+            remaining=valid,
+        )
+    if not valid:
+        logger.error(
+            "unknown_model_id_validation_suspect_failing_open",
+            chain=chain,
+        )
+        return chain
+    return valid
+
+
+def validate_llm_config(llm_config: LLMConfig) -> LLMConfig:
+    """Return ``llm_config`` with unknown model ids dropped from its chain.
+
+    Intended for one-time use at pipeline startup (see
+    :meth:`~src.pipeline.Pipeline.run`), *before* an
+    :class:`OpencodeLLMClient` is constructed -- this is deliberately
+    separate from :meth:`OpencodeLLMClient._resolve_chain`, which stays
+    on the hot per-call path and must not add a subprocess call there
+    (see its docstring). ``opencode models`` is a few seconds but is
+    cached to disk (:func:`get_known_model_ids`), so calling this once
+    per pipeline run is cheap.
+
+    Never raises and never drops every model: if validation itself is
+    unavailable or looks unreliable, the original config comes back
+    unchanged (see :func:`drop_unknown_models`).
+
+    Args:
+        llm_config: The configured :class:`LLMConfig`.
+
+    Returns:
+        ``llm_config`` unchanged, or a copy with ``primary_model`` /
+        ``fallback_models`` narrowed to ids ``opencode models`` reports.
+    """
+    if not llm_config.enabled:
+        return llm_config
+
+    configured = _dedupe([llm_config.primary_model, *llm_config.fallback_models])
+    known = get_known_model_ids(llm_config.opencode_path)
+    valid = drop_unknown_models(configured, known)
+    if valid == configured:
+        return llm_config
+
+    return llm_config.model_copy(update={"primary_model": valid[0], "fallback_models": valid[1:]})
 
 
 class OpencodeLLMClient:
@@ -138,6 +324,18 @@ class OpencodeLLMClient:
         recover between probe time and run time), not a verdict. See
         :class:`~src.config.PreflightConfig` for the config contract and
         :func:`_reorder_chain` for the reordering rules themselves.
+
+        Model-id validation against ``opencode models`` (see
+        :func:`get_known_model_ids` / :func:`drop_unknown_models`) is
+        deliberately NOT done here: this method is on the hot path for
+        every :meth:`invoke`/:meth:`invoke_agent` call across the test
+        suite and (via ``asyncio.to_thread``) concurrently from graph
+        nodes, and shelling out to ``opencode models`` here would add a
+        real subprocess call to every one of those call sites. Instead
+        :func:`~src.pipeline.Pipeline.run` validates the configured
+        chain once at startup, before any :class:`OpencodeLLMClient` is
+        constructed, and :mod:`src.preflight` validates it separately
+        before probing.
 
         Returns:
             The model chain, deduplicated, in the order calls should try
@@ -373,8 +571,12 @@ class OpencodeLLMClient:
 
                 input_chars = len(full_prompt)
                 if result.returncode != 0:
-                    last_error = (result.stderr or "")[:300]
-                    logger.debug(
+                    # opencode writes its actual error to stdout, not
+                    # stderr, so stderr is routinely empty here — fall
+                    # back to the tail of stdout so the failure reason is
+                    # never silently lost.
+                    last_error = (result.stderr or "")[:300] or (result.stdout or "")[-300:]
+                    logger.warning(
                         "opencode_run_failed",
                         model=model,
                         paid=is_paid,
@@ -404,6 +606,21 @@ class OpencodeLLMClient:
                     output_chars=len(response),
                     elapsed=elapsed,
                 )
+                if is_fallback:
+                    # The primary model failed and a non-primary model in
+                    # the chain served this response instead. This is a
+                    # dead/degraded primary, not routine behaviour, so it
+                    # is logged at WARNING even though the call itself
+                    # succeeded -- see opencode_all_models_failed for the
+                    # "nothing worked" case.
+                    logger.warning(
+                        "opencode_served_by_non_primary",
+                        model=model,
+                        primary=first_model,
+                        paid=is_paid,
+                        elapsed=round(elapsed, 2),
+                        chars=len(response),
+                    )
                 logger.info(
                     "opencode_invoke_ok",
                     model=model,
@@ -416,12 +633,14 @@ class OpencodeLLMClient:
 
             except subprocess.TimeoutExpired:
                 self._record_failure()
+                elapsed = time.monotonic() - t0
                 last_error = f"timeout after {self.config.timeout_sec}s"
                 logger.warning(
                     "opencode_run_timed_out",
                     model=model,
                     paid=is_paid,
                     timeout=self.config.timeout_sec,
+                    elapsed=round(elapsed, 2),
                 )
                 continue
             except Exception as e:
@@ -573,8 +792,12 @@ class OpencodeLLMClient:
 
                 input_chars = len(full_prompt)
                 if result.returncode != 0:
-                    last_error = (result.stderr or "")[:300]
-                    logger.debug(
+                    # opencode writes its actual error to stdout, not
+                    # stderr, so stderr is routinely empty here — fall
+                    # back to the tail of stdout so the failure reason is
+                    # never silently lost.
+                    last_error = (result.stderr or "")[:300] or (result.stdout or "")[-300:]
+                    logger.warning(
                         "opencode_agent_failed",
                         model=model,
                         agent=agent_name,
@@ -606,6 +829,20 @@ class OpencodeLLMClient:
                     output_chars=len(response),
                     elapsed=elapsed,
                 )
+                if is_fallback:
+                    # The primary model failed and a non-primary model in
+                    # the chain served this response instead -- a dead or
+                    # degraded primary, logged at WARNING despite the call
+                    # itself succeeding.
+                    logger.warning(
+                        "opencode_agent_served_by_non_primary",
+                        model=model,
+                        agent=agent_name,
+                        primary=first_model,
+                        paid=is_paid,
+                        elapsed=round(elapsed, 2),
+                        chars=len(response),
+                    )
                 logger.info(
                     "opencode_agent_ok",
                     model=model,
@@ -619,6 +856,7 @@ class OpencodeLLMClient:
 
             except subprocess.TimeoutExpired:
                 self._record_failure()
+                elapsed = time.monotonic() - t0
                 last_error = f"timeout after {attempt_timeout}s"
                 logger.warning(
                     "opencode_agent_timed_out",
@@ -626,6 +864,7 @@ class OpencodeLLMClient:
                     agent=agent_name,
                     paid=is_paid,
                     timeout=attempt_timeout,
+                    elapsed=round(elapsed, 2),
                 )
                 continue
             except Exception as e:
@@ -671,8 +910,25 @@ class OpencodeLLMClient:
             else "free tier — actual cost was $0.00"
         )
 
+        # Surface a dead/degraded primary model in the email itself, not
+        # just the logs -- the last successful call (if any) had to fall
+        # back, or every model in the chain failed outright.
+        warning_html = ""
+        if self.last_served_by is None and self.total_failures > 0:
+            warning_html = (
+                '<p style="margin:4px 0 8px;font-size:12px;color:#cf222e;font-weight:600;">'
+                "⚠ Every model in the LLM chain failed this run — check opencode logs."
+                "</p>"
+            )
+        elif self.last_fallback_hit:
+            warning_html = (
+                '<p style="margin:4px 0 8px;font-size:12px;color:#9a6700;font-weight:600;">'
+                f"⚠ Primary model did not respond — served by fallback ({self.last_served_by})."
+                "</p>"
+            )
+
         return f"""<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e1e4e8;font-size:12px;color:#57606a;">
-<table style="border-collapse:collapse;width:100%;margin:8px 0;font-size:12px;">
+{warning_html}<table style="border-collapse:collapse;width:100%;margin:8px 0;font-size:12px;">
 <tr><td style="padding:4px 8px;font-weight:600;">LLM Calls</td><td style="padding:4px 8px;">{self.total_calls}</td>
     <td style="padding:4px 8px;font-weight:600;">Failed</td><td style="padding:4px 8px;">{self.total_failures}</td></tr>
 <tr><td style="padding:4px 8px;font-weight:600;">Input (est.)</td><td style="padding:4px 8px;">{in_tok:,} tokens</td>
@@ -700,8 +956,18 @@ Tokens estimated at ~4 bytes per token. This run used the {paid_note}.
         model_str = self.last_served_by or "—"
         paid_note = "paid model" if self.paid_used else "free tier"
 
+        warning_line = ""
+        if self.last_served_by is None and self.total_failures > 0:
+            warning_line = "WARNING: every model in the LLM chain failed this run.\n"
+        elif self.last_fallback_hit:
+            warning_line = (
+                f"WARNING: primary model did not respond — served by fallback "
+                f"({self.last_served_by}).\n"
+            )
+
         return (
             f"\n---\nOpencode Usage Summary\n"
+            f"{warning_line}"
             f"Calls: {self.total_calls}  Failures: {self.total_failures}  "
             f"Fallback hits: {self.fallback_hits}\n"
             f"Input (est.): {in_tok:,} tokens  Output (est.): {out_tok:,} tokens  "

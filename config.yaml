@@ -45,6 +45,7 @@ strategies:
     enabled: true
     min_confidence: 0.40
     gap_threshold_pct: 0.5
+    max_confidence: 0.50
   mean_reversion:
     enabled: true
     min_confidence: 0.40
@@ -58,6 +59,30 @@ strategies:
 risk:
   max_loss_per_trade_usd: 500
   max_position_size_contracts: 10
+  sizing_tier2_min_confidence: 0.60
+  # Minimum absolute predicted move (in %) for a trade to be executed.
+  # A 68%-accurate direction call on a 0.1-0.2% move still dies to 0DTE
+  # theta, so only trade when the model expects a meaningful session move.
+  min_predicted_move_pct: 0.30
+  # Tie-break preference across assets at equal confidence. QQQ has shown
+  # better accuracy and PnL than SPY across the whole history.
+  preferred_asset: QQQ
+  # Premium-aware entry gate (2026-09-10 audit of logs/, 2026-07-29..09-09):
+  # predicted moves ran ~3x hotter than the underlying's actual intraday
+  # move (e.g. 2026-09-09 predicted SPY -0.7%/QQQ -0.8%, actual -0.22%/
+  # -0.01%). 0.4 (~1/2.5) shrinks the predicted move to a realistic one
+  # before DecisionAggregator.premium_gate compares it against the
+  # option's true breakeven (OTM distance to strike + ask, as a % of the
+  # underlying). Runs in ExecutionEngine once the live ask AND a live
+  # underlying quote are known post-open, not at decision time.
+  predicted_move_shrink: 0.4
+  # Extra cushion above breakeven, as a fraction, covering only spread/
+  # slippage now that the OTM distance is computed explicitly (2026-09-10
+  # follow-up: the previous 0.15 was standing in for that distance term,
+  # which the ask/strike formula omitted entirely). Not fitted from data --
+  # the trade audits don't retain the quoted ask, only the fill price --
+  # 0.03 is a reasoned default.
+  breakeven_margin_pct: 0.03
   close_deadline_est: "15:30"
   min_dte: 0
   max_dte: 0
@@ -97,9 +122,19 @@ gap_fade:
 llm:
   enabled: true
   # Chain order: primary_model first, then fallback_models in order.
-  # Primary is Nemotron 3 Ultra via nvidia-direct; fallback is DeepSeek V4 Pro via OpenRouter.
-  primary_model: nvidia-direct/nemotron-3-ultra
+  # Primary is Zen Muse (opencode/muse-spark-1.3-contributor-free): contributor-free,
+  # training-allowed, served via the Responses route through the opencode CLI.
+  # Nemotron 3 Ultra (nvidia-direct) is demoted to the first fallback. Next
+  # is DeepSeek V4 Pro via the paid OpenCode Go gateway (opencode-go) --
+  # this route served production 8/18-9/4 and is confirmed working
+  # (2026-09-10). OpenRouter DeepSeek V4 Pro is demoted to last: as of
+  # 2026-09-10 its account is nearly out of credits ("requires more
+  # credits ... can only afford 31776 of 32000 tokens"), so it is kept
+  # only as a last-resort rather than removed outright.
+  primary_model: opencode/muse-spark-1.3-contributor-free
   fallback_models:
+    - nvidia-direct/nvidia/nemotron-3-ultra-550b-a55b
+    - opencode-go/deepseek-v4-pro
     - openrouter/deepseek/deepseek-v4-pro
   # Raised from 45s: the monolithic fallback prompt is large, and on
   # 2026-08-26 both models timed out at 45s, leaving the fallback useless

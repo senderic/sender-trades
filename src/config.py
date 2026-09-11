@@ -110,6 +110,12 @@ class MomentumConfig(StrategyConfig):
     """Configuration for the momentum trading strategy."""
 
     gap_threshold_pct: float = 0.5
+    # Momentum has produced 0 wins in 4 trades (2026-08-10..26) for -$182,
+    # and its raw confidence formula (0.4 + |gap|/10 + |sentiment|) inflated
+    # picks to 0.65-0.91, outranking the LLM on several of its losses. Cap
+    # the reported confidence so an uncorroborated momentum signal can no
+    # longer claim conviction it has not demonstrated.
+    max_confidence: float = 0.50
 
 
 class MeanReversionConfig(StrategyConfig):
@@ -162,6 +168,39 @@ class RiskConfig(BaseModel):
 
     max_loss_per_trade_usd: float = 1000.0
     max_position_size_contracts: int = 10
+    # Conservative 2-stage sizing: a selected trade scales to 2 contracts
+    # only when its (checker/streak-adjusted) confidence clears this bar AND
+    # it is LLM-backed or corroborated by a second strategy. Everything else
+    # stays at 1. Sized below the $500 max-loss cap for typical premiums.
+    sizing_tier2_min_confidence: float = 0.60
+    # Minimum absolute predicted move (in %) for a trade to be executed.
+    # 68%-accurate direction on a 0.1-0.2% move still dies to theta, so only
+    # trade when the model expects a meaningful session move.
+    min_predicted_move_pct: float = 0.30
+    # Tie-break preference across assets at equal confidence. QQQ has shown
+    # better direction accuracy and realized PnL than SPY across history.
+    preferred_asset: str = "QQQ"
+    # Premium-aware entry gate (2026-09-10 audit): predicted moves run ~3x
+    # hotter than what the underlying actually does intraday (predicted
+    # -0.7/-0.8%, actual ~-0.2% on 2026-09-09), so a shrink factor of ~0.4
+    # (roughly 1 / 2.5, the inverse of that overestimate) converts the LLM's
+    # predicted_move_pct into a realistic expected move before comparing it
+    # against what the option itself costs. See
+    # DecisionAggregator.premium_gate for the full breakeven calculation.
+    predicted_move_shrink: float = 0.4
+    # Extra cushion required above the breakeven computed by
+    # DecisionAggregator.premium_gate, as a fraction. The breakeven itself
+    # now includes the OTM distance from underlying to strike (2026-09-10
+    # follow-up review -- the first version of this gate used ask/strike,
+    # dropping the distance term and understating breakeven by ~0.6% on
+    # every trade, since every strike here is chosen ~0.6% OTM). With that
+    # distance now explicit, this margin only needs to cover spread/
+    # slippage on exit, not stand in for the OTM gap -- hence 0.03, not the
+    # 0.15 used previously. The trade audits don't retain the quoted ask
+    # (only the fill price), so this can't be fitted precisely from
+    # logs/; 0.03 is a reasoned default in the requested 0.02-0.05 band,
+    # not a measured statistic.
+    breakeven_margin_pct: float = 0.03
     close_deadline_est: str = "15:30"
     min_dte: int = 0
     max_dte: int = 0
@@ -243,16 +282,20 @@ class LLMConfig(BaseModel):
     analysis tasks, so every call uses a capable reasoning model.
 
     Models are tried in order: :attr:`primary_model` first, then
-    :attr:`fallback_models`. The primary is served via nvidia-direct
-    (``nvidia-direct/*``); the fallback is served via OpenRouter
-    (``openrouter/*``).
+    :attr:`fallback_models`. The primary is served via the Zen opencode
+    route (``opencode/*``); the fallbacks are served via nvidia-direct
+    (``nvidia-direct/*``), then the paid OpenCode Go gateway
+    (``opencode-go/*``), then OpenRouter (``openrouter/*``) as a last
+    resort (its account was nearly out of credits as of 2026-09-10).
     """
 
     enabled: bool = True
     opencode_path: str = "opencode"
-    primary_model: str = "nvidia-direct/nemotron-3-ultra"
+    primary_model: str = "opencode/muse-spark-1.3-contributor-free"
     fallback_models: list[str] = Field(
         default_factory=lambda: [
+            "nvidia-direct/nvidia/nemotron-3-ultra-550b-a55b",
+            "opencode-go/deepseek-v4-pro",
             "openrouter/deepseek/deepseek-v4-pro",
         ]
     )

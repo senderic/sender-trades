@@ -255,8 +255,8 @@ class TestLLMTradeStrategy:
         assert result.recommendation.direction == Direction.PUT
         assert result.recommendation.confidence == 0.78
         assert result.recommendation.strategy_label == "llm_trade"
-        assert result.debug_trace["served_by"] == "nvidia-direct/nemotron-3-ultra"
-        assert result.debug_trace["paid_used"] is True
+        assert result.debug_trace["served_by"] == "opencode/muse-spark-1.3-contributor-free"
+        assert result.debug_trace["paid_used"] is False
         assert "tech selloff" in result.recommendation.rationale["llm_rationale"].lower()
         assert result.recommendation.rationale["llm_sources"] == [
             "atlas-briefing:executive_summary",

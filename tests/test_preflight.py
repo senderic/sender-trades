@@ -197,10 +197,17 @@ class TestMain:
 
     def test_exits_zero_and_writes_file_even_when_every_model_fails(self, tmp_path: Path) -> None:
         config_path = self._write_config(tmp_path)
-        with patch(
-            "src.preflight.subprocess.run",
-            return_value=subprocess.CompletedProcess(
-                args=["opencode"], returncode=1, stdout="", stderr="down"
+        with (
+            # Model-id validation is exercised separately below; skip it
+            # here (`None` = "couldn't determine the roster, don't drop
+            # anything") so this test stays about probing, not validation,
+            # and never shells out to `opencode models` for real.
+            patch("src.preflight.get_known_model_ids", return_value=None),
+            patch(
+                "src.preflight.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["opencode"], returncode=1, stdout="", stderr="down"
+                ),
             ),
         ):
             rc = main(["--config", str(config_path)])
@@ -219,7 +226,10 @@ class TestMain:
                 return subprocess.CompletedProcess(cmd, 0, _ndjson_output("ok"), "")
             return subprocess.CompletedProcess(cmd, 1, "", "down")
 
-        with patch("src.preflight.subprocess.run", side_effect=run_side_effect):
+        with (
+            patch("src.preflight.get_known_model_ids", return_value=None),
+            patch("src.preflight.subprocess.run", side_effect=run_side_effect),
+        ):
             rc = main(["--config", str(config_path)])
 
         assert rc == 0
@@ -227,20 +237,58 @@ class TestMain:
         assert data["models"]["opencode-go/deepseek-v4-pro"]["available"] is True
         assert data["models"]["openrouter/deepseek/deepseek-v4-pro"]["available"] is False
 
+    def test_drops_unknown_model_id_before_probing(self, tmp_path: Path) -> None:
+        """A model id `opencode models` doesn't recognize is dropped and
+        logged loudly, and never reaches `probe_model` -- this is the
+        fail-fast check that would have caught the 2026-09-05 Nemotron
+        incident (a wrong id that failed every call in ~3s, silently)."""
+        config_path = self._write_config(tmp_path)
+
+        probed_cmds: list[list[str]] = []
+
+        def run_side_effect(cmd, **kwargs):  # type: ignore[no-untyped-def]
+            probed_cmds.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, _ndjson_output("ok"), "")
+
+        with (
+            patch(
+                "src.preflight.get_known_model_ids",
+                return_value={"opencode-go/deepseek-v4-pro"},
+            ),
+            patch("src.preflight.subprocess.run", side_effect=run_side_effect),
+        ):
+            rc = main(["--config", str(config_path)])
+
+        assert rc == 0
+        data = json.loads((tmp_path / ".model-availability.json").read_text())
+        assert "opencode-go/deepseek-v4-pro" in data["models"]
+        assert "openrouter/deepseek/deepseek-v4-pro" not in data["models"]
+        assert not any(
+            "openrouter/deepseek/deepseek-v4-pro" in cmd for cmd in probed_cmds
+        )
+
     def test_skips_and_does_not_write_when_preflight_disabled(self, tmp_path: Path) -> None:
         config_path = self._write_config(tmp_path, preflight_enabled=False)
-        with patch("src.preflight.subprocess.run") as mock_run:
+        with (
+            patch("src.preflight.get_known_model_ids") as mock_known,
+            patch("src.preflight.subprocess.run") as mock_run,
+        ):
             rc = main(["--config", str(config_path)])
         assert rc == 0
         mock_run.assert_not_called()
+        mock_known.assert_not_called()
         assert not (tmp_path / ".model-availability.json").exists()
 
     def test_skips_and_does_not_write_when_llm_disabled(self, tmp_path: Path) -> None:
         config_path = self._write_config(tmp_path, llm_enabled=False)
-        with patch("src.preflight.subprocess.run") as mock_run:
+        with (
+            patch("src.preflight.get_known_model_ids") as mock_known,
+            patch("src.preflight.subprocess.run") as mock_run,
+        ):
             rc = main(["--config", str(config_path)])
         assert rc == 0
         mock_run.assert_not_called()
+        mock_known.assert_not_called()
         assert not (tmp_path / ".model-availability.json").exists()
 
 

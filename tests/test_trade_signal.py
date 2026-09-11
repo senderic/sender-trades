@@ -11,7 +11,7 @@ import pytest
 from src.config import Settings
 from src.llm.trade_signal import LLMTradeStrategy, _build_prompt, _normalise_sources, _parse_pick
 from src.models.briefing import BriefingData, BriefingQuality
-from src.models.market import DataSource, MarketSnapshot, Quote
+from src.models.market import DataSource, MarketSnapshot, PremarketQuote, Quote
 from src.models.recommendation import Direction
 
 # Distinguishing phrases from each agent's inlined system-prompt body.
@@ -500,15 +500,31 @@ class TestLLMTradeStrategy:
         assert result.debug_trace["served_by"] == "openrouter/deepseek/deepseek-v4-pro"
 
 
+def _premarket(symbol: str, gap_pct: float, reliable: bool = True) -> PremarketQuote:
+    return PremarketQuote(
+        symbol=symbol,
+        available=True,
+        price=700.0,
+        vwap=699.5,
+        first_price=695.0,
+        cumulative_volume=2000.0,
+        gap_pct=gap_pct,
+        median_volume=2000.0,
+        volume_ratio=1.0 if reliable else 0.1,
+        reliable=reliable,
+        lookback_days_used=10,
+        source="live",
+    )
+
+
 class TestGapAwarenessInPrompt:
     def test_prompt_includes_gap_warning_when_large_gap(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
-        # Gap is defined as open-vs-previous-close (not current-vs-previous-
-        # close) — see _gap_pct. Setting open_price is what should trigger
-        # the alert; current_price is irrelevant to the gap calculation.
-        market_with_quotes.quotes["QQQ"].open_price = 674.76
-        market_with_quotes.quotes["QQQ"].previous_close = 661.50
+        # Gap is now the LIVE pre-market price vs the PRIOR SESSION close
+        # (see Quote.prior_session_close / _gap_pct) -- driven by
+        # market.premarket, not the stale open_price/previous_close fields.
+        market_with_quotes.premarket["QQQ"] = _premarket("QQQ", gap_pct=2.0)
         prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
         assert "Pre-market gap alert" in prompt
         assert "QQQ has gapped +2.0%" in prompt
@@ -516,10 +532,8 @@ class TestGapAwarenessInPrompt:
     def test_prompt_omits_gap_warning_when_gap_small(
         self, briefing_with_sentiment, market_with_quotes
     ) -> None:
-        market_with_quotes.quotes["SPY"].open_price = 745.20
-        market_with_quotes.quotes["SPY"].previous_close = 744.00
-        market_with_quotes.quotes["QQQ"].open_price = 695.33
-        market_with_quotes.quotes["QQQ"].previous_close = 694.50
+        market_with_quotes.premarket["SPY"] = _premarket("SPY", gap_pct=0.16)
+        market_with_quotes.premarket["QQQ"] = _premarket("QQQ", gap_pct=0.12)
         prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
         assert "Pre-market gap alert" not in prompt
 
@@ -532,6 +546,31 @@ class TestGapAwarenessInPrompt:
         prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
         assert "Gap-fade threshold for SPY: 1.5%" in prompt
         assert "Gap-fade threshold for QQQ: 2.0%" in prompt
+
+    def test_prompt_labels_quote_as_prior_session(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "PRIOR SESSION" in prompt
+        assert "NOT today" in prompt
+
+    def test_prompt_discloses_unavailable_premarket_explicitly(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        """When no live pre-market quote exists, the prompt must say so
+        explicitly rather than silently treating the stale quote as
+        today's price (the exact 2026-09-11 bug)."""
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "UNAVAILABLE as of the cutoff" in prompt
+        assert "do NOT treat" in prompt
+
+    def test_prompt_flags_thin_premarket_volume(
+        self, briefing_with_sentiment, market_with_quotes
+    ) -> None:
+        market_with_quotes.premarket["QQQ"] = _premarket("QQQ", gap_pct=0.3, reliable=False)
+        prompt = _build_prompt(briefing_with_sentiment, market_with_quotes, ["SPY", "QQQ"])
+        assert "THIN" in prompt
+        assert "weight this QQQ pre-market move LIGHTLY" in prompt
 
 
 class TestGraphEnabledLLMTradeStrategy:

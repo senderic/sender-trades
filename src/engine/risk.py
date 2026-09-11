@@ -167,11 +167,10 @@ class RiskEngine:
         Note:
             This check halves confidence rather than raising an error.
         """
-        quote = market.quotes.get(rec.asset)
-        if quote is None:
-            return
-        current = quote.current_price
-        if current <= 0:
+        # MECHANICS: live pre-market price, falling back to the prior
+        # session's close when unavailable (see MarketSnapshot.mechanics_price).
+        current = market.mechanics_price(rec.asset)
+        if not current or current <= 0:
             return
         move_pct = abs(rec.target_strike - current) / current * 100
         if move_pct > 2.0:
@@ -204,13 +203,14 @@ class RiskEngine:
         Raises:
             RiskError: If pre-market gap > 0.4% contradicts trade direction.
         """
-        quote = market.quotes.get(rec.asset)
-        if quote is None:
+        # MECHANICS: today's pre-market gap vs the prior session's close
+        # (see MarketSnapshot.mechanics_gap_pct) — the previous formula
+        # used quote.current_price vs quote.previous_close, both
+        # prior-session-stale pre-market (Quote.prior_session_close),
+        # which computed a two-days-back gap, not today's.
+        gap_pct = market.mechanics_gap_pct(rec.asset)
+        if gap_pct is None:
             return
-        if quote.previous_close <= 0:
-            return
-
-        gap_pct = (quote.current_price - quote.previous_close) / quote.previous_close * 100
         if abs(gap_pct) <= 0.4:
             return
 
@@ -251,11 +251,13 @@ class RiskEngine:
             rec: The trade recommendation to check.
             market: Current market snapshot for price data.
         """
-        quote = market.quotes.get(rec.asset)
-        if quote is None or quote.previous_close <= 0:
+        # MECHANICS: see MarketSnapshot.mechanics_gap_pct and the note in
+        # _check_premarket_gap above — this is today's pre-market gap vs
+        # the prior session's close, not the stale-quote formula this
+        # used before 2026-09-11.
+        gap_pct = market.mechanics_gap_pct(rec.asset)
+        if gap_pct is None:
             return
-
-        gap_pct = (quote.current_price - quote.previous_close) / quote.previous_close * 100
         gap_fade = self.config.gap_fade
         gap_threshold = gap_fade.threshold_for(rec.asset)
         sentiment_mag = abs(market.avg_sentiment_polarity())

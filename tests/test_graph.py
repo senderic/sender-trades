@@ -13,7 +13,7 @@ from src.llm.graph import (
     _build_research_prompt,
     _extract_json,
 )
-from src.models.market import DataSource, MarketSnapshot, NewsHeadline, Quote
+from src.models.market import DataSource, MarketSnapshot, NewsHeadline, PremarketQuote, Quote
 
 # Distinguishing phrases from each agent's inlined system-prompt body.
 # ``invoke_agent`` no longer passes ``--agent``, so subprocess mocks route
@@ -102,6 +102,22 @@ class TestBuildResearchPrompt:
                     timestamp=datetime.now(),
                 ),
             },
+            premarket={
+                "SPY": PremarketQuote(
+                    symbol="SPY",
+                    available=True,
+                    price=750.06,
+                    vwap=749.5,
+                    first_price=746.0,
+                    cumulative_volume=2000.0,
+                    gap_pct=0.68,
+                    median_volume=2000.0,
+                    volume_ratio=1.0,
+                    reliable=True,
+                    lookback_days_used=10,
+                    source="live",
+                ),
+            },
         )
         from datetime import date as dt_date
 
@@ -111,7 +127,7 @@ class TestBuildResearchPrompt:
         prompt = _build_research_prompt(briefing, market, "SPY", GapFadeConfig())
         assert "Research target: SPY" in prompt
         assert "Bullish market" in prompt
-        assert "$745.00" in prompt
+        assert "PRIOR SESSION: closed $745.00" in prompt
         assert "+0.68%" in prompt
         assert "Gap-fade threshold for SPY: 1.5%" in prompt
 

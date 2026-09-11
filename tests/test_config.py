@@ -192,3 +192,37 @@ gap_fade:
         settings = Settings.from_yaml("config.yaml")
         assert settings.gap_fade.threshold_for("SPY") == 1.5
         assert settings.gap_fade.threshold_for("QQQ") == 2.0
+
+
+class TestPremarketConfig:
+    def test_defaults(self) -> None:
+        pm = Settings().premarket
+        assert pm.enabled is True
+        assert pm.cutoff_et == "09:28"
+        assert pm.session_start_et == "04:00"
+        assert pm.lookback_days == 10
+        assert pm.min_volume_ratio == 0.5
+
+    def test_from_yaml_overrides(self, tmp_path: Path) -> None:
+        yaml_path = tmp_path / "premarket.yaml"
+        yaml_path.write_text("""
+premarket:
+  enabled: false
+  cutoff_et: "09:25"
+  session_start_et: "07:00"
+  lookback_days: 5
+  min_volume_ratio: 0.75
+""")
+        settings = Settings.from_yaml(yaml_path)
+        assert settings.premarket.enabled is False
+        assert settings.premarket.cutoff_et == "09:25"
+        assert settings.premarket.session_start_et == "07:00"
+        assert settings.premarket.lookback_days == 5
+        assert settings.premarket.min_volume_ratio == 0.75
+
+    def test_project_config_matches_defaults(self) -> None:
+        settings = Settings.from_yaml("config.yaml")
+        assert settings.premarket.enabled is True
+        assert settings.premarket.cutoff_et == "09:28"
+        assert settings.premarket.lookback_days == 10
+        assert settings.premarket.min_volume_ratio == 0.5

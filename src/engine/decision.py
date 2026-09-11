@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import structlog
 
-from src.config import Settings
-from src.models.recommendation import DecisionOutput, Direction, StrategyResult
+from src.config import RiskConfig, Settings
+from src.models.recommendation import DecisionOutput, Direction, StrategyResult, TradeRecommendation
 from src.trade_tracker import compute_direction_stats, compute_strategy_stats, load_trade_outcomes
 
 logger = structlog.get_logger()
@@ -41,7 +41,14 @@ class DecisionAggregator:
                 rationale="No strategy produced a valid recommendation above confidence threshold.",
             )
 
-        valid_sorted = sorted(valid, key=lambda r: r.confidence, reverse=True)
+        valid_sorted = sorted(
+            valid,
+            key=lambda r: (
+                r.confidence,
+                1 if r.recommendation.asset == self.config.risk.preferred_asset else 0,
+            ),
+            reverse=True,
+        )
         best = valid_sorted[0]
 
         best = self._apply_consensus_scoring(best, results, valid_sorted)
@@ -96,6 +103,22 @@ class DecisionAggregator:
                 strategy=best.label,
                 label=selected.strategy_label,
                 confidence=selected.confidence,
+            )
+
+        self._apply_sizing(selected, results)
+
+        # Carried through to execution: the option premium isn't known until
+        # ExecutionEngine fetches the live ask post-open, so premium_gate
+        # runs there against this value rather than here.
+        selected.predicted_move_pct = self._lookup_predicted_move(selected.asset, results)
+
+        gate = self._min_move_gate(selected, results)
+        if gate is not None:
+            return DecisionOutput(
+                selected_label=None,
+                recommendation=None,
+                all_results=results,
+                rationale=gate,
             )
 
         return DecisionOutput(
@@ -243,6 +266,218 @@ class DecisionAggregator:
             cap=cap,
         )
         return best
+
+    def _apply_sizing(self, selected: TradeRecommendation, results: list[StrategyResult]) -> None:
+        """Scale the selected trade conservatively to 2 contracts when justified.
+
+        Two contracts only when the final (checker/streak-adjusted) confidence
+        clears :attr:`RiskConfig.sizing_tier2_min_confidence` AND the signal is
+        LLM-backed (``llm_trade``) or corroborated by another strategy agreeing
+        on the same asset+direction. A lone deterministic strategy or a low-
+        confidence pick stays at 1 contract.
+        """
+        if selected is None:
+            return
+
+        threshold = self.config.risk.sizing_tier2_min_confidence
+        if selected.confidence < threshold:
+            return
+
+        llm_backed = selected.strategy_label == "llm_trade" or "llm_trade" in (
+            selected.strategy_label or ""
+        )
+
+        corroborated = False
+        if not llm_backed:
+            corroborated = any(
+                other.recommendation is not None
+                and other.recommendation is not selected
+                and other.recommendation.asset == selected.asset
+                and other.recommendation.direction == selected.direction
+                for other in results
+            )
+
+        if not (llm_backed or corroborated):
+            return
+
+        selected.contracts = max(selected.contracts, 2)
+        logger.info(
+            "decision_sizing_scaled",
+            asset=selected.asset,
+            direction=selected.direction.value,
+            strategy=selected.strategy_label,
+            confidence=round(selected.confidence, 2),
+            contracts=selected.contracts,
+        )
+
+    @staticmethod
+    def _lookup_predicted_move(asset: str, results: list[StrategyResult]) -> float | None:
+        """Return the first LLM per-asset predicted_move_pct for ``asset``, if any.
+
+        Shared by :meth:`_min_move_gate` (compares the raw predicted move
+        against a floor) and :meth:`aggregate` (stashes it on the selected
+        recommendation for :meth:`premium_gate`, which runs later once the
+        option premium is known).
+        """
+        for result in results:
+            pred = (result.predictions or {}).get(asset)
+            if pred is not None:
+                return pred.predicted_move_pct
+        return None
+
+    def _min_move_gate(
+        self, selected: TradeRecommendation, results: list[StrategyResult]
+    ) -> str | None:
+        """Block a trade whose expected move is too small to survive theta.
+
+        Reads the LLM per-asset prediction for the selected asset. A 68%-
+        accurate direction call on a 0.1-0.2% move still expires worthless,
+        so the trade is blocked below :attr:`RiskConfig.min_predicted_move_pct`.
+        Returns a rationale string when blocked, else None. When no LLM
+        prediction is present (graph down + monolithic silent), the gate is
+        skipped so it cannot be the thing that silently kills a fallback trade.
+
+        Note this compares the model's own (typically inflated, see
+        :meth:`premium_gate`) predicted move against a flat floor -- it says
+        nothing about whether the move, even if realized exactly as
+        predicted, would cover the option's premium. That is what
+        :meth:`premium_gate` checks, downstream, once the premium is known.
+        """
+        if selected is None:
+            return None
+        if selected.strategy_label and selected.strategy_label.startswith("llm"):
+            move = self._lookup_predicted_move(selected.asset, results)
+            if move is None:
+                return None
+            threshold = self.config.risk.min_predicted_move_pct
+            if abs(move) < threshold:
+                return (
+                    f"Blocked {selected.strategy_label} {selected.direction.value} "
+                    f"on {selected.asset}: predicted move {move:+.2f}% is below "
+                    f"the {threshold:.2f}% minimum."
+                )
+        return None
+
+    @staticmethod
+    def premium_gate(
+        selected: TradeRecommendation,
+        ask_premium: float | None,
+        underlying_price: float | None,
+        risk_config: RiskConfig,
+    ) -> str | None:
+        """Block a trade whose realistic expected move can't clear the option's own cost.
+
+        ``_min_move_gate`` compares the LLM's raw predicted move against a
+        flat floor, but the 2026-09-10 audit of logs/ (2026-07-29..09-09)
+        found predicted moves running roughly 3x hotter than what the
+        underlying actually does intraday -- e.g. 2026-09-09 predicted
+        SPY -0.7% / QQQ -0.8%, actual -0.22% / -0.01%. A correct DIRECTION
+        call on that smaller real move still loses money on a 0DTE option
+        once the premium paid exceeds the payoff, which
+        ``min_predicted_move_pct`` cannot see because it never looks at
+        what the option costs.
+
+        This gate instead:
+
+        1. Shrinks the predicted move by :attr:`RiskConfig.predicted_move_shrink`
+           (default 0.4, ~1 / 2.5 -- the inverse of the observed ~3x
+           overestimate) to get a realistic expected move.
+        2. Computes the option's true expiry breakeven move as a % of the
+           underlying: the underlying must first cover the OTM distance
+           from spot to strike, THEN the premium paid, before the position
+           is above water --
+
+           - PUT:  ``((underlying - strike) + ask) / underlying * 100``
+           - CALL: ``((strike - underlying) + ask) / underlying * 100``
+
+           A 2026-09-10 follow-up review found the first version of this
+           gate used ``ask / strike * 100`` with the STRIKE standing in for
+           the underlying (see "Stand-in note" below) -- which drops the
+           OTM-distance term entirely. Every strike this system trades is
+           chosen ~0.6% OTM (see ``compute_otm_strike``), so that omission
+           understated breakeven by roughly that amount on every trade:
+           e.g. 2026-09-09 QQQ PUT 714 (spot ~716.40, ask $1.15) computed
+           0.16% instead of the true ~0.50%. For an ITM strike the distance
+           term goes negative, correctly REDUCING the required move since
+           part of the premium is already covered by intrinsic value.
+        3. Inflates that breakeven by :attr:`RiskConfig.breakeven_margin_pct`
+           for spread/slippage margin (now small, since the OTM distance
+           is explicit rather than folded into a large flat margin -- see
+           the field's docstring), and blocks the trade if the shrunk
+           expected move doesn't clear it.
+
+        This can only run once the option's live ask is known, which is
+        after market open -- pre-market at decision time
+        (``DecisionAggregator.aggregate``) there is no option quote to gate
+        against (see AGENTS.md "0DTE entry limit never fills" gotcha). It is
+        therefore called from ``ExecutionEngine.execute`` right after the
+        entry quote comes back, reading ``selected.predicted_move_pct`` (set
+        by ``aggregate()``) and a freshly-fetched live underlying quote
+        (``AlpacaBrokerClient.get_underlying_quote``).
+
+        Stand-in note: when a live underlying quote is unavailable,
+        ``underlying_price`` is ``None`` and this falls back to the old
+        ``ask / strike * 100`` approximation (logged via
+        ``premium_gate_fallback_formula``) rather than skipping the gate
+        outright -- a same-side approximation is better than none, as long
+        as callers know it runs less strict than the real thing.
+
+        Args:
+            selected: The recommendation being evaluated (not mutated).
+            ask_premium: Live option ask price, per contract (not x100).
+            underlying_price: Live underlying price, or ``None`` to use the
+                ask/strike fallback approximation.
+            risk_config: The app's ``RiskConfig`` (``config.risk``).
+
+        Returns:
+            A rationale string when blocked, else ``None`` -- including
+            when premium, strike, or a predicted move isn't available,
+            since an unmeasurable gate must never be the thing that
+            silently kills a trade the other gates already let through.
+        """
+        if selected is None:
+            return None
+        if not ask_premium or ask_premium <= 0:
+            return None
+        if selected.predicted_move_pct is None:
+            return None
+
+        strike = selected.target_strike
+        shrink = risk_config.predicted_move_shrink
+        expected_move_pct = abs(selected.predicted_move_pct) * shrink
+
+        if underlying_price and underlying_price > 0:
+            if selected.direction == Direction.PUT:
+                distance_pct = (underlying_price - strike) / underlying_price * 100
+            else:
+                distance_pct = (strike - underlying_price) / underlying_price * 100
+            breakeven_pct = distance_pct + (ask_premium / underlying_price) * 100
+            basis_label = f"underlying ${underlying_price:.2f}, strike ${strike:.2f}"
+        else:
+            if not strike or strike <= 0:
+                return None
+            breakeven_pct = (ask_premium / strike) * 100
+            basis_label = f"strike ${strike:.2f} (no live underlying quote, using fallback formula)"
+            logger.warning(
+                "premium_gate_fallback_formula",
+                asset=selected.asset,
+                direction=selected.direction.value,
+                strike=strike,
+                ask=ask_premium,
+            )
+
+        required_pct = breakeven_pct * (1 + risk_config.breakeven_margin_pct)
+
+        if expected_move_pct < required_pct:
+            return (
+                f"Blocked {selected.strategy_label} {selected.direction.value} on "
+                f"{selected.asset}: shrunk expected move {expected_move_pct:.2f}% "
+                f"(predicted {selected.predicted_move_pct:+.2f}% x shrink {shrink:.2f}) "
+                f"doesn't clear breakeven {breakeven_pct:.2f}% (ask ${ask_premium:.2f}, "
+                f"{basis_label}) + {risk_config.breakeven_margin_pct:.0%} margin = "
+                f"{required_pct:.2f}% required."
+            )
+        return None
 
     def _apply_consensus_scoring(
         self,

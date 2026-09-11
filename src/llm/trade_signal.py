@@ -52,7 +52,7 @@ from src.engine.base import TradingStrategy
 from src.engine.options_strategy import compute_otm_strike, estimate_delta
 from src.llm.client import OpencodeLLMClient
 from src.models.briefing import BriefingData
-from src.models.market import MarketSnapshot, Quote
+from src.models.market import MarketSnapshot, PremarketQuote, Quote
 from src.models.recommendation import (
     AssetPrediction,
     Direction,
@@ -510,9 +510,16 @@ class LLMTradeStrategy(TradingStrategy):
             trace["best_trade_skip"] = "no_quote"
             return None
 
+        # MECHANICS: strike off the live pre-market price, never the
+        # stale prior-session quote — see MarketSnapshot.mechanics_price.
+        spot = market.mechanics_price(asset)
+        if spot is None:
+            trace["best_trade_skip"] = "no_mechanics_price"
+            return None
+
         direction = Direction(direction_raw)
-        strike = compute_otm_strike(quote.current_price, direction)
-        delta = estimate_delta(quote.current_price, strike, 0, iv=0.20, direction=direction)
+        strike = compute_otm_strike(spot, direction)
+        delta = estimate_delta(spot, strike, 0, iv=0.20, direction=direction)
         sources = _normalise_sources(sources_raw)
         today_str = today_local().isoformat()
 
@@ -530,7 +537,7 @@ class LLMTradeStrategy(TradingStrategy):
                 "llm_rationale": rationale_text,
                 "llm_sources": sources,
                 "delta": round(delta, 4),
-                "entry_price": quote.current_price,
+                "entry_price": spot,
                 "strategy": "LLM best_trade from prediction analysis",
             },
             expires_at=today_str,
@@ -550,42 +557,143 @@ class LLMTradeStrategy(TradingStrategy):
         )
 
 
-def _gap_pct(quote: Quote) -> float:
-    """Percentage gap from yesterday's close to today's OPENING print.
+def _gap_pct(quote: Quote, premarket: PremarketQuote | None) -> float | None:
+    """Today's pre-market gap: live pre-market price vs the PRIOR SESSION close.
 
     This is the single "gap" definition used consistently across every
     LLM prompt builder in this module and in :mod:`src.llm.graph` — the
     overnight/pre-market move, not the move since the open. See
     :func:`_day_move_pct` for the latter.
 
-    Args:
-        quote: A market quote with ``open_price`` and ``previous_close``.
+    Before the 2026-09-11 fix this compared ``quote.open_price`` (the
+    PRIOR session's own open) against ``quote.previous_close`` (the
+    session before THAT) — i.e. yesterday's gap, not today's. ``quote``
+    reaching this pipeline pre-market is one session stale (see
+    ``Quote.prior_session_close``); the only correct source for TODAY's
+    gap is a live pre-market quote (see ``src.ingestion.premarket``).
 
-    Returns:
-        The gap as a signed percentage, or ``0.0`` when ``previous_close``
-        is non-positive (avoids a division by zero on bad data).
-    """
-    if quote.previous_close <= 0:
-        return 0.0
-    return (quote.open_price - quote.previous_close) / quote.previous_close * 100
-
-
-def _day_move_pct(quote: Quote) -> float:
-    """Percentage move from yesterday's close to the CURRENT price.
-
-    Distinct from :func:`_gap_pct` — this reflects the move since the
-    open (intraday drift), not the overnight gap itself.
+    For PROMPT/NARRATIVE purposes this deliberately returns ``None``
+    (never a number silently derived from stale fields) when no live
+    pre-market quote is available — the caller must disclose that
+    explicitly rather than presenting a fabricated "today" gap. See
+    ``MarketSnapshot.mechanics_gap_pct`` for the separate, always-numeric
+    MECHANICS variant (strike selection, deterministic strategies) that
+    intentionally falls back to a 0% ("no gap known") default instead.
 
     Args:
-        quote: A market quote with ``current_price`` and ``previous_close``.
+        quote: The (prior-session-stale) market quote.
+        premarket: Live pre-market reconstruction for the same asset, or
+            ``None``/unavailable.
 
     Returns:
-        The move as a signed percentage, or ``0.0`` when ``previous_close``
-        is non-positive.
+        The signed gap percentage, or ``None`` when unavailable.
     """
-    if quote.previous_close <= 0:
-        return 0.0
-    return (quote.current_price - quote.previous_close) / quote.previous_close * 100
+    if premarket is None or not premarket.available:
+        return None
+    return premarket.gap_pct
+
+
+def _day_move_pct(quote: Quote, premarket: PremarketQuote | None) -> float | None:
+    """Drift WITHIN the pre-market session itself: first print vs the cutoff price.
+
+    Distinct from :func:`_gap_pct` — that anchors to the PRIOR session's
+    close (the overnight gap); this measures whether the pre-market move
+    has been building or fading since it started (matches the
+    ``pre_market_momentum`` field the research agents already produce).
+    Before the 2026-09-11 fix this used ``quote.current_price`` vs
+    ``quote.previous_close``, which pre-market are both prior-session-
+    stale fields describing an entirely different day.
+
+    Args:
+        quote: The (prior-session-stale) market quote. Unused now that
+            the drift is computed purely from live pre-market bars, kept
+            in the signature for symmetry with :func:`_gap_pct` and so
+            callers don't need to special-case which quote type feeds
+            which function.
+        premarket: Live pre-market reconstruction for the same asset.
+
+    Returns:
+        The signed percentage move from the session's first pre-market
+        print to the cutoff price, or ``None`` when unavailable.
+    """
+    del quote  # unused — see docstring
+    if premarket is None or not premarket.available:
+        return None
+    if not premarket.first_price or premarket.first_price <= 0 or premarket.price is None:
+        return None
+    return (premarket.price - premarket.first_price) / premarket.first_price * 100
+
+
+def _premarket_prompt_block(asset: str, premarket: PremarketQuote | None) -> str:
+    """Render the PRE-MARKET block for one asset's prompt section.
+
+    Explicitly separate from the (prior-session, see
+    ``Quote.prior_session_close``) quote line so the model is never left
+    to guess which price is "today". When pre-market data could not be
+    fetched at all, this states so explicitly rather than letting the
+    model infer "today" from the stale snapshot quote — the exact
+    silent-fallback failure mode this module fixes. When the move is
+    real but backed by thin volume (relative to this account's own
+    trailing norm — see ``PremarketConfig``), the block tells the model
+    to weight it lightly, but the gap figure itself is never withheld or
+    altered by that flag (MECHANICS still trades on it regardless).
+    """
+    if premarket is None or not premarket.available:
+        return (
+            f"{asset} PRE-MARKET: UNAVAILABLE as of the cutoff. No live pre-market "
+            f"price could be fetched — do NOT treat the {asset} quote above (which "
+            f"is the PRIOR SESSION's data) as today's price or infer today's gap "
+            f"from it. Today's direction/move for {asset} is simply unknown from "
+            f"price action; rely on news/catalysts instead."
+        )
+    price_str = f"${premarket.price:.2f}" if premarket.price is not None else "N/A"
+    gap_str = f"{premarket.gap_pct:+.2f}%" if premarket.gap_pct is not None else "N/A"
+    source_label = {
+        "quote_midpoint": "live bid/ask midpoint",
+        "bar_close": "last pre-market trade",
+    }.get(premarket.price_source or "", "live")
+
+    # Two independent reasons a move can be untrusted: no recent TRADE
+    # (stale bar, regardless of a live quote existing) and thin volume
+    # relative to this account's own trailing norm. Both are surfaced so
+    # the model isn't told "thin volume" when the real issue is that
+    # nothing has traded in a while.
+    reasons: list[str] = []
+    if not premarket.bar_fresh:
+        age_str = (
+            f"{premarket.bar_age_min:.0f} min" if premarket.bar_age_min is not None else "unknown"
+        )
+        reasons.append(f"the last pre-market trade is stale ({age_str} before the cutoff)")
+    if premarket.volume_ratio is None:
+        reasons.append("no trailing-volume baseline could be computed")
+    elif not premarket.reliable and premarket.bar_fresh:
+        # Only cite thin volume on its own when staleness isn't already
+        # the reason above (avoids "stale AND thin" restating one cause).
+        reasons.append(
+            f"volume is only {premarket.volume_ratio:.2f}x the "
+            f"{premarket.lookback_days_used}-day median at this time of day"
+        )
+
+    if premarket.reliable:
+        reliability = (
+            f"RELIABLE (volume is {premarket.volume_ratio:.2f}x the "
+            f"{premarket.lookback_days_used}-day median at this time of day, "
+            "last trade recent)"
+            if premarket.volume_ratio is not None
+            else "RELIABLE"
+        )
+        weight_note = ""
+    else:
+        reliability = "THIN/STALE (" + "; ".join(reasons) + ")"
+        weight_note = (
+            f" Because of this, weight this {asset} pre-market move LIGHTLY as "
+            "analysis evidence — treat it as a weak signal, not confirmation."
+        )
+
+    return (
+        f"{asset} PRE-MARKET (as of cutoff): last {price_str} ({source_label}), gap vs "
+        f"prior session close {gap_str}. Volume/recency reliability: {reliability}.{weight_note}"
+    )
 
 
 def _build_prompt(
@@ -638,15 +746,29 @@ def _build_prompt(
         q = market.quotes.get(asset)
         if q is None:
             continue
-        gap_pct = _gap_pct(q)
-        move_pct = _day_move_pct(q)
+        # PRIOR SESSION, not today — see Quote.prior_session_close. Every
+        # free source this pipeline uses reports no live price pre-market,
+        # so this whole block describes the most recently COMPLETED
+        # session, labeled explicitly so the model never mistakes it for
+        # today's price. Today's actual price/gap is the PRE-MARKET block
+        # below, built separately from live Alpaca data.
         quote_lines.append(
-            f"- {q.symbol}: ${q.current_price:.2f} "
-            f"(gap {gap_pct:+.2f}% open-vs-prev-close ${q.previous_close:.2f}, "
-            f"now {move_pct:+.2f}% on day)"
+            f"- {q.symbol} PRIOR SESSION: closed ${q.prior_session_close:.2f} "
+            f"(open ${q.open_price:.2f}, high ${q.high_price:.2f}, low ${q.low_price:.2f})."
         )
     if quote_lines:
-        sections.append("Target-asset quotes:\n" + "\n".join(quote_lines))
+        sections.append(
+            "Target-asset prior-session data (NOT today — see the PRE-MARKET "
+            "block below for today's actual price):\n" + "\n".join(quote_lines)
+        )
+
+    premarket_lines = [
+        _premarket_prompt_block(asset, market.premarket.get(asset))
+        for asset in target_assets
+        if market.quotes.get(asset) is not None
+    ]
+    if premarket_lines:
+        sections.append("Pre-market data:\n" + "\n".join(premarket_lines))
 
     threshold_lines = [
         f"Gap-fade threshold for {asset}: {gap_fade.threshold_for(asset)}% "
@@ -662,13 +784,16 @@ def _build_prompt(
     gap_fade_risk: list[str] = []
     for asset in target_assets:
         q = market.quotes.get(asset)
-        if q is None or q.previous_close <= 0:
+        if q is None:
             continue
-        gap_pct = _gap_pct(q)
+        pm = market.premarket.get(asset)
+        gap_pct = _gap_pct(q, pm)
+        if gap_pct is None:
+            continue
         if abs(gap_pct) > 0.5:
             gap_alerts.append(
                 f"  - {q.symbol} has gapped {gap_pct:+.1f}% pre-market from "
-                f"yesterday's close (${q.previous_close:.2f})."
+                f"the prior session's close (${q.prior_session_close:.2f})."
             )
         gap_threshold = gap_fade.threshold_for(q.symbol)
         sentiment_mag = abs(market.avg_sentiment_polarity())

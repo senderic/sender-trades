@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Coroutine
 from datetime import datetime
 from typing import Any
@@ -47,6 +48,7 @@ class AlpacaBrokerClient:
         self._trading: TradingClient | None = None
         self._http: httpx.AsyncClient | None = None
         self._data_http: httpx.AsyncClient | None = None
+        self._historical_data: Any = None
         self._base_url = (
             "https://paper-api.alpaca.markets" if paper else "https://api.alpaca.markets"
         )
@@ -240,6 +242,82 @@ class AlpacaBrokerClient:
             except Exception:
                 logger.debug("underlying_quote_unavailable", symbol=symbol)
                 return None
+
+        return await self._with_retry(_do)
+
+    async def get_minute_bars(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        feed: str = "iex",
+    ) -> list[dict[str, Any]]:
+        """Fetch 1-minute historical bars for ``symbol`` over ``[start, end]``.
+
+        Used for pre-market price/volume reconstruction (see
+        ``src.ingestion.premarket`` and ``PremarketConfig``). Uses the
+        IEX feed explicitly -- this account has no SIP (consolidated
+        tape) subscription, and IEX reports only a small, non-
+        representative slice of real volume, so callers must treat the
+        returned volume as relative-only (compare to a trailing median at
+        the same clock time), never as an absolute count.
+
+        Works identically for a live (today, up to now) or historical
+        (any past date) window -- Alpaca serves historical minute bars
+        for any requested range regardless of when this is called, so
+        the caller controls look-ahead purely through ``end``.
+
+        Args:
+            symbol: Underlying symbol (e.g. ``QQQ``).
+            start: Window start (timezone-aware).
+            end: Window end (timezone-aware) -- callers must never pass
+                an ``end`` past their intended cutoff, since this
+                function itself does not know what "now" means for a
+                replay.
+            feed: Alpaca data feed. Defaults to ``"iex"`` (the free tier
+                this account has).
+
+        Returns:
+            List of bar dicts (``open``, ``high``, ``low``, ``close``,
+            ``volume``, ``vwap``, ``trade_count``, ``timestamp``),
+            oldest first. Empty list when the request fails or no bars
+            exist in the window (e.g. a weekend/holiday, or a window
+            with zero pre-market prints).
+        """
+        from alpaca.data.enums import DataFeed
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame
+
+        async def _do() -> list[dict[str, Any]]:
+            if self._historical_data is None:
+                self._historical_data = StockHistoricalDataClient(self.api_key, self.secret_key)
+            request = StockBarsRequest(
+                symbol_or_symbols=[symbol],
+                timeframe=TimeFrame.Minute,
+                start=start,
+                end=end,
+                feed=DataFeed(feed),
+            )
+            try:
+                bars = await asyncio.to_thread(self._historical_data.get_stock_bars, request)
+            except Exception as e:
+                logger.warning("premarket_bars_fetch_failed", symbol=symbol, error=str(e))
+                return []
+            rows = bars.data.get(symbol, []) if bars and bars.data else []
+            return [
+                {
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                    "vwap": b.vwap,
+                    "trade_count": b.trade_count,
+                    "timestamp": b.timestamp,
+                }
+                for b in rows
+            ]
 
         return await self._with_retry(_do)
 

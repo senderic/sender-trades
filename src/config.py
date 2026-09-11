@@ -110,6 +110,12 @@ class MomentumConfig(StrategyConfig):
     """Configuration for the momentum trading strategy."""
 
     gap_threshold_pct: float = 0.5
+    # Momentum has produced 0 wins in 4 trades (2026-08-10..26) for -$182,
+    # and its raw confidence formula (0.4 + |gap|/10 + |sentiment|) inflated
+    # picks to 0.65-0.91, outranking the LLM on several of its losses. Cap
+    # the reported confidence so an uncorroborated momentum signal can no
+    # longer claim conviction it has not demonstrated.
+    max_confidence: float = 0.50
 
 
 class MeanReversionConfig(StrategyConfig):
@@ -162,6 +168,39 @@ class RiskConfig(BaseModel):
 
     max_loss_per_trade_usd: float = 1000.0
     max_position_size_contracts: int = 10
+    # Conservative 2-stage sizing: a selected trade scales to 2 contracts
+    # only when its (checker/streak-adjusted) confidence clears this bar AND
+    # it is LLM-backed or corroborated by a second strategy. Everything else
+    # stays at 1. Sized below the $500 max-loss cap for typical premiums.
+    sizing_tier2_min_confidence: float = 0.60
+    # Minimum absolute predicted move (in %) for a trade to be executed.
+    # 68%-accurate direction on a 0.1-0.2% move still dies to theta, so only
+    # trade when the model expects a meaningful session move.
+    min_predicted_move_pct: float = 0.30
+    # Tie-break preference across assets at equal confidence. QQQ has shown
+    # better direction accuracy and realized PnL than SPY across history.
+    preferred_asset: str = "QQQ"
+    # Premium-aware entry gate (2026-09-10 audit): predicted moves run ~3x
+    # hotter than what the underlying actually does intraday (predicted
+    # -0.7/-0.8%, actual ~-0.2% on 2026-09-09), so a shrink factor of ~0.4
+    # (roughly 1 / 2.5, the inverse of that overestimate) converts the LLM's
+    # predicted_move_pct into a realistic expected move before comparing it
+    # against what the option itself costs. See
+    # DecisionAggregator.premium_gate for the full breakeven calculation.
+    predicted_move_shrink: float = 0.4
+    # Extra cushion required above the breakeven computed by
+    # DecisionAggregator.premium_gate, as a fraction. The breakeven itself
+    # now includes the OTM distance from underlying to strike (2026-09-10
+    # follow-up review -- the first version of this gate used ask/strike,
+    # dropping the distance term and understating breakeven by ~0.6% on
+    # every trade, since every strike here is chosen ~0.6% OTM). With that
+    # distance now explicit, this margin only needs to cover spread/
+    # slippage on exit, not stand in for the OTM gap -- hence 0.03, not the
+    # 0.15 used previously. The trade audits don't retain the quoted ask
+    # (only the fill price), so this can't be fitted precisely from
+    # logs/; 0.03 is a reasoned default in the requested 0.02-0.05 band,
+    # not a measured statistic.
+    breakeven_margin_pct: float = 0.03
     close_deadline_est: str = "15:30"
     min_dte: int = 0
     max_dte: int = 0
@@ -243,17 +282,18 @@ class LLMConfig(BaseModel):
     analysis tasks, so every call uses a capable reasoning model.
 
     Models are tried in order: :attr:`primary_model` first, then
-    :attr:`fallback_models`. The primary is served via nvidia-direct
-    (``nvidia-direct/*``); the fallback is served via OpenRouter
-    (``openrouter/*``).
+    :attr:`fallback_models`. Muse Spark 1.3 via the Zen opencode route
+    (``opencode/*``) is the model of record; Nemotron 3 Ultra via
+    nvidia-direct (``nvidia-direct/*``) is the only fallback. DeepSeek
+    was removed from the chain on 2026-09-11 (owner decision).
     """
 
     enabled: bool = True
     opencode_path: str = "opencode"
-    primary_model: str = "nvidia-direct/nemotron-3-ultra"
+    primary_model: str = "opencode/muse-spark-1.3-contributor-free"
     fallback_models: list[str] = Field(
         default_factory=lambda: [
-            "openrouter/deepseek/deepseek-v4-pro",
+            "nvidia-direct/nvidia/nemotron-3-ultra-550b-a55b",
         ]
     )
     timeout_sec: int = 45
@@ -324,6 +364,73 @@ class GraphConfig(BaseModel):
     unsupported_confidence_cap: float = 0.35
 
 
+class PremarketConfig(BaseModel):
+    """Live pre-market price/volume reconstruction (see ``src.ingestion.premarket``).
+
+    Fixes the 2026-09-11 incident where the atlas Finnhub snapshot --
+    taken ~06:02 PT, before Finnhub has any pre-market price -- was fed
+    into the pipeline as if it were TODAY's quote. Outside market hours
+    Finnhub's ``/quote`` returns the prior completed session's close as
+    "current price" (and the session before that as "previous close"),
+    so the pipeline was computing YESTERDAY's own gap/move, not today's
+    (see ``Quote.prior_session_close``). QQQ that morning: snapshot
+    ``current_price`` 708.69 was exactly Thursday 9/10's close; QQQ
+    actually opened Friday at 715.44 (+0.95%), a ~1.6% miss on the
+    strike computed from the stale price.
+
+    Live price/volume come from Alpaca 1-minute bars on the IEX feed --
+    this paper account has no SIP/consolidated-tape subscription (see
+    ``AlpacaBrokerClient.get_minute_bars``). IEX pre-market volume for
+    SPY/QQQ is a small, noisy slice of true consolidated volume: an
+    empirical probe (2026-08-20..09-10, 16 trading days) found median
+    cumulative pre-market volume to the 09:28 ET cutoff of ~1,779
+    shares for QQQ and ~610 for SPY, ranging day to day from 0 to
+    8,425 -- an absolute floor would be meaningless at that scale and
+    variance, so :attr:`min_volume_ratio` is relative to this same
+    account's own trailing-day norm at the same clock time, which
+    cancels out the fixed (small) IEX/consolidated ratio.
+    """
+
+    enabled: bool = True
+    # Matches the pipeline's cron run time (9:28 AM ET, 2 min before the
+    # 9:30 open) -- see AGENTS.md "Schedule".
+    cutoff_et: str = "09:28"
+    session_start_et: str = "04:00"
+    # Trailing window for the volume-reliability comparison.
+    lookback_days: int = 10
+    # Minimum fraction of the trailing lookback_days median cumulative
+    # pre-market volume (same symbol, same clock cutoff) for today's
+    # pre-market move to be treated as reliable ANALYSIS EVIDENCE in the
+    # LLM prompt -- below this, the prompt is told the move is thin and
+    # to weight it lightly. MECHANICS (strike selection, the forecast
+    # target strike, the gap used by gap-fade) are unaffected and always
+    # use the live pre-market price regardless of this flag -- a strike
+    # computed from yesterday's close is wrong regardless of volume.
+    # 0.5 (half the trailing median) is a reasoned default given the
+    # empirical spread documented above, not fitted from trade outcomes
+    # -- there isn't yet a labeled sample of "thin premarket day"
+    # outcomes to fit against.
+    min_volume_ratio: float = 0.5
+    # MECHANICS price source order (2026-09-11 follow-up review): (a) the
+    # live underlying quote's bid/ask midpoint, (b) the last pre-market
+    # bar's close if recent, (c) the prior session's close (logged as a
+    # WARNING). A zero- or thin-volume morning has no recent trade, but
+    # Alpaca still returns a live bid/ask (market makers quote without
+    # anyone trading) -- e.g. 2026-09-11 09:29 ET, QQQ's live quote read
+    # 715.64 against a real 715.44 open, while the last pre-market TRADE
+    # could have been an hour stale. A bar older than this (minutes,
+    # measured against the session's cutoff) is treated as too stale to
+    # use for mechanics OR to count as reliable evidence, regardless of
+    # volume_ratio. The historical replay has no cheap way to reconstruct
+    # a past bid/ask quote, so it skips tier (a) and relies on (b)/(c)
+    # only -- see fetch_premarket_quote's `quote_fetcher` parameter.
+    max_bar_age_min: float = 15.0
+    # Maximum bid/ask spread, as a percentage of the midpoint, for the
+    # live quote to be trusted as a mechanics price (tier (a) above). A
+    # very wide spread means the "midpoint" isn't a meaningful price.
+    max_quote_spread_pct: float = 0.1
+
+
 class Settings(BaseSettings):
     """Root application settings loaded from YAML or environment variables."""
 
@@ -338,6 +445,7 @@ class Settings(BaseSettings):
     strategies: StrategiesConfig = StrategiesConfig()
     risk: RiskConfig = RiskConfig()
     gap_fade: GapFadeConfig = GapFadeConfig()
+    premarket: PremarketConfig = PremarketConfig()
     mcp: MCPConfig = MCPConfig()
     logging: LoggingConfig = LoggingConfig()
     llm: LLMConfig = LLMConfig()

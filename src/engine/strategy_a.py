@@ -58,12 +58,16 @@ class MomentumStrategy(TradingStrategy):
                 trace[f"{asset}_previous_close"] = quote.previous_close
                 continue
 
-            gap_pct = (
-                (quote.open_price - quote.previous_close) / quote.previous_close * 100
-                if quote.previous_close > 0
-                else 0.0
-            )
+            # MECHANICS: today's pre-market gap vs the prior session's
+            # close (see MarketSnapshot.mechanics_gap_pct), not the prior
+            # session's own open-vs-two-days-ago-close.
+            gap_pct = market.mechanics_gap_pct(asset)
+            if gap_pct is None:
+                trace[f"{asset}_skip_reason"] = "no_mechanics_gap"
+                continue
             trace[f"{asset}_gap_pct"] = gap_pct
+            pm = market.premarket.get(asset)
+            trace[f"{asset}_premarket_reliable"] = bool(pm and pm.reliable)
 
             news_sentiment = market.avg_sentiment_polarity()
             briefing_sentiment = briefing.macro_sentiment
@@ -82,24 +86,40 @@ class MomentumStrategy(TradingStrategy):
 
             if gap_pct > gap_threshold and combined_sentiment > 0.05:
                 direction = Direction.CALL
-                confidence = min(0.9, 0.4 + abs(gap_pct) / 10 + abs(combined_sentiment))
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence,
+                    0.4 + abs(gap_pct) / 10 + abs(combined_sentiment),
+                )
             elif gap_pct < -gap_threshold and combined_sentiment < -0.05:
                 direction = Direction.PUT
-                confidence = min(0.9, 0.4 + abs(gap_pct) / 10 + abs(combined_sentiment))
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence,
+                    0.4 + abs(gap_pct) / 10 + abs(combined_sentiment),
+                )
             elif combined_sentiment > 0.15:
                 direction = Direction.CALL
-                confidence = 0.35 + abs(combined_sentiment)
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence, 0.35 + abs(combined_sentiment)
+                )
             elif combined_sentiment < -0.15:
                 direction = Direction.PUT
-                confidence = 0.35 + abs(combined_sentiment)
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence, 0.35 + abs(combined_sentiment)
+                )
 
             if direction is None or confidence < min_conf:
                 trace[f"{asset}_skip_reason"] = "low_confidence_or_no_direction"
                 trace[f"{asset}_confidence"] = confidence
                 continue
 
-            strike = compute_otm_strike(quote.current_price, direction)
-            delta = estimate_delta(quote.current_price, strike, 0, iv=0.20, direction=direction)
+            # MECHANICS: strike off the live pre-market price (falls back
+            # to the prior session's close + a WARNING when unavailable).
+            spot = market.mechanics_price(asset)
+            if spot is None:
+                trace[f"{asset}_skip_reason"] = "no_mechanics_price"
+                continue
+            strike = compute_otm_strike(spot, direction)
+            delta = estimate_delta(spot, strike, 0, iv=0.20, direction=direction)
             today_str = today_local().isoformat()
 
             recommendation = TradeRecommendation(
@@ -118,7 +138,7 @@ class MomentumStrategy(TradingStrategy):
                     "news_sentiment": news_sentiment,
                     "briefing_sentiment": briefing_sentiment,
                     "delta": round(delta, 4),
-                    "entry_price": quote.current_price,
+                    "entry_price": spot,
                     "strategy": "Momentum: gap continuation + sentiment confirmation",
                 },
                 expires_at=today_str,

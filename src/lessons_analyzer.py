@@ -7,6 +7,8 @@ from pathlib import Path
 
 import structlog
 
+from src.json_utils import load_json_tolerant
+
 logger = structlog.get_logger()
 
 ASSETS = ["SPY", "QQQ"]
@@ -25,9 +27,15 @@ def find_today_audits(log_dir: Path, *, target_date: date | None = None) -> list
         if f.name.endswith(".bak"):
             continue
         try:
-            audits.append(json.loads(f.read_text()))
+            # Tolerates both a normal single-JSON-object file and a
+            # legacy file left as several concatenated JSON objects by a
+            # trade that never reached finalize() -- see
+            # src.json_utils and src.execution.context.TradeContext.
+            audit = load_json_tolerant(f.read_text())
         except (json.JSONDecodeError, OSError):
             continue
+        if audit:
+            audits.append(audit)
     return audits
 
 
@@ -51,23 +59,83 @@ def _today_pacific() -> date:
 
 
 def _legacy_outcome_label(forecast: dict, daily_ohlc: dict | None) -> str:
+    """Target-touch outcome label, matching ``prediction_tracker.check_outcome``.
+
+    Historically this took ``abs(predicted_move_pct)`` before computing the
+    target strike, which put the target on the WRONG SIDE of the open for
+    every DOWN prediction (``o * (1 + abs(move)/100)`` is always *above*
+    the open, so ``lo <= target`` was nearly always true regardless of what
+    the underlying actually did). That is why LESSONS_LEARNED.md marked
+    2026-09-09 QQQ DOWN as HIT (predicted -0.8%, closed -0.01%, never
+    within 5 points of the correctly-signed target) while
+    ``logs/prediction-history.json`` -- built by the correctly-signed
+    ``prediction_tracker.check_outcome`` -- marked the same prediction
+    ``fail``. Fixed here by keeping the sign, which makes this function's
+    result agree with ``check_outcome`` for the same (direction, move,
+    OHLC) input. See the note under "Quick Index" in LESSONS_LEARNED.md:
+    entries dated before 2026-09-10 were generated with the buggy version
+    and are NOT rewritten by this fix.
+
+    Note this is still a "touched the target intraday" definition (like
+    ``check_outcome``), not "closed beyond the target" -- a day that
+    touches the target and then reverses is still "success" here. Callers
+    building the human-readable entry use :func:`_outcome_note` alongside
+    this label to spell out that distinction explicitly rather than
+    letting the single HIT/MISS word imply more than it means.
+    """
     if daily_ohlc is None:
         return "unknown"
     direction = (forecast.get("direction") or "").upper()
-    move_pct = abs(forecast.get("predicted_move_pct", 0) or 0)
+    move_pct = forecast.get("predicted_move_pct", 0) or 0
     o = float(daily_ohlc["o"])
     h = float(daily_ohlc["h"])
     lo = float(daily_ohlc["l"])
     c_val = float(daily_ohlc["c"])
     pct = (c_val - o) / o * 100 if o else 0
 
-    if move_pct >= 0.1:
+    if abs(move_pct) >= 0.1:
         target = o * (1 + move_pct / 100)
         hit = h >= target if direction == "UP" else lo <= target
         return "success" if hit else "fail"
     if direction == "UP":
         return "success" if pct > 0 else "fail"
     return "success" if pct < 0 else "fail"
+
+
+def _outcome_note(direction: str, ohlc: dict, hit: bool) -> str:
+    """Build a note that distinguishes the three outcomes this system conflates.
+
+    - "target reached" -- intraday high/low touched the target AND the
+      close agreed with the predicted direction.
+    - "touched then reversed" -- intraday high/low touched the target but
+      the close finished in the OPPOSITE direction from the prediction.
+    - "direction open->close [correct|wrong]" -- the target was never
+      touched at all; only the honest end-of-day direction call applies.
+
+    A single HIT/MISS word can't carry this distinction (see
+    ``_legacy_outcome_label``'s docstring for why conflating them
+    previously produced a wrong scorer), so the note always states which
+    of the three applies.
+    """
+    o = ohlc["o"]
+    h = ohlc["h"]
+    lo = ohlc["l"]
+    c_val = ohlc["c"]
+    close_move = (c_val - o) / o * 100 if o else 0
+    close_dir = "UP" if close_move > 0 else "DOWN"
+    direction_correct = close_dir == direction
+
+    if hit:
+        if not direction_correct:
+            return (
+                f"touched then reversed — target reached intraday but closed "
+                f"{_format_pct(close_move)} ({close_dir})"
+            )
+        level = f"H=${h:.2f}" if direction == "UP" else f"L=${lo:.2f}"
+        return f"target reached ({level}), closed {_format_pct(close_move)}"
+
+    qualifier = "correct" if direction_correct else "wrong"
+    return f"never hit target; direction open→close {qualifier}, closed {_format_pct(close_move)}"
 
 
 def fetch_daily_ohlc(symbol: str, *, target_date: date | None = None) -> dict | None:
@@ -334,23 +402,7 @@ def build_lessons_md(
             outcome = _legacy_outcome_label(f, ohlc)
             actual = _actual_move(ohlc)
             hit_text = "HIT" if outcome == "success" else "MISS"
-            note = ""
-            if ohlc:
-                h = ohlc["h"]
-                lo = ohlc["l"]
-                c_val = ohlc["c"]
-                o_open = ohlc["o"]
-                close_move = (c_val - o_open) / o_open * 100
-                if outcome == "success":
-                    close_dir = "UP" if close_move > 0 else "DOWN"
-                    if close_dir != direction:
-                        note = f"hit target, but reversed — closed {_format_pct(close_move)}"
-                    elif direction == "UP":
-                        note = f"hit target (H=${h:.2f})"
-                    else:
-                        note = f"hit target (L=${lo:.2f})"
-                else:
-                    note = f"never hit target, closed {_format_pct(close_move)}"
+            note = _outcome_note(direction, ohlc, outcome == "success") if ohlc else ""
 
             parts.append(f"{asset.lower()}:")
             parts.append(f"  direction: {direction}")
@@ -509,13 +561,23 @@ def build_lessons_md(
             parts.append("")
 
     # --- Cumulative record ---
+    # Sourced from logs/prediction-history.json (prediction_tracker.check_outcome),
+    # the STRICT target-touch definition -- not the (now-fixed, see
+    # _legacy_outcome_label) per-day HIT/MISS above, which is derived
+    # independently from the day's forecast + OHLC. This line has always
+    # read from prediction-history.json, so it was not inflated by the
+    # sign bug fixed above; it is called out explicitly here so a future
+    # change doesn't accidentally wire it to the per-day label instead.
     history = _load_prediction_history()
     if history:
         deduped = _dedupe_history(history)
-        wins = sum(1 for h in deduped if h.get("result") == "success")
-        valid = len(deduped)
+        scored = [h for h in deduped if h.get("result") in ("success", "fail")]
+        wins = sum(1 for h in scored if h.get("result") == "success")
+        valid = len(scored)
         rate = wins / valid * 100 if valid > 0 else 0
-        parts.append(f"**Cumulative prediction record**: {wins}/{valid} ({rate:.0f}%)")
+        parts.append(
+            f"**Cumulative prediction record (strict, target-touch)**: {wins}/{valid} ({rate:.0f}%)"
+        )
 
     return "\n".join(parts) + "\n"
 

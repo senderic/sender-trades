@@ -130,6 +130,48 @@ class ExitConfig(BaseModel):
     time_deadline_est: str = "15:25"
 
 
+class ExitAdvisorConfig(BaseModel):
+    """Configuration for the LLM-driven profit-exit advisor.
+
+    Replaces the fixed +100% take-profit for 0DTE options. A replay of
+    72 asset-days (2026-07-22..09-10) found holding winners to expiry
+    pays only on a handful of big days (avg ~+71%/trade in premium
+    units, top 3 days ~45% of total gains); the resting +100% limit
+    order cuts those days off exactly, and the fixed TP/SL combo fell to
+    ~+7-9%. When enabled, ``ExecutionEngine`` skips the resting +100% TP
+    order (placing :attr:`safety_cap_pct` instead, if set) and
+    ``src.execution.intraday_monitor`` consults this model at
+    event-driven cadence points (see
+    ``src.execution.exit_advisor.decide_trigger``) to decide HOLD vs
+    EXIT. The stop-loss (-50%), the 15:25 ET time deadline, and the
+    12:20 PM PT safety-close sweep are all unaffected hard rails that
+    always run first -- this config only governs the *profit* exit path.
+    """
+
+    enabled: bool = False
+    # Falls back to LLMConfig.primary_model when unset (see
+    # src.execution.exit_advisor.resolve_model). Deliberately no
+    # fallback chain of its own -- a single heavy model, consulted
+    # sparingly, is the point; an unavailable/degraded model instead
+    # enforces `trailing` above (see exit_advisor.py docstring).
+    model: str | None = None
+    # Per-attempt timeout. Must stay well inside the 3-minute cron
+    # interval so one advisor call can never make a monitor pass overrun
+    # into the next scheduled run.
+    timeout_sec: float = 55.0
+    # Cadence thresholds -- see src.execution.exit_advisor.decide_trigger.
+    profit_step_pct: float = 50.0
+    giveback_from_peak_pct: float = 25.0
+    periodic_interval_min: float = 15.0
+    final_window_min: float = 30.0
+    max_calls_per_trade: int = 12
+    # Resting safety-cap limit order placed at Alpaca instead of the
+    # fixed +100% TP, so total advisor unavailability still has *some*
+    # ceiling. `None` places no resting order at all and relies solely
+    # on the advisor + trailing-stop fallback + safety-close sweep.
+    safety_cap_pct: float | None = 400.0
+
+
 class TenacityConfig(BaseModel):
     """Configuration for Tenacity retry behaviour on API calls."""
 
@@ -144,6 +186,7 @@ class ExecutionConfig(BaseModel):
 
     entry: EntryConfig = EntryConfig()
     exit_strategy: ExitConfig = ExitConfig()
+    exit_advisor: ExitAdvisorConfig = ExitAdvisorConfig()
     tenacity: TenacityConfig = TenacityConfig()
     max_concurrent_trades: int = 1
 

@@ -32,7 +32,7 @@ import structlog
 
 from src.config import GapFadeConfig, GraphConfig, Settings
 from src.llm.client import OpencodeLLMClient
-from src.llm.trade_signal import _day_move_pct, _gap_pct
+from src.llm.trade_signal import _day_move_pct, _gap_pct, _premarket_prompt_block
 from src.llm.trade_signal import _parse_pick as _extract_json
 from src.models.briefing import BriefingData
 from src.models.market import MarketSnapshot
@@ -376,14 +376,21 @@ def _build_research_prompt(
         sections.append("Watchlist tickers:\n" + "\n".join(ticker_lines))
 
     q = market.quotes.get(asset)
+    pm = market.premarket.get(asset)
     if q:
-        gap_pct = _gap_pct(q)
-        day_move_pct = _day_move_pct(q)
+        # PRIOR SESSION, not today — see Quote.prior_session_close.
         sections.append(
-            f"{asset} quote: ${q.current_price:.2f} "
-            f"(gap {gap_pct:+.2f}% open-vs-prev-close ${q.previous_close:.2f}, "
-            f"{day_move_pct:+.2f}% now-vs-prev-close)"
+            f"{asset} PRIOR SESSION: closed ${q.prior_session_close:.2f} "
+            f"(open ${q.open_price:.2f}, high ${q.high_price:.2f}, low ${q.low_price:.2f})."
         )
+        sections.append(_premarket_prompt_block(asset, pm))
+        gap_pct = _gap_pct(q, pm)
+        day_move_pct = _day_move_pct(q, pm)
+        if gap_pct is not None and day_move_pct is not None:
+            sections.append(
+                f"{asset} pre-market drift: {day_move_pct:+.2f}% from the session's "
+                f"first print to the cutoff price (building vs fading momentum)."
+            )
 
     polarity = market.avg_sentiment_polarity()
     sections.append(f"Market-average news sentiment polarity: {polarity:+.3f}")
@@ -465,11 +472,18 @@ def _build_checker_prompt(
     for asset in ("SPY", "QQQ"):
         q = market.quotes.get(asset)
         if q:
-            gap_pct = _gap_pct(q)
+            pm = market.premarket.get(asset)
+            gap_pct = _gap_pct(q, pm)
             gap_threshold = gap_fade.threshold_for(asset)
             sentiment_mag = abs(market.avg_sentiment_polarity())
+            gap_str = (
+                f"{gap_pct:+.2f}%"
+                if gap_pct is not None
+                else "UNAVAILABLE (no live pre-market quote)"
+            )
             sections.append(
-                f"{asset}: ${q.current_price:.2f} gap {gap_pct:+.2f}% (open-vs-prev-close) "
+                f"{asset}: prior session close ${q.prior_session_close:.2f}, "
+                f"today's pre-market gap {gap_str} "
                 f"(gap-fade threshold: {gap_threshold}%, "
                 f"sentiment cutoff: {gap_fade.sentiment_magnitude_max}, "
                 f"catalyst strength: {sentiment_mag:+.3f})"

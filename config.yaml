@@ -45,6 +45,7 @@ strategies:
     enabled: true
     min_confidence: 0.40
     gap_threshold_pct: 0.5
+    max_confidence: 0.50
   mean_reversion:
     enabled: true
     min_confidence: 0.40
@@ -58,6 +59,35 @@ strategies:
 risk:
   max_loss_per_trade_usd: 500
   max_position_size_contracts: 10
+  sizing_tier2_min_confidence: 0.60
+  # Minimum absolute predicted move (in %) for a trade to be executed.
+  # A 68%-accurate direction call on a 0.1-0.2% move still dies to 0DTE
+  # theta, so only trade when the model expects a meaningful session move.
+  min_predicted_move_pct: 0.30
+  # Tie-break preference across assets at equal confidence. QQQ has shown
+  # better accuracy and PnL than SPY across the whole history.
+  preferred_asset: QQQ
+  # Premium-aware entry gate (2026-09-10 audit of logs/, 2026-07-29..09-09):
+  # predicted moves ran ~3x hotter than the underlying's actual intraday
+  # move (e.g. 2026-09-09 predicted SPY -0.7%/QQQ -0.8%, actual -0.22%/
+  # -0.01%). DecisionAggregator.premium_gate compares predicted move x
+  # this factor against the option's true breakeven (OTM distance to
+  # strike + ask, as a % of the underlying), in ExecutionEngine once the
+  # live ask and a live underlying quote are known post-open.
+  # Loosened 0.4 -> 1.0 (owner decision, 2026-09-11). A sweep over the 22
+  # real fills showed no shrink value separates winners from losers --
+  # kept-trade P&L was +$135..+$210 at every value from 0.4 to 1.2, carried
+  # by one +$282 ITM put -- so this only sets frequency: 0.4 kept 2 of 22,
+  # 1.0 keeps 9 (5 winners, +$195.50). Above ~1.2 the gate stops filtering
+  # (1.5 kept 14 trades for +$33.50).
+  predicted_move_shrink: 1.0
+  # Extra cushion above breakeven, as a fraction, covering only spread/
+  # slippage now that the OTM distance is computed explicitly (2026-09-10
+  # follow-up: the previous 0.15 was standing in for that distance term,
+  # which the ask/strike formula omitted entirely). Not fitted from data --
+  # the trade audits don't retain the quoted ask, only the fill price --
+  # 0.03 is a reasoned default.
+  breakeven_margin_pct: 0.03
   close_deadline_est: "15:30"
   min_dte: 0
   max_dte: 0
@@ -94,13 +124,39 @@ gap_fade:
   default_threshold_pct: 1.5
   sentiment_magnitude_max: 0.20
 
+# Live pre-market price/volume via Alpaca 1-minute IEX bars (see
+# src/ingestion/premarket.py). Fixes the 2026-09-11 bug where the atlas
+# Finnhub snapshot (~06:02 PT, no pre-market price yet) was fed into
+# every prompt AS today's quote -- Finnhub's "current price" outside
+# market hours is really the PRIOR session's close. See PremarketConfig
+# in src/config.py for the full incident writeup and the empirical basis
+# for min_volume_ratio (median pre-market volume to the 09:28 ET cutoff:
+# ~1,779 shares QQQ / ~610 SPY on IEX, ranging 0-8,425 day to day -- too
+# noisy for an absolute floor, hence a relative threshold).
+premarket:
+  enabled: true
+  cutoff_et: "09:28"
+  session_start_et: "04:00"
+  lookback_days: 10
+  min_volume_ratio: 0.5
+  # Mechanics price order: live quote midpoint -> recent bar close ->
+  # prior close. A bar older than this many minutes (vs the cutoff
+  # above) can't be used for mechanics and can't count as reliable
+  # evidence either, no matter the volume ratio.
+  max_bar_age_min: 15.0
+  max_quote_spread_pct: 0.1
+
 llm:
   enabled: true
   # Chain order: primary_model first, then fallback_models in order.
-  # Primary is Nemotron 3 Ultra via nvidia-direct; fallback is DeepSeek V4 Pro via OpenRouter.
-  primary_model: nvidia-direct/nemotron-3-ultra
+  # Muse Spark 1.3 (contributor-free, served through the opencode CLI) is
+  # the model of record. Nemotron 3 Ultra via nvidia-direct is the only
+  # fallback. DeepSeek is deliberately removed (owner decision,
+  # 2026-09-11): Muse Spark is the chosen model, and both DeepSeek
+  # accounts (opencode-go, OpenRouter) were out of credit anyway.
+  primary_model: opencode/muse-spark-1.3-contributor-free
   fallback_models:
-    - openrouter/deepseek/deepseek-v4-pro
+    - nvidia-direct/nvidia/nemotron-3-ultra-550b-a55b
   # Raised from 45s: the monolithic fallback prompt is large, and on
   # 2026-08-26 both models timed out at 45s, leaving the fallback useless
   # exactly when the graph had already failed.
@@ -118,9 +174,10 @@ llm:
     max_age_sec: 21600
     probe_timeout_sec: 45
     # "latency" pins the fastest healthy model; "order" keeps chain order
-    # (atlas behaviour). Latency is preferred here because node timeouts,
-    # not hard outages, are what actually break this pipeline.
-    select_by: latency
+    # (atlas behaviour). "order" here so Muse Spark always leads whenever
+    # it is healthy -- "latency" would promote Nemotron on any morning it
+    # happened to answer faster, overriding the model of record.
+    select_by: order
 
 graph:
   enabled: true
@@ -153,13 +210,89 @@ execution:
     limit_offset_pct: 5
     entry_window_minutes: 15
   exit_strategy:
+    # take_profit_pct is the resting Alpaca limit order used when
+    # exit_advisor.enabled is false. When the advisor is enabled, this
+    # value is NOT used for the resting order -- see
+    # exit_advisor.safety_cap_pct instead. Kept at 100 as the fallback
+    # value for an advisor-disabled run.
     take_profit_pct: 100
     stop_loss_pct: -50
+    # trail_pct/activate_after_pct here are NOT an always-on rail -- how
+    # they're enforced depends on exit_advisor.enabled:
+    #   - exit_advisor.enabled: false -> never enforced by the monitor at
+    #     all (dead config today; ExitManager.evaluate, which would read
+    #     it, doesn't run in-process -- see AGENTS.md "Exit Strategies").
+    #   - exit_advisor.enabled: true, advisor healthy -> only a
+    #     FALLBACK: enforced deterministically when a consult
+    #     fails/times out/can't be parsed, or the per-trade call cap is
+    #     spent (src.execution.exit_advisor.trailing_fallback_triggered).
+    #   - exit_advisor.enabled: true, AND the advisor has itself tightened
+    #     the trail via its trail_stop_pct output -> that tightened trail
+    #     (not this configured default) is enforced on EVERY poll, since
+    #     it's the advisor's own deliberate standing order, not a
+    #     fallback (src.execution.exit_advisor.advisor_trail_triggered).
     trailing:
       enabled: true
       activate_after_pct: 30
       trail_pct: 15
     time_deadline_est: "15:25"
+  # LLM-driven profit-exit advisor (owner request, 2026-09-11): a replay
+  # of 72 asset-days (2026-07-22..09-10) found this strategy's OTM 0DTE
+  # options pay off on a handful of big days -- holding to expiry
+  # averaged ~+71%/trade in premium units for the models, with the top 3
+  # days carrying ~45% of total gains. Under the fixed +100%/-50%
+  # TP/SL, that fell to ~+7-9%: the resting +100% limit order fills and
+  # cuts off exactly the days that pay. This does not touch the
+  # stop-loss (still -50%, and it looked fine in the same review -- it
+  # saved money on 9/8 and was a wash on 9/9), the 15:25 ET time
+  # deadline, or the 12:20 PM PT safety-close sweep, which all remain
+  # deterministic hard rails ahead of anything below. See
+  # src/execution/exit_advisor.py and .opencode/agent/exit-advisor.md.
+  #
+  # ENABLED HERE per explicit owner instruction, on paper trading only.
+  # See the PR report for the (small-n, simulation-only, not backtested
+  # against a real advisor run) recommendation on whether to keep it on.
+  exit_advisor:
+    enabled: true
+    # Falls back to llm.primary_model (Muse Spark 1.3) when unset.
+    # Deliberately no fallback chain: a single heavy model, consulted
+    # sparingly, is the point -- a degraded/unavailable model instead
+    # enforces the trailing stop above.
+    model: null
+    # Per-attempt timeout. Must stay well inside the 3-minute cron
+    # interval (monitor lock would otherwise serialize a stuck run
+    # against the next scheduled one).
+    timeout_sec: 55
+    # Cadence: consult on events, not every 3-minute poll.
+    # - profit_step_pct: first crossing +50%, then every further +50%
+    #   (+50, +100, +150, ...).
+    # - giveback_from_peak_pct: a pullback of >= 25 points from the peak
+    #   P&L once in profit, then again every further 25-point step down
+    #   (peak-25, peak-50, peak-75, ...) -- not just once per peak, so a
+    #   winner sliding all the way back down keeps getting consulted
+    #   instead of going quiet after the first pullback. The ladder
+    #   resets against a new, higher peak.
+    # - periodic_interval_min: a check-in every ~15 minutes while the
+    #   trade is in profit, independent of the two triggers above.
+    # - final_window_min: one consult in the last ~30 minutes before the
+    #   time deadline, regardless of P&L.
+    profit_step_pct: 50
+    giveback_from_peak_pct: 25
+    periodic_interval_min: 15
+    final_window_min: 30
+    # Hard ceiling on consultations for a single trade, so a chattering
+    # cadence (e.g. bouncing across a profit_step boundary) cannot spam
+    # opencode all day.
+    max_calls_per_trade: 12
+    # Resting safety-cap limit order placed at Alpaca in place of the
+    # fixed +100% TP, so total advisor unavailability still has *some*
+    # ceiling rather than none. +400% means the option is worth 5x what was
+    # paid -- far enough out that it essentially never fires on a genuine
+    # winner, while still capping a runaway day if the advisor is down.
+    # Set to `null` to place no
+    # resting order at all and rely solely on the advisor + trailing
+    # fallback + safety-close sweep.
+    safety_cap_pct: 400
   tenacity:
     max_attempts: 3
     min_wait_sec: 1

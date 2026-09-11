@@ -315,3 +315,257 @@ class TestUnsupportedSignalCap:
         config = Settings()
         assert config.graph.unsupported_confidence_cap < config.strategies.momentum.min_confidence
         assert config.graph.unsupported_confidence_cap < config.llm.trade_signal_min_confidence
+
+
+class TestSizing:
+    """Conservative 1 -> 2 contract scaling.
+
+    Two contracts only when confidence clears ``sizing_tier2_min_confidence``
+    AND the pick is LLM-backed or corroborated by a second strategy.
+    """
+
+    @staticmethod
+    def _result(label: str, confidence: float, asset: str = "SPY", direction=Direction.CALL):
+        rec = _make_rec(label, asset=asset, direction=direction)
+        rec.confidence = confidence
+        return _make_result(label, rec, confidence)
+
+    def test_llm_trade_scales_to_2_at_high_confidence(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        decision = DecisionAggregator(config).aggregate([self._result("llm_trade", 0.72)])
+        assert decision.recommendation is not None
+        assert decision.recommendation.contracts == 2
+
+    def test_llm_trade_stays_1_below_threshold(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        decision = DecisionAggregator(config).aggregate([self._result("llm_trade", 0.55)])
+        assert decision.recommendation is not None
+        assert decision.recommendation.contracts == 1
+
+    def test_corroborated_deterministic_scales_to_2(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        results = [
+            self._result("event_driven", 0.75),
+            self._result("momentum", 0.70),
+        ]
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is not None
+        assert decision.recommendation.contracts == 2
+
+    def test_solo_deterministic_never_scales(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        results = [
+            self._result("event_driven", 0.70),
+        ]
+        # Solo deterministic at 0.70 is uncorroborated -> blocked entirely.
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is None
+
+    def test_merged_pick_scales_when_corroborated(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        results = [
+            self._result("momentum", 0.66, asset="QQQ", direction=Direction.CALL),
+            self._result("event_driven", 0.64, asset="QQQ", direction=Direction.CALL),
+        ]
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is not None
+        assert decision.recommendation.contracts == 2
+
+
+class TestPredictedMoveCarry:
+    """``aggregate()`` stashes the LLM's per-asset predicted move onto the
+    selected recommendation (``TradeRecommendation.predicted_move_pct``) so
+    ``premium_gate`` can use it later, once the option premium is known
+    (the premium isn't available until ``ExecutionEngine.execute`` runs
+    post-open -- see AGENTS.md De-risking, 2026-09-10 review).
+    """
+
+    @staticmethod
+    def _llm_prediction(
+        asset: str = "QQQ", direction: str = "DOWN", move: float = -0.8, confidence: float = 0.65
+    ) -> StrategyResult:
+        return StrategyResult(
+            label="llm_trade",
+            recommendation=None,
+            predictions={
+                asset: AssetPrediction(
+                    asset=asset,
+                    direction=direction,
+                    confidence=confidence,
+                    predicted_move_pct=move,
+                    rationale="test",
+                    sources=["test"],
+                )
+            },
+            confidence=0.0,
+            duration_ms=1.0,
+        )
+
+    def test_predicted_move_carried_onto_selected(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        rec = _make_rec("llm_trade", asset="QQQ", direction=Direction.PUT)
+        results = [
+            _make_result("llm_trade", rec, 0.65),
+            self._llm_prediction(asset="QQQ", direction="DOWN", move=-0.8),
+        ]
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is not None
+        assert decision.recommendation.predicted_move_pct == -0.8
+
+    def test_predicted_move_none_when_no_llm_prediction(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        # Two corroborating deterministic strategies (same asset+direction)
+        # so the pick survives the unsupported-signal cap, with no LLM
+        # prediction present at all.
+        results = [
+            _make_result("event_driven", _make_rec("event_driven"), 0.70),
+            _make_result("momentum", _make_rec("momentum"), 0.68),
+        ]
+        decision = DecisionAggregator(config).aggregate(results)
+        assert decision.recommendation is not None
+        assert decision.recommendation.predicted_move_pct is None
+
+
+class TestPremiumGate:
+    """``DecisionAggregator.premium_gate`` -- the breakeven-aware entry gate.
+
+    This only runs once the option's live ask (and, for the live formula,
+    a live underlying quote) is known, which is after market open
+    (``ExecutionEngine.execute``), not at decision time -- so it's tested
+    directly as a static function rather than through ``aggregate()``.
+
+    Breakeven is OTM-distance-aware (2026-09-10 follow-up review): the
+    underlying must cover the distance from spot to strike, THEN the
+    premium, before the position is above water --
+    PUT: ``((underlying - strike) + ask) / underlying * 100``;
+    CALL: ``((strike - underlying) + ask) / underlying * 100``. The first
+    version of this gate used ``ask / strike * 100`` (strike standing in
+    for a live underlying price it didn't have yet), which silently
+    dropped the OTM-distance term -- since every strike here is chosen
+    ~0.6% OTM (``compute_otm_strike``), that understated breakeven on
+    every trade. That old formula is now only a fallback for when a live
+    underlying quote can't be fetched (see ``TestFallbackFormula`` below).
+    """
+
+    @staticmethod
+    def _rec(
+        predicted_move_pct: float | None,
+        direction: Direction = Direction.PUT,
+        strike: float = 714.0,
+    ) -> TradeRecommendation:
+        rec = _make_rec("llm_trade", asset="QQQ", direction=direction)
+        rec.target_strike = strike
+        rec.predicted_move_pct = predicted_move_pct
+        return rec
+
+    def test_blocks_when_shrunk_move_below_breakeven(self, tmp_path) -> None:
+        # PUT strike 714, underlying 716.40, ask 1.15: distance
+        # (716.40-714)/716.40 = 0.335%, + ask/underlying 0.161% = breakeven
+        # 0.495%, required (x1.03) 0.510%. Predicted -0.8% shrunk (x0.4) =
+        # 0.32%, below required.
+        config = _make_settings(tmp_path)
+        rec = self._rec(-0.8)
+        reason = DecisionAggregator.premium_gate(rec, 1.15, 716.40, config.risk)
+        assert reason is not None
+        assert "breakeven" in reason
+
+    def test_allows_when_shrunk_move_clears_breakeven(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        rec = self._rec(-3.5)  # shrunk (x0.4) = 1.40%, well clear of the ~0.51% breakeven
+        assert DecisionAggregator.premium_gate(rec, 1.15, 716.40, config.risk) is None
+
+    def test_skips_when_no_predicted_move(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        rec = self._rec(None)
+        assert DecisionAggregator.premium_gate(rec, 1.15, 716.40, config.risk) is None
+
+    def test_skips_when_ask_missing_or_zero(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        rec = self._rec(-3.5)
+        assert DecisionAggregator.premium_gate(rec, None, 716.40, config.risk) is None
+        assert DecisionAggregator.premium_gate(rec, 0.0, 716.40, config.risk) is None
+
+    def test_itm_strike_reduces_required_move(self, tmp_path) -> None:
+        """An ITM strike gives a NEGATIVE OTM distance, correctly reducing
+        (not increasing) the required move since intrinsic value already
+        covers part of the premium."""
+        config = _make_settings(tmp_path)
+        # PUT strike 720 (ITM: underlying 716.40 < strike), ask 1.15:
+        # distance (716.40-720)/716.40 = -0.503%, + ask/underlying 0.161%
+        # = breakeven -0.343% (already profitable at the current spot) --
+        # any non-zero predicted move clears a negative requirement.
+        rec = self._rec(-0.2, strike=720.0)  # shrunk = 0.08%, tiny
+        assert DecisionAggregator.premium_gate(rec, 1.15, 716.40, config.risk) is None
+
+    def test_call_direction_uses_call_side_distance(self, tmp_path) -> None:
+        # CALL strike 723, underlying 720.91, ask 1.13: distance
+        # (723-720.91)/720.91 = 0.290%, + ask/underlying 0.157% =
+        # breakeven 0.447%, required (x1.03) 0.460%. Predicted +0.4%
+        # shrunk (x0.4) = 0.16%, below required.
+        config = _make_settings(tmp_path)
+        rec = self._rec(0.4, direction=Direction.CALL, strike=723.0)
+        reason = DecisionAggregator.premium_gate(rec, 1.13, 720.91, config.risk)
+        assert reason is not None
+
+    def test_would_have_blocked_2026_09_09_trade(self, tmp_path) -> None:
+        """Real 2026-09-09 QQQ PUT 714: predicted -0.8%, ask $1.15,
+        underlying ~$716.40 (open). Under the ORIGINAL ask/strike gate
+        this was not blocked (breakeven understated at 0.16%); with the
+        OTM-distance-aware formula breakeven is ~0.50% and the shrunk
+        expected move (0.32%) doesn't clear it -- this -$65.50 loser would
+        now correctly be blocked too."""
+        config = _make_settings(tmp_path)
+        rec = self._rec(-0.8, strike=714.0)
+        reason = DecisionAggregator.premium_gate(rec, 1.15, 716.40, config.risk)
+        assert reason is not None
+
+    def test_would_have_blocked_2026_09_08_trade(self, tmp_path) -> None:
+        """Real 2026-09-08 QQQ CALL 723: predicted +0.4%, ask $1.13,
+        underlying ~$720.91 (open) -- shrunk expected move 0.16% does not
+        clear the ~0.46% breakeven requirement, so the gate would have
+        blocked this -$117 loser (as it did under the original formula
+        too, just at a smaller, understated threshold)."""
+        config = _make_settings(tmp_path)
+        rec = self._rec(0.4, direction=Direction.CALL, strike=723.0)
+        reason = DecisionAggregator.premium_gate(rec, 1.13, 720.91, config.risk)
+        assert reason is not None
+
+
+class TestPremiumGateFallbackFormula:
+    """When a live underlying quote isn't available, ``premium_gate`` falls
+    back to the old ``ask / strike * 100`` approximation rather than
+    skipping the gate outright -- logged via ``premium_gate_fallback_formula``
+    so the (understated, less strict) approximation is visible in logs.
+    """
+
+    @staticmethod
+    def _rec(predicted_move_pct: float | None, strike: float = 714.0) -> TradeRecommendation:
+        rec = _make_rec("llm_trade", asset="QQQ", direction=Direction.PUT)
+        rec.target_strike = strike
+        rec.predicted_move_pct = predicted_move_pct
+        return rec
+
+    def test_fallback_used_when_underlying_none(self, tmp_path) -> None:
+        # ask/strike = 1.15/714*100 = 0.161%, required (x1.03) = 0.166%.
+        # Predicted -0.8% shrunk (x0.4) = 0.32%, clears the understated
+        # fallback requirement even though the real (distance-aware)
+        # breakeven would have blocked it (see TestPremiumGate).
+        config = _make_settings(tmp_path)
+        rec = self._rec(-0.8)
+        assert DecisionAggregator.premium_gate(rec, 1.15, None, config.risk) is None
+
+    def test_fallback_used_when_underlying_zero(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        rec = self._rec(-0.8)
+        assert DecisionAggregator.premium_gate(rec, 1.15, 0.0, config.risk) is None
+
+    def test_fallback_still_blocks_clearly_too_small_move(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        rec = self._rec(-0.2)  # shrunk = 0.08%, below the 0.166% fallback requirement
+        reason = DecisionAggregator.premium_gate(rec, 1.15, None, config.risk)
+        assert reason is not None
+
+    def test_skips_when_strike_also_missing(self, tmp_path) -> None:
+        config = _make_settings(tmp_path)
+        rec = self._rec(-0.8, strike=0.0)
+        assert DecisionAggregator.premium_gate(rec, 1.15, None, config.risk) is None

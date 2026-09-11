@@ -4,6 +4,20 @@ Intraday directional prediction engine & 0DTE execution. LLM-readable format -- 
 
 ## Quick Index
 
+> **Scoring note (2026-09-10):** Entries dated before 2026-09-10 have
+> per-day HIT/MISS results computed with a scorer bug that used
+> `abs(predicted_move_pct)` when placing the target strike, which put the
+> target on the wrong side of the open for every DOWN prediction and made
+> DOWN calls register HIT far more often than they should have (e.g.
+> 2026-09-09 QQQ DOWN was logged HIT here despite closing -0.01%, while
+> the strict scorer in `logs/prediction-history.json` correctly marked it
+> `fail`). The bug is fixed going forward in `src/lessons_analyzer.py`
+> (now sign-correct and matching `prediction_tracker.check_outcome`);
+> historical entries below are left as originally written, not
+> retroactively rescored. The "Cumulative prediction record" line at the
+> bottom of each entry was NOT affected -- it has always read the strict
+> counts from `logs/prediction-history.json`.
+
 | Date | SPY Pred | SPY Result | QQQ Pred | QQQ Result | Trade Executed | Engine PnL | Key Tags |
 |------|----------|------------|----------|------------|---------------|------------|----------|
 | [2026-08-27](#2026-08-27) | UP 45% | HIT | UP 52% | HIT | No | $0.00 | `pattern:qqq-amplifies` `pattern:spy-amplifies` `source:market-SPY` `source:market-SPY-reliable` `source:news-sentiment` `source:news-sentiment-reliable` `source:watchlist-LITE` `source:watchlist-LITE-reliable` `source:watchlist-NVDA` |
@@ -65,6 +79,278 @@ Observations that recur across multiple days. Each gets stronger (or weaker) wit
 | How reliable is the briefing when overnight catalysts (GOOGL earnings) invert direction? | 7/30: briefing missed QQQ gap-up |
 | Do deterministic strategies out- perform the LLM? | event_driven selected today (SPY PUT) |
 | Should we focus on SPY over QQQ? | SPY 2/3 HITs this week; QQQ 3/4 HITs overall but broke today |
+
+---
+
+## 2026-09-10
+
+```yaml
+date: 2026-09-10
+spy:
+  direction: DOWN
+  confidence: 0.35
+  predicted_move_pct: -0.2
+  actual_move_pct: -0.03
+  result: HIT
+  note: "hit target (L=$756.64)"
+qqq:
+  direction: ?
+  confidence: 0.0
+  predicted_move_pct: 0.0
+  actual_move_pct: 0.16
+  result: MISS
+  note: "never hit target, closed +0.16%"
+trade_filled: false
+engine_pnl: 0.00
+```
+
+### Pre-market context
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 35% | -0.2% |  |
+| QQQ | ? | 0% | 0.0% |  |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $758.03 | $760.09 | $756.64 | $757.83 | -0.03% | :white_check_mark: HIT |
+| QQQ | $707.55 | $712.06 | $706.85 | $708.69 | +0.16% | :x: MISS |
+
+### Trade execution
+
+No trades executed today.
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | — | — |
+
+**Cumulative prediction record**: 34/62 (55%)
+
+---
+
+## 2026-09-09
+
+```yaml
+date: 2026-09-09
+spy:
+  direction: DOWN
+  confidence: 0.55
+  predicted_move_pct: -0.7
+  actual_move_pct: -0.22
+  result: HIT
+  note: "hit target (L=$760.94)"
+qqq:
+  direction: DOWN
+  confidence: 0.65
+  predicted_move_pct: -0.8
+  actual_move_pct: -0.01
+  result: HIT
+  note: "hit target (L=$714.02)"
+best_trade: "QQQ PUT @ $714.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: -65.50
+tags:
+  - pattern:qqq-down-reliable
+  - source:market-NVDA
+  - source:market-NVDA-reliable
+  - source:market-QQQ
+  - source:market-QQQ-reliable
+  - source:market-SPY
+  - source:market-SPY-reliable
+  - source:watchlist-MSFT
+  - source:watchlist-MSFT-reliable
+```
+
+### Pre-market context
+
+Market vibe: Rotation from megacap tech into defense/dual-use infrastructure as institutional military AI adoption accelerates; big-cap AI names under broad selling pressure while defense startups and space infrastructure surge
+
+Key catalysts: tech, defense
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 55% | -0.7% | Broad megacap tech selloff led by NVDA (-2%) and MSFT (-1.2%) outweighs defense sector gains within the index |
+| QQQ | DOWN | 65% | -0.8% | All major QQQ components declining simultaneously — NVDA -2%, MSFT -1.2%, AMZN -0.6%, PLTR -2.3% — as capital rotates fr |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $764.08 | $764.47 | $760.94 | $762.40 | -0.22% | :white_check_mark: HIT |
+| QQQ | $716.40 | $719.70 | $714.02 | $716.31 | -0.01% | :white_check_mark: HIT |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   QQQ PUT @ $1.15/contract → $-65.50 (stop_loss)
+
+Engine-tracked PnL: $-65.50
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: DOWN | :white_check_mark: DOWN |
+
+**Cumulative prediction record**: 34/60 (57%)
+
+---
+
+## 2026-09-08
+
+```yaml
+date: 2026-09-08
+spy:
+  direction: ?
+  confidence: 0.0
+  predicted_move_pct: 0.0
+  actual_move_pct: -0.40
+  result: HIT
+  note: "hit target, but reversed — closed -0.40%"
+qqq:
+  direction: UP
+  confidence: 0.65
+  predicted_move_pct: 0.4
+  actual_move_pct: -0.35
+  result: MISS
+  note: "never hit target, closed -0.35%"
+best_trade: "QQQ CALL @ $723.0, strategy=llm_trade"
+trade_filled: true
+engine_pnl: -117.00
+tags:
+  - pattern:qqq-up-unreliable
+  - pattern:spy-amplifies
+  - source:briefing-aws-nvidia-hyperpod
+  - source:briefing-aws-nvidia-hyperpod-unreliable
+  - source:briefing-pentagon-ai-procurement
+  - source:briefing-pentagon-ai-procurement-unreliable
+  - source:watchlist-NVDA,VRT,LITE
+  - source:watchlist-NVDA,VRT,LITE-unreliable
+```
+
+### Pre-market context
+
+Market vibe: SPY LLM prediction failed entirely; QQQ LLM prediction is structurally valid but unsupported by deterministic strategies (both skipped) and exists against a backdrop of bearish catalyst polarity (-1.0) — proceed with caution.
+
+Key catalysts: AI
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | ? | 0% | 0.0% |  |
+| QQQ | UP | 65% | 0.4% | AI infrastructure hardware names (NVDA, VRT, LITE) surging on defense and commercial compute demand outweighs megacap so |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $769.07 | $769.70 | $765.15 | $765.96 | -0.40% | :white_check_mark: HIT |
+| QQQ | $720.91 | $721.89 | $715.57 | $718.36 | -0.35% | :x: MISS |
+
+### Trade execution
+
+**1** orders submitted, **1** filled
+
+-   QQQ CALL @ $1.13/contract → $-117.00 (stop_loss)
+
+Engine-tracked PnL: $-117.00
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | — | :x: UP |
+
+**Cumulative prediction record**: 34/59 (58%)
+
+---
+
+## 2026-09-07
+
+```yaml
+date: 2026-09-07
+spy:
+  direction: DOWN
+  confidence: 0.45
+  predicted_move_pct: -0.35
+  actual_move_pct: -0.24
+  result: HIT
+  note: "hit target (L=$769.00)"
+qqq:
+  direction: DOWN
+  confidence: 0.35
+  predicted_move_pct: -0.25
+  actual_move_pct: -0.05
+  result: HIT
+  note: "hit target (L=$716.56)"
+trade_filled: false
+engine_pnl: 0.00
+tags:
+  - source:market-SPY
+  - source:market-SPY-reliable
+  - source:reuters-defense-budget-uncertainty
+  - source:reuters-defense-budget-uncertainty-reliable
+  - source:sentiment-aggregate_polarity
+  - source:sentiment-aggregate_polarity-reliable
+  - source:watchlist-MSFT
+  - source:watchlist-MSFT-reliable
+  - source:watchlist-NVDA,META,ANET,VRT,LITE
+  - source:watchlist-NVDA,META,ANET,VRT,LITE-reliable
+  - source:watchlist-SPY
+  - source:watchlist-SPY-reliable
+```
+
+### Pre-market context
+
+Market vibe: Both LLM predictions are bearish and align with event-driven's negative catalyst polarity, but deterministic strategies provide no confirmation and QQQ confidence is borderline.
+
+### What we predicted
+
+| Asset | Direction | Confidence | Predicted Move | Rationale (truncated) |
+|-------|-----------|------------|----------------|-----------------------|
+| SPY | DOWN | 45% | -0.3% | Defense sector selloff (-1.44% to -4.49%) and MSFT/GOOGL cloud weakness outweigh narrow AI infra gains, with aggregate s |
+| QQQ | DOWN | 35% | -0.2% | MSFT's -2.04% cloud-driven drag as a top-3 QQQ weight outweighs mid-cap AI infra gains from ANET/VRT/LITE, and aggregate |
+
+### What actually happened
+
+| Asset | Open | High | Low | Close | Move % | Result |
+|-------|------|------|-----|-------|--------|--------|
+| SPY | $772.01 | $772.87 | $769.00 | $770.19 | -0.24% | :white_check_mark: HIT |
+| QQQ | $719.35 | $721.86 | $716.56 | $718.96 | -0.05% | :white_check_mark: HIT |
+
+### Trade execution
+
+No trades executed today.
+
+### Strategy summary
+
+| Strategy | SPY | QQQ |
+|----------|-----|-----|
+| momentum | — | — |
+| mean_reversion | — | — |
+| event_driven | — | — |
+| llm_trade | :white_check_mark: DOWN | :white_check_mark: DOWN |
+
+**Cumulative prediction record**: 34/59 (58%)
 
 ---
 

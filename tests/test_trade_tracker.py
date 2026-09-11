@@ -120,6 +120,51 @@ class TestTradeOutcome:
         assert outcomes[0].lost is True
         assert outcomes[0].pnl == pytest.approx(-73.0)
 
+    def test_legacy_concatenated_audit_file_is_parsed_not_skipped(self, tmp_path) -> None:
+        """A trade-*.json left as several concatenated JSON objects (the
+        pre-2026-09-10 append-only writer's shape for a trade that reached
+        finalize() before the fix landed) must still be read -- this is
+        the exact `trade_tracker_read_error: Extra data: line 2 column 1`
+        failure seen in production on 2026-09-10, which silently dropped
+        resolved trades from the outcome-tracking feedback loop."""
+        day_dir = tmp_path / "2026-09-09"
+        day_dir.mkdir(parents=True)
+        # Simulates the legacy per-line append writer: one JSON object per
+        # event, concatenated with no wrapping array.
+        lines = [
+            {"trade_id": "legacy1", "event_type": "entry_submitted", "occ_symbol": "SPY"},
+            {
+                "trade_id": "legacy1",
+                "event_type": "entry_filled",
+                "avg_price": 0.6,
+                "filled_qty": 1,
+            },
+            {
+                "trade_id": "legacy1",
+                "correlation_id": "c-legacy1",
+                "asset": "SPY",
+                "direction": "CALL",
+                "entry_strike": 700.0,
+                "exit_reason": "take_profit",
+                "exit_price": 1.2,
+                "final_pnl": 60.0,
+                "final_pnl_pct": 100.0,
+                "recommendation": {"strategy_label": "momentum"},
+            },
+        ]
+        (day_dir / "trade-legacy1.json").write_text(
+            "\n".join(json.dumps(line) for line in lines) + "\n"
+        )
+
+        outcomes = load_trade_outcomes(tmp_path)
+        assert len(outcomes) == 1
+        assert outcomes[0].trade_id == "legacy1"
+        assert outcomes[0].won is True
+        assert outcomes[0].pnl == pytest.approx(60.0)
+        # The entry-level fields (occ_symbol/avg_price) must survive the
+        # merge into a single `entries` list alongside the summary object.
+        assert outcomes[0].entry_price == pytest.approx(0.6)
+
 
 class TestStrategyStats:
     def test_streak_negative_two(self, tmp_path) -> None:

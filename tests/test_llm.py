@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import structlog.testing
 
 from src.config import LLMConfig, PreflightConfig
 from src.llm.client import (
@@ -17,7 +18,10 @@ from src.llm.client import (
     _parse_ndjson_response,
     _reorder_chain,
     _strip_frontmatter,
+    drop_unknown_models,
+    get_known_model_ids,
     is_paid_model,
+    validate_llm_config,
 )
 from src.llm.resynthesizer import resynthesize_briefing
 from src.models.briefing import BriefingData, BriefingQuality
@@ -97,12 +101,12 @@ class TestOpencodeLLMClientInvoke:
             response = client.invoke("test prompt")
         assert response == "synthetic summary"
         # First successful model is the primary_model.
-        assert client.last_served_by == "nvidia-direct/nemotron-3-ultra"
+        assert client.last_served_by == "opencode/muse-spark-1.3-contributor-free"
         assert client.last_fallback_hit is False
-        assert client.paid_used is True
+        assert client.paid_used is False
         assert mock_run.call_args.kwargs["timeout"] == 60
         args = mock_run.call_args.args[0]
-        assert "nvidia-direct/nemotron-3-ultra" in args
+        assert "opencode/muse-spark-1.3-contributor-free" in args
 
     def test_primary_timeout_falls_back_to_fallback(self) -> None:
         cfg = LLMConfig(
@@ -1136,6 +1140,300 @@ class TestClientConsumesPreflight:
         # Resolved once and cached -- invoke() and invoke_agent() must
         # share the same resolution rather than each re-reading the file.
         assert spy.call_count == 1
+
+
+class TestGetKnownModelIds:
+    """`opencode models` is a few seconds, so results are cached to disk --
+    see `get_known_model_ids`. These tests never touch the real cache
+    file path; each uses its own `tmp_path`."""
+
+    def test_fetches_and_caches_on_first_call(self, tmp_path: Path) -> None:
+        cache_path = str(tmp_path / "models-cache.json")
+        with patch(
+            "src.llm.client.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["opencode", "models"], returncode=0, stdout="a/b\nc/d\n", stderr=""
+            ),
+        ) as mock_run:
+            ids = get_known_model_ids("opencode", cache_path=cache_path)
+        assert ids == {"a/b", "c/d"}
+        assert mock_run.call_count == 1
+        assert json.loads(Path(cache_path).read_text())["models"] == ["a/b", "c/d"]
+
+    def test_fresh_cache_skips_live_fetch(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / "models-cache.json"
+        cache_path.write_text(
+            json.dumps({"timestamp": datetime.now(UTC).isoformat(), "models": ["x/y"]})
+        )
+        with patch("src.llm.client.subprocess.run") as mock_run:
+            ids = get_known_model_ids("opencode", cache_path=str(cache_path))
+        assert ids == {"x/y"}
+        mock_run.assert_not_called()
+
+    def test_stale_cache_triggers_refresh(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / "models-cache.json"
+        old_ts = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        cache_path.write_text(json.dumps({"timestamp": old_ts, "models": ["stale/model"]}))
+        with patch(
+            "src.llm.client.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["opencode", "models"], returncode=0, stdout="fresh/model\n", stderr=""
+            ),
+        ):
+            ids = get_known_model_ids("opencode", cache_path=str(cache_path), max_age_sec=3600)
+        assert ids == {"fresh/model"}
+
+    def test_failed_refresh_falls_back_to_stale_cache(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / "models-cache.json"
+        old_ts = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        cache_path.write_text(json.dumps({"timestamp": old_ts, "models": ["stale/model"]}))
+        with patch("src.llm.client.subprocess.run", side_effect=OSError("no binary")):
+            ids = get_known_model_ids("opencode", cache_path=str(cache_path), max_age_sec=3600)
+        assert ids == {"stale/model"}
+
+    def test_no_cache_and_failed_fetch_returns_none(self, tmp_path: Path) -> None:
+        cache_path = str(tmp_path / "nope.json")
+        with patch("src.llm.client.subprocess.run", side_effect=OSError("no binary")):
+            assert get_known_model_ids("opencode", cache_path=cache_path) is None
+
+    def test_nonzero_exit_returns_none(self, tmp_path: Path) -> None:
+        cache_path = str(tmp_path / "nope.json")
+        with patch(
+            "src.llm.client.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["opencode", "models"], returncode=1, stdout="", stderr="boom"
+            ),
+        ):
+            assert get_known_model_ids("opencode", cache_path=cache_path) is None
+
+    def test_empty_output_returns_none(self, tmp_path: Path) -> None:
+        cache_path = str(tmp_path / "nope.json")
+        with patch(
+            "src.llm.client.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                args=["opencode", "models"], returncode=0, stdout="", stderr=""
+            ),
+        ):
+            assert get_known_model_ids("opencode", cache_path=cache_path) is None
+
+
+class TestDropUnknownModels:
+    def test_no_validation_data_returns_chain_unchanged(self) -> None:
+        chain = ["a/b", "c/d"]
+        assert drop_unknown_models(chain, None) == chain
+
+    def test_drops_unknown_and_logs(self) -> None:
+        chain = ["a/b", "c/d", "e/f"]
+        known = {"a/b", "e/f"}
+        assert drop_unknown_models(chain, known) == ["a/b", "e/f"]
+
+    def test_all_unknown_fails_open_to_original_chain(self) -> None:
+        chain = ["a/b", "c/d"]
+        known = {"z/z"}
+        assert drop_unknown_models(chain, known) == chain
+
+    def test_all_known_returns_unchanged(self) -> None:
+        chain = ["a/b", "c/d"]
+        assert drop_unknown_models(chain, set(chain)) == chain
+
+
+class TestValidateLlmConfig:
+    def test_disabled_config_returned_unchanged(self) -> None:
+        cfg = LLMConfig(enabled=False, primary_model="a/b", fallback_models=["c/d"])
+        with patch("src.llm.client.get_known_model_ids") as mock_known:
+            result = validate_llm_config(cfg)
+        assert result is cfg
+        mock_known.assert_not_called()
+
+    def test_unknown_fallback_dropped(self) -> None:
+        cfg = LLMConfig(
+            primary_model="opencode/muse-spark-1.3-contributor-free",
+            fallback_models=["nvidia-direct/typo-model", "openrouter/deepseek/deepseek-v4-pro"],
+        )
+        with patch(
+            "src.llm.client.get_known_model_ids",
+            return_value={
+                "opencode/muse-spark-1.3-contributor-free",
+                "openrouter/deepseek/deepseek-v4-pro",
+            },
+        ):
+            result = validate_llm_config(cfg)
+        assert result.primary_model == "opencode/muse-spark-1.3-contributor-free"
+        assert result.fallback_models == ["openrouter/deepseek/deepseek-v4-pro"]
+
+    def test_all_known_returns_original_config(self) -> None:
+        cfg = LLMConfig(primary_model="a/b", fallback_models=["c/d"])
+        with patch("src.llm.client.get_known_model_ids", return_value={"a/b", "c/d"}):
+            result = validate_llm_config(cfg)
+        assert result is cfg
+
+    def test_validation_unavailable_returns_original_config(self) -> None:
+        cfg = LLMConfig(primary_model="a/b", fallback_models=["c/d"])
+        with patch("src.llm.client.get_known_model_ids", return_value=None):
+            result = validate_llm_config(cfg)
+        assert result is cfg
+
+
+class TestOpencodeFailureLogging:
+    """The failure reason lives in stdout, not stderr -- opencode writes
+    its actual error there. Both `invoke` and `invoke_agent` must log the
+    rc!=0 path at WARNING (not DEBUG, which is easy to miss in
+    production) and fall back to the tail of stdout when stderr is
+    empty."""
+
+    def test_run_failed_falls_back_to_stdout_tail_and_logs_warning(self) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            primary_model="opencode/muse-spark-1.3-contributor-free",
+            fallback_models=[],
+        )
+        client = OpencodeLLMClient(cfg)
+        completed = subprocess.CompletedProcess(
+            args=["opencode"], returncode=1, stdout="some error text on stdout", stderr=""
+        )
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", return_value=completed),
+            structlog.testing.capture_logs() as logs,
+        ):
+            response = client.invoke("prompt")
+        assert response is None
+        failed = next(e for e in logs if e["event"] == "opencode_run_failed")
+        assert failed["log_level"] == "warning"
+        assert failed["error"] == "some error text on stdout"
+
+    def test_run_failed_prefers_stderr_when_present(self) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            primary_model="opencode/muse-spark-1.3-contributor-free",
+            fallback_models=[],
+        )
+        client = OpencodeLLMClient(cfg)
+        completed = subprocess.CompletedProcess(
+            args=["opencode"], returncode=1, stdout="stdout noise", stderr="real stderr error"
+        )
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", return_value=completed) as mock_run,
+        ):
+            client.invoke("prompt")
+        assert mock_run.called
+
+    def test_served_by_non_primary_warning_on_fallback_success(self) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+        )
+        client = OpencodeLLMClient(cfg)
+
+        def run_side_effect(cmd, **kwargs):
+            if "opencode-go/deepseek-v4-pro" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "primary down", "")
+            return subprocess.CompletedProcess(cmd, 0, _ndjson_output("fallback ok"), "")
+
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch("src.llm.client.subprocess.run", side_effect=run_side_effect),
+            structlog.testing.capture_logs() as logs,
+        ):
+            response = client.invoke("prompt")
+        assert response == "fallback ok"
+        served = next(e for e in logs if e["event"] == "opencode_served_by_non_primary")
+        assert served["log_level"] == "warning"
+        assert served["model"] == "openrouter/deepseek/deepseek-v4-pro"
+        assert served["primary"] == "opencode-go/deepseek-v4-pro"
+
+    def test_no_warning_when_primary_succeeds(self) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            primary_model="opencode-go/deepseek-v4-pro",
+            fallback_models=["openrouter/deepseek/deepseek-v4-pro"],
+        )
+        client = OpencodeLLMClient(cfg)
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                return_value=subprocess.CompletedProcess(["opencode"], 0, _ndjson_output("ok"), ""),
+            ),
+            structlog.testing.capture_logs() as logs,
+        ):
+            client.invoke("prompt")
+        assert not any(e["event"] == "opencode_served_by_non_primary" for e in logs)
+
+    def test_timeout_logs_elapsed_at_warning(self) -> None:
+        cfg = LLMConfig(
+            enabled=True,
+            timeout_sec=1,
+            primary_model="opencode/muse-spark-1.3-contributor-free",
+            fallback_models=[],
+        )
+        client = OpencodeLLMClient(cfg)
+        with (
+            patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
+            patch(
+                "src.llm.client.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd=["opencode"], timeout=1),
+            ),
+            structlog.testing.capture_logs() as logs,
+        ):
+            client.invoke("prompt")
+        timed_out = next(e for e in logs if e["event"] == "opencode_run_timed_out")
+        assert timed_out["log_level"] == "warning"
+        assert "elapsed" in timed_out
+
+
+class TestUsageSummaryWarnings:
+    def test_html_warns_when_served_by_fallback(self) -> None:
+        cfg = LLMConfig(enabled=True, primary_model="a/b", fallback_models=["c/d"])
+        client = OpencodeLLMClient(cfg)
+        client._record_success(
+            model="c/d",
+            is_fallback=True,
+            is_paid=False,
+            input_chars=10,
+            output_chars=10,
+            elapsed=1.0,
+        )
+        html = client.get_usage_summary_html()
+        assert "Primary model did not respond" in html
+
+    def test_html_warns_when_everything_failed(self) -> None:
+        cfg = LLMConfig(enabled=True, primary_model="a/b", fallback_models=["c/d"])
+        client = OpencodeLLMClient(cfg)
+        client._record_failure()
+        client._record_all_failed("boom")
+        html = client.get_usage_summary_html()
+        assert "Every model in the LLM chain failed" in html
+
+    def test_html_has_no_warning_when_primary_succeeds(self) -> None:
+        cfg = LLMConfig(enabled=True, primary_model="a/b", fallback_models=["c/d"])
+        client = OpencodeLLMClient(cfg)
+        client._record_success(
+            model="a/b",
+            is_fallback=False,
+            is_paid=False,
+            input_chars=10,
+            output_chars=10,
+            elapsed=1.0,
+        )
+        html = client.get_usage_summary_html()
+        assert "⚠" not in html
+
+    def test_text_summary_warns_when_served_by_fallback(self) -> None:
+        cfg = LLMConfig(enabled=True, primary_model="a/b", fallback_models=["c/d"])
+        client = OpencodeLLMClient(cfg)
+        client._record_success(
+            model="c/d",
+            is_fallback=True,
+            is_paid=False,
+            input_chars=10,
+            output_chars=10,
+            elapsed=1.0,
+        )
+        text = client.get_usage_summary_text()
+        assert "WARNING: primary model did not respond" in text
 
 
 if __name__ == "__main__":

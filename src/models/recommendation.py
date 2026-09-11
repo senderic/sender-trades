@@ -89,6 +89,14 @@ class TradeRecommendation(BaseModel):
     order_type: Literal["market", "limit"] = "market"
     limit_price: float | None = None
     position_intent: PositionIntent = PositionIntent.BUY_TO_OPEN
+    # The LLM's per-asset predicted_move_pct for this asset (signed, e.g.
+    # -0.7 for a 0.7% DOWN call), set by DecisionAggregator.aggregate() when
+    # an LLM prediction exists. None when no LLM prediction was available
+    # (graph down + monolithic silent). Carried on the recommendation so
+    # ExecutionEngine can run DecisionAggregator.premium_gate once the
+    # option's live ask is known -- which is only true after market open,
+    # well after the decision phase has already run.
+    predicted_move_pct: float | None = None
     rationale: dict[str, Any] = Field(default_factory=dict)
     expires_at: str = ""
     must_close_before: str = "15:30"
@@ -191,6 +199,11 @@ class PredictionOutcome(BaseModel):
     high_price: float | None = None
     low_price: float | None = None
     close_price: float | None = None
+    # Open->close direction correctness, independent of target-strike hits.
+    # A prediction can "hit target" intraday yet close the wrong way; this
+    # field surfaces the more honest end-of-day verdict alongside the flattering
+    # target-strike result.
+    open_close_correct: bool | None = None
     triggered_at: str = ""
     duration_hours: float | None = None
     sources: list[str] = Field(default_factory=list)

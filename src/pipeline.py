@@ -24,7 +24,7 @@ from src.ingestion.fetcher import fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
 from src.ingestion.snapshot_loader import SnapshotLoader
 from src.ingestion.status import read_briefing_status
-from src.llm.client import OpencodeLLMClient
+from src.llm.client import OpencodeLLMClient, validate_llm_config
 from src.llm.resynthesizer import resynthesize_briefing
 from src.llm.trade_signal import LLMTradeStrategy
 from src.logging_setup import JSONFileLogger
@@ -125,15 +125,32 @@ class Pipeline:
         """
         logger.info("pipeline_start", correlation_id=self.correlation_id)
 
+        # Fail fast on model ids that don't exist at all (e.g. the
+        # 2026-09-05 Nemotron incident, where every call to a nonexistent
+        # id failed in ~3s with an empty error and silently fell back
+        # every run). Cheap: `opencode models` is cached to disk (see
+        # `get_known_model_ids`), so this costs a live subprocess call at
+        # most once per cache window, not once per pipeline run. Unknown
+        # ids are dropped and logged loudly; never raises, never empties
+        # the chain. Gated on `llm.preflight.enabled` -- the same flag
+        # that opts into the availability probe this pairs with -- so an
+        # operator (or a test using bare defaults) that doesn't want the
+        # extra subprocess call at startup can opt out of both together.
+        llm_config = (
+            validate_llm_config(self.config.llm)
+            if self.config.llm.preflight.enabled
+            else self.config.llm
+        )
+
         # The graph path (``invoke_agent``) is capped below the raw call
         # budget so a graph failure caused by exhausting the budget does
         # not also starve the monolithic fallback it triggers.
         llm_client = (
             OpencodeLLMClient(
-                self.config.llm,
+                llm_config,
                 reserved_calls_for_fallback=self.config.graph.reserved_calls_for_fallback,
             )
-            if self.config.llm.enabled
+            if llm_config.enabled
             else None
         )
 
@@ -696,7 +713,12 @@ class Pipeline:
         )
 
         client = AlpacaBrokerClient(api_key, api_secret, paper=paper, config=exec_config)
-        engine = ExecutionEngine(client, exec_config, log_dir=self.config.logging.json_dir)
+        engine = ExecutionEngine(
+            client,
+            exec_config,
+            log_dir=self.config.logging.json_dir,
+            risk_config=self.config.risk,
+        )
 
         try:
             result = await engine.execute(rec, self.correlation_id)

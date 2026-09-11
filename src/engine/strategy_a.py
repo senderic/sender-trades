@@ -82,16 +82,26 @@ class MomentumStrategy(TradingStrategy):
 
             if gap_pct > gap_threshold and combined_sentiment > 0.05:
                 direction = Direction.CALL
-                confidence = min(0.9, 0.4 + abs(gap_pct) / 10 + abs(combined_sentiment))
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence,
+                    0.4 + abs(gap_pct) / 10 + abs(combined_sentiment),
+                )
             elif gap_pct < -gap_threshold and combined_sentiment < -0.05:
                 direction = Direction.PUT
-                confidence = min(0.9, 0.4 + abs(gap_pct) / 10 + abs(combined_sentiment))
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence,
+                    0.4 + abs(gap_pct) / 10 + abs(combined_sentiment),
+                )
             elif combined_sentiment > 0.15:
                 direction = Direction.CALL
-                confidence = 0.35 + abs(combined_sentiment)
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence, 0.35 + abs(combined_sentiment)
+                )
             elif combined_sentiment < -0.15:
                 direction = Direction.PUT
-                confidence = 0.35 + abs(combined_sentiment)
+                confidence = min(
+                    self.config.strategies.momentum.max_confidence, 0.35 + abs(combined_sentiment)
+                )
 
             if direction is None or confidence < min_conf:
                 trace[f"{asset}_skip_reason"] = "low_confidence_or_no_direction"

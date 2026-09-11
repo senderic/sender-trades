@@ -158,9 +158,7 @@ class TestTradeContextFinalize:
         assert data["exit_reason"] == "force_close"
         assert data["trade_id"] == "trade-disk"
 
-    def test_finalize_after_pending_entries_leaves_one_valid_document(
-        self, tmp_path: Path
-    ) -> None:
+    def test_finalize_after_pending_entries_leaves_one_valid_document(self, tmp_path: Path) -> None:
         rec = _make_rec()
         ctx = TradeContext("trade-seq", "corr-seq", rec, log_dir=str(tmp_path))
         ctx.record_entry("entry_submitted", occ_symbol="SPY250728C00600000")

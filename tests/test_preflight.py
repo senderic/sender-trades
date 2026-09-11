@@ -263,9 +263,7 @@ class TestMain:
         data = json.loads((tmp_path / ".model-availability.json").read_text())
         assert "opencode-go/deepseek-v4-pro" in data["models"]
         assert "openrouter/deepseek/deepseek-v4-pro" not in data["models"]
-        assert not any(
-            "openrouter/deepseek/deepseek-v4-pro" in cmd for cmd in probed_cmds
-        )
+        assert not any("openrouter/deepseek/deepseek-v4-pro" in cmd for cmd in probed_cmds)
 
     def test_skips_and_does_not_write_when_preflight_disabled(self, tmp_path: Path) -> None:
         config_path = self._write_config(tmp_path, preflight_enabled=False)

@@ -1355,9 +1355,7 @@ class TestOpencodeFailureLogging:
             patch("src.llm.client.shutil.which", return_value="/usr/bin/opencode"),
             patch(
                 "src.llm.client.subprocess.run",
-                return_value=subprocess.CompletedProcess(
-                    ["opencode"], 0, _ndjson_output("ok"), ""
-                ),
+                return_value=subprocess.CompletedProcess(["opencode"], 0, _ndjson_output("ok"), ""),
             ),
             structlog.testing.capture_logs() as logs,
         ):
@@ -1391,7 +1389,11 @@ class TestUsageSummaryWarnings:
         cfg = LLMConfig(enabled=True, primary_model="a/b", fallback_models=["c/d"])
         client = OpencodeLLMClient(cfg)
         client._record_success(
-            model="c/d", is_fallback=True, is_paid=False, input_chars=10, output_chars=10,
+            model="c/d",
+            is_fallback=True,
+            is_paid=False,
+            input_chars=10,
+            output_chars=10,
             elapsed=1.0,
         )
         html = client.get_usage_summary_html()
@@ -1409,7 +1411,11 @@ class TestUsageSummaryWarnings:
         cfg = LLMConfig(enabled=True, primary_model="a/b", fallback_models=["c/d"])
         client = OpencodeLLMClient(cfg)
         client._record_success(
-            model="a/b", is_fallback=False, is_paid=False, input_chars=10, output_chars=10,
+            model="a/b",
+            is_fallback=False,
+            is_paid=False,
+            input_chars=10,
+            output_chars=10,
             elapsed=1.0,
         )
         html = client.get_usage_summary_html()
@@ -1419,7 +1425,11 @@ class TestUsageSummaryWarnings:
         cfg = LLMConfig(enabled=True, primary_model="a/b", fallback_models=["c/d"])
         client = OpencodeLLMClient(cfg)
         client._record_success(
-            model="c/d", is_fallback=True, is_paid=False, input_chars=10, output_chars=10,
+            model="c/d",
+            is_fallback=True,
+            is_paid=False,
+            input_chars=10,
+            output_chars=10,
             elapsed=1.0,
         )
         text = client.get_usage_summary_text()

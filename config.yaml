@@ -154,9 +154,24 @@ llm:
   # fallback. DeepSeek is deliberately removed (owner decision,
   # 2026-09-11): Muse Spark is the chosen model, and both DeepSeek
   # accounts (opencode-go, OpenRouter) were out of credit anyway.
-  primary_model: opencode/muse-spark-1.3-contributor-free
+  #
+  # 2026-09-25 (owner decision): Codex (GPT-5.6 Sol via the `codex` CLI on
+  # the ChatGPT subscription -- same setup as ~/atlas-morning-briefing) is
+  # now the primary decision model. `codex/<model>` ids route to the Codex
+  # CLI (src/llm/codex.py); Muse Spark and Nemotron remain as fallbacks, so
+  # a Codex outage or timeout degrades to the previous chain rather than
+  # to no forecast. Because exit_advisor.model is null, the exit advisor
+  # follows primary_model and also runs on Codex.
+  primary_model: codex/gpt-5.6-sol
   fallback_models:
+    - opencode/muse-spark-1.3-contributor-free
     - nvidia-direct/nvidia/nemotron-3-ultra-550b-a55b
+  codex:
+    executable: /home/eric/.local/bin/codex
+    # medium, not high: on 2026-09-25's real research prompts high took
+    # ~73s per node (both timed out at 90s in that morning's live run)
+    # vs ~36s at medium, with near-identical reasoning-token counts.
+    reasoning_effort: medium
   # Raised from 45s: the monolithic fallback prompt is large, and on
   # 2026-08-26 both models timed out at 45s, leaving the fallback useless
   # exactly when the graph had already failed.

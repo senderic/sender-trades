@@ -2,13 +2,13 @@
 
 Models are tried in the order declared by :class:`src.config.LLMConfig`:
 :attr:`~LLMConfig.primary_model` first, then
-:attr:`~LLMConfig.fallback_models` in order (as of 2026-09-10: the
-contributor-free Zen Muse primary, then nvidia-direct Nemotron 3 Ultra,
-then DeepSeek V4 Pro via the paid OpenCode Go gateway
-(``opencode-go/*``), then DeepSeek V4 Pro via OpenRouter
-(``openrouter/*``) as a last resort). :attr:`OpencodeLLMClient.paid_used`
-reflects whether the model that actually served the last successful
-call is in a paid namespace -- see :func:`is_paid_model`.
+:attr:`~LLMConfig.fallback_models` in order (as of 2026-09-25: Codex
+``codex/gpt-5.6-sol`` primary, then contributor-free Zen Muse Spark, then
+nvidia-direct Nemotron 3 Ultra). ``codex/<model>`` ids are served by the
+Codex CLI (:mod:`src.llm.codex`, ChatGPT-subscription auth); every other id
+by ``opencode run``. :attr:`OpencodeLLMClient.paid_used` reflects whether
+the model that actually served the last successful call is in a paid
+namespace -- see :func:`is_paid_model`.
 
 When :attr:`~LLMConfig.preflight` is enabled, that configured order is a
 starting point, not the final word: ``.model-availability.json`` (written
@@ -31,6 +31,7 @@ from typing import Any
 import structlog
 
 from src.config import LLMConfig
+from src.llm.codex import is_codex_model, run_codex
 
 logger = structlog.get_logger()
 
@@ -186,8 +187,10 @@ def drop_unknown_models(chain: list[str], known: set[str] | None) -> list[str]:
     if known is None:
         return chain
 
-    valid = [m for m in chain if m in known]
-    unknown = [m for m in chain if m not in known]
+    # `codex/*` ids are served by the Codex CLI, not opencode, so they
+    # never appear in `opencode models` and are exempt from this check.
+    valid = [m for m in chain if m in known or is_codex_model(m)]
+    unknown = [m for m in chain if m not in known and not is_codex_model(m)]
     if unknown:
         logger.error(
             "unknown_model_id_dropped",
@@ -301,7 +304,13 @@ class OpencodeLLMClient:
         if not self.config.enabled:
             self._available = False
             return False
-        self._available = shutil.which(self.config.opencode_path) is not None
+        # Any backend in the chain being installed is enough: a missing
+        # binary for one model just fails that attempt and falls through.
+        binaries = {
+            self.config.codex.executable if is_codex_model(m) else self.config.opencode_path
+            for m in [self.config.primary_model, *self.config.fallback_models]
+        }
+        self._available = any(shutil.which(b) is not None for b in binaries)
         if self._available:
             logger.info("opencode_binary_found", path=self.config.opencode_path)
         else:
@@ -489,6 +498,59 @@ class OpencodeLLMClient:
             self._agent_prompt_chars_cache[agent_name] = body
         return body
 
+    def _run_model(
+        self,
+        model: str,
+        full_prompt: str,
+        timeout: float,
+        files: list[str] | None = None,
+    ) -> tuple[str | None, str]:
+        """Run one attempt against ``model`` on whichever CLI serves it.
+
+        ``codex/<model>`` ids go to the Codex CLI (:mod:`src.llm.codex`);
+        everything else goes to ``opencode run``. Raises
+        :class:`subprocess.TimeoutExpired` on timeout so both backends
+        share the callers' timeout handling.
+
+        Returns:
+            ``(response, error)`` -- the response text, or ``None`` plus a
+            short reason on failure.
+        """
+        if is_codex_model(model):
+            if files:
+                # Codex has no attachment flag; nothing in the pipeline
+                # passes files today, so make a future caller's loss loud.
+                logger.warning("codex_files_ignored", model=model, files=files)
+            response, _usage, error = run_codex(self.config.codex, model, full_prompt, timeout)
+            return response, error
+
+        cmd = [
+            self.config.opencode_path,
+            "run",
+            "-m",
+            model,
+            "--format",
+            "json",
+            "--auto",
+            "--dir",
+            "/tmp",
+            "--pure",
+        ]
+        for f in files or []:
+            cmd.extend(["-f", f])
+        cmd.append(full_prompt)
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode != 0:
+            # opencode writes its actual error to stdout, not stderr, so
+            # stderr is routinely empty here — fall back to the tail of
+            # stdout so the failure reason is never silently lost.
+            return None, (result.stderr or "")[:300] or (result.stdout or "")[-300:]
+        response = _parse_ndjson_response(result.stdout)
+        if not response:
+            return None, "empty NDJSON response"
+        return response, ""
+
     def invoke(self, prompt: str, system_prompt: str | None = None) -> str | None:
         """Send a prompt via ``opencode run --format json`` with fallback.
 
@@ -545,54 +607,19 @@ class OpencodeLLMClient:
                 )
                 break
 
-            cmd = [
-                self.config.opencode_path,
-                "run",
-                "-m",
-                model,
-                "--format",
-                "json",
-                "--auto",
-                "--dir",
-                "/tmp",
-                "--pure",
-                full_prompt,
-            ]
-
             try:
                 t0 = time.monotonic()
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.config.timeout_sec,
-                )
+                response, error = self._run_model(model, full_prompt, self.config.timeout_sec)
                 elapsed = time.monotonic() - t0
 
                 input_chars = len(full_prompt)
-                if result.returncode != 0:
-                    # opencode writes its actual error to stdout, not
-                    # stderr, so stderr is routinely empty here — fall
-                    # back to the tail of stdout so the failure reason is
-                    # never silently lost.
-                    last_error = (result.stderr or "")[:300] or (result.stdout or "")[-300:]
+                if response is None:
+                    last_error = error
                     logger.warning(
                         "opencode_run_failed",
                         model=model,
                         paid=is_paid,
-                        rc=result.returncode,
                         error=last_error,
-                    )
-                    self._record_failure()
-                    continue
-
-                response = _parse_ndjson_response(result.stdout)
-                if not response:
-                    last_error = "empty NDJSON response"
-                    logger.debug(
-                        "opencode_empty_response",
-                        model=model,
-                        paid=is_paid,
                         elapsed=round(elapsed, 2),
                     )
                     self._record_failure()
@@ -763,59 +790,20 @@ class OpencodeLLMClient:
                     )
                 break
 
-            cmd = [
-                self.config.opencode_path,
-                "run",
-                "-m",
-                model,
-                "--format",
-                "json",
-                "--auto",
-                "--dir",
-                "/tmp",
-                "--pure",
-            ]
-            if files:
-                for f in files:
-                    cmd.extend(["-f", f])
-            cmd.append(full_prompt)
-
             try:
                 t0 = time.monotonic()
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=attempt_timeout,
-                )
+                response, error = self._run_model(model, full_prompt, attempt_timeout, files)
                 elapsed = time.monotonic() - t0
 
                 input_chars = len(full_prompt)
-                if result.returncode != 0:
-                    # opencode writes its actual error to stdout, not
-                    # stderr, so stderr is routinely empty here — fall
-                    # back to the tail of stdout so the failure reason is
-                    # never silently lost.
-                    last_error = (result.stderr or "")[:300] or (result.stdout or "")[-300:]
+                if response is None:
+                    last_error = error
                     logger.warning(
                         "opencode_agent_failed",
                         model=model,
                         agent=agent_name,
                         paid=is_paid,
-                        rc=result.returncode,
                         error=last_error,
-                    )
-                    self._record_failure()
-                    continue
-
-                response = _parse_ndjson_response(result.stdout)
-                if not response:
-                    last_error = "empty NDJSON response"
-                    logger.debug(
-                        "opencode_agent_empty_response",
-                        model=model,
-                        agent=agent_name,
-                        paid=is_paid,
                         elapsed=round(elapsed, 2),
                     )
                     self._record_failure()

@@ -50,8 +50,9 @@ from typing import Any
 
 import structlog
 
-from src.config import LLMConfig, Settings
+from src.config import CodexConfig, LLMConfig, Settings
 from src.llm.client import _parse_ndjson_response, drop_unknown_models, get_known_model_ids
+from src.llm.codex import is_codex_model, run_codex
 
 logger = structlog.get_logger()
 
@@ -62,7 +63,34 @@ _PROBE_PROMPT = (
 )
 
 
-def probe_model(model: str, *, opencode_path: str, timeout_sec: int) -> dict[str, Any]:
+def _probe_codex(model: str, *, codex: CodexConfig, timeout_sec: int) -> dict[str, Any]:
+    """Probe a ``codex/<model>`` id through the same call path the pipeline uses."""
+    t0 = time.monotonic()
+    try:
+        text, _usage, error = run_codex(codex, model, _PROBE_PROMPT, timeout_sec)
+    except subprocess.TimeoutExpired:
+        elapsed_ms = round((time.monotonic() - t0) * 1000)
+        return {
+            "available": False,
+            "latency_ms": elapsed_ms,
+            "error": f"timeout after {timeout_sec}s",
+        }
+    except Exception as e:
+        elapsed_ms = round((time.monotonic() - t0) * 1000)
+        return {
+            "available": False,
+            "latency_ms": elapsed_ms,
+            "error": f"{type(e).__name__}: {e}"[:300],
+        }
+    elapsed_ms = round((time.monotonic() - t0) * 1000)
+    if text is None:
+        return {"available": False, "latency_ms": elapsed_ms, "error": error[:300]}
+    return {"available": True, "latency_ms": elapsed_ms, "error": None}
+
+
+def probe_model(
+    model: str, *, opencode_path: str, timeout_sec: int, codex: CodexConfig | None = None
+) -> dict[str, Any]:
     """Probe one model through the ``opencode`` CLI.
 
     Reuses the exact invocation shape and NDJSON parsing that
@@ -81,6 +109,9 @@ def probe_model(model: str, *, opencode_path: str, timeout_sec: int) -> dict[str
         A record with ``available`` (bool), ``latency_ms`` (int), and
         ``error`` (str | None).
     """
+    if is_codex_model(model):
+        return _probe_codex(model, codex=codex or CodexConfig(), timeout_sec=timeout_sec)
+
     cmd = [
         opencode_path,
         "run",
@@ -179,6 +210,7 @@ def run_preflight(llm_config: LLMConfig, chain: list[str] | None = None) -> dict
                 model,
                 opencode_path=llm_config.opencode_path,
                 timeout_sec=llm_config.preflight.probe_timeout_sec,
+                codex=llm_config.codex,
             ): model
             for model in chain
         }

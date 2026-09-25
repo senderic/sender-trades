@@ -52,7 +52,8 @@ uv run ruff format src/ tests/
 
 **Binaries:**
 - `uv` at `~/.local/bin/uv` (v0.10.12) — runs the pipeline
-- `opencode` at `/home/linuxbrew/.linuxbrew/bin/opencode` (v1.18.3) — LLM resynthesis + trade signal
+- `codex` at `~/.local/bin/codex` (v0.156.1) — primary decision model (`codex/gpt-5.6-sol`)
+- `opencode` at `/home/linuxbrew/.linuxbrew/bin/opencode` (v1.18.3) — fallback models (Muse Spark, Nemotron)
 - `npx` (optional) — options-chain MCP for token-efficient chain lookups
 
 **Runtime Python deps:** alpaca-py, httpx, pydantic, structlog, tenacity, etc.
@@ -116,6 +117,10 @@ The daily LLM research pass is a **graph of narrow-scope opencode subagents** (`
   - checker → `{validated_predictions[], contradictions[], flags[], overall_assessment, can_proceed}`
   - pick-trade → `{best_trade|null, rationale, pass_reason, alternatives_considered}`
 - **Prediction identity** — predictions are keyed by the **node** that produced them, never by the agent's self-reported `asset` field; a mismatch is rejected and logged, so a confused `predict-spy` cannot overwrite the QQQ prediction.
+
+### Codex as Primary Model (2026-09-25)
+
+`llm.primary_model: codex/gpt-5.6-sol` — any `codex/<model>` id in the chain is served by the Codex CLI (`src/llm/codex.py`, ported from `~/atlas-morning-briefing/scripts/codex_client.py`) instead of `opencode run`: `codex exec --ephemeral --ignore-user-config --ignore-rules --sandbox read-only -C /tmp --json -`, prompt over stdin, ChatGPT-subscription auth (no API key). Dispatch lives in `OpencodeLLMClient._run_model`, so Codex shares the chain's fallback (→ Muse Spark → Nemotron), call budget, per-node timeouts and graph deadline. `drop_unknown_models` exempts `codex/*` (not in `opencode models`); `src/preflight.py` probes it via the same call path. Settings: `llm.codex.executable`, `llm.codex.reasoning_effort` (high). The exit advisor follows `llm.primary_model`, so it also runs on Codex. Measured 2026-09-25: ~18s probe, ~27s for a research-node-sized prompt at high reasoning.
 
 ### Extending the Graph
 

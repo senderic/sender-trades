@@ -243,6 +243,17 @@ class GeneralConfig(BaseModel):
     require_forecast_alignment: bool = True
 
 
+class CodexConfig(BaseModel):
+    """Settings for ``codex/<model>`` entries in the LLM chain (see :mod:`src.llm.codex`).
+
+    Codex runs through the ``codex`` CLI on the owner's ChatGPT
+    subscription, mirroring ``~/atlas-morning-briefing``'s Codex client.
+    """
+
+    executable: str = "codex"
+    reasoning_effort: Literal["minimal", "low", "medium", "high", "xhigh"] = "high"
+
+
 class PreflightConfig(BaseModel):
     """Pre-flight model availability probing.
 
@@ -308,6 +319,7 @@ class LLMConfig(BaseModel):
     trade_signal_enabled: bool = True
     trade_signal_min_confidence: float = 0.45
     preflight: PreflightConfig = PreflightConfig()
+    codex: CodexConfig = CodexConfig()
 
 
 class GraphConfig(BaseModel):

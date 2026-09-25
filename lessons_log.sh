@@ -34,6 +34,12 @@ LOG_FILE="$LOG_DIR/lessons-log-$STAMP.log"
 uv run python -m src.lessons_analyzer > "$LOG_FILE" 2>&1
 RC=$?
 
+# Grade today's forecasts (and any missed days) against naive baselines on
+# real option prices; the next morning's email reads the result. Its exit
+# code is logged but never masks the lessons analyzer's.
+uv run python -m src.evaluation.forward_scorecard >> "$LOG_FILE" 2>&1
+logger -t sender-trades "forward-scorecard rc=$? log=$LOG_FILE"
+
 logger -t sender-trades "lessons-log complete rc=$RC log=$LOG_FILE"
 
 exit $RC

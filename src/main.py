@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from src.config import Settings
 from src.email_sender import send_email
+from src.evaluation import forward_scorecard
 from src.logging_setup import setup_logging
 from src.pipeline import Pipeline
 
@@ -132,6 +133,8 @@ async def main(argv: list[str] | None = None) -> int:
             end_time=result.end_time,
             execution_result=result.execution_result,
             decision=result.decision,
+            scorecard_html=forward_scorecard.render_email_html(),
+            scorecard_text=forward_scorecard.render_email_text(),
         )
 
     return 0 if len(result.errors) == 0 else 1

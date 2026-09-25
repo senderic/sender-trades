@@ -180,6 +180,13 @@ Terminal: CLOSED, REJECTED, EXPIRED, FAILED
 3. Routes to exchange at 9:30 AM ET open
 4. Engine polls for fill (5 min window, then cancel if unfilled)
 
+## Evaluation on Real Option Prices (2026-09-25)
+
+`src/evaluation/option_replay.py` replays trades on Alpaca's REAL 1-minute bars for expired SPY/QQQ 0DTE contracts (available back to at least 2024-06; pass explicit start/end or the endpoint returns nothing). Entry = 09:30 bar vwap (~1% median error vs 20 real fills); exits mirror production (3-min polled stop/trailing, resting TP limit, 15:20 ET safety close). Cache: `logs/scoreboard/cache/`. Two consumers:
+
+- **`scripts/scoreboard.py`** — offline backtest of direction signal × moneyness × exit policy × day filter, plus cached LLM replay predictions. Result over 2024-06-03..2026-09-24 (1,160 asset-days): every non-oracle signal loses (~−3 to −8% of premium per trade) at every moneyness and exit, in every year, even with zero exit slippage; only perfect direction pays. Judge strategy changes here, not on live P&L or Black-Scholes sims (`simulate_exits.py`).
+- **`src/evaluation/forward_scorecard.py`** — the daily vote. After the close (`lessons_log.sh`, 14:00 PT) it replays EVERY forecast in `logs/prediction-history.json` (traded, gate-blocked, or passed) as the production trade, next to naive baselines (gap_follow, always_call, repeat_yesterday, gap_fade, always_put) on the same days, into `logs/forward-scorecard.json`. The morning email shows system vs each baseline with a paired bootstrap CI and a verdict; ~250 asset-days are needed to resolve a ~7%/trade edge. Rendering never raises or hits the network; a session is only scored after 16:30 ET so partial bars are never cached.
+
 ## Degraded Briefing Handling
 
 When atlas LLM layer fails, the briefing markdown contains `"Synthesis unavailable for today's briefing"`. The pipeline detects this (`src/ingestion/parser.py:DEGRADED_SUMMARY_PREFIX`), classifies quality as `DEGRADED`, and re-synthesizes the executive summary via opencode's free-tier models as a fallback.

@@ -352,6 +352,7 @@ def render_forecast_html(
     end_time: datetime | None = None,
     execution_result: dict | None = None,
     decision: DecisionOutput | None = None,
+    scorecard_html: str = "",
 ) -> str:
     rows = ""
     for f in forecast.forecasts:
@@ -417,6 +418,7 @@ def render_forecast_html(
 {execution_html}
 {decision_html}
 {yesterday_html}
+{scorecard_html}
 {model_html}
 {runtime_html}
 <div class="footer">
@@ -478,6 +480,8 @@ def send_email(
     end_time: datetime | None = None,
     execution_result: dict | None = None,
     decision: DecisionOutput | None = None,
+    scorecard_html: str = "",
+    scorecard_text: str = "",
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -506,6 +510,7 @@ def send_email(
         end_time=end_time,
         execution_result=execution_result,
         decision=decision,
+        scorecard_html=scorecard_html,
     )
 
     plain_parts = [f"sender-trades Directional Forecast\n\n{forecast.table()}"]
@@ -527,6 +532,8 @@ def send_email(
                 f"  {o.asset}: {o.predicted_direction} ({o.confidence:.0%}) — {result_label}{oc_suffix}"
             )
             plain_parts.append(f"  {o.details}")
+    if scorecard_text:
+        plain_parts.append(scorecard_text)
     if model_usage_text:
         plain_parts.append(model_usage_text)
     plain_parts.append("\n---\nsender-trades")

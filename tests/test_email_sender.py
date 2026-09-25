@@ -117,3 +117,12 @@ class TestTradeDecisionEmailSection:
     def test_plain_text_empty_when_executed(self) -> None:
         text = _render_decision_text(_make_dry_run_decision(), {"exit_reason": "take_profit"})
         assert text == ""
+
+
+class TestScorecardEmailSection:
+    def test_scorecard_html_is_included(self) -> None:
+        html = render_forecast_html(_make_forecast(), scorecard_html="<h2>Forward Scorecard</h2>")
+        assert "<h2>Forward Scorecard</h2>" in html
+
+    def test_absent_scorecard_adds_nothing(self) -> None:
+        assert "Forward Scorecard" not in render_forecast_html(_make_forecast())

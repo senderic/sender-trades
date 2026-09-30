@@ -237,7 +237,13 @@ class TestAlpacaBrokerClientSubmit:
         mock_resp.json.return_value = {
             "snapshots": {
                 "SPY250728C00600000": {
-                    "latestQuote": {"bp": "0.48", "ap": "0.52", "bs": 100, "as": 100},
+                    "latestQuote": {
+                        "bp": "0.48",
+                        "ap": "0.52",
+                        "bs": 100,
+                        "as": 100,
+                        "t": "2026-07-28T13:30:05.123456Z",
+                    },
                     "latestTrade": {},
                 }
             }
@@ -250,6 +256,7 @@ class TestAlpacaBrokerClientSubmit:
         assert result is not None
         assert result["bid"] == 0.48
         assert result["ask"] == 0.52
+        assert result["timestamp"] == "2026-07-28T13:30:05.123456Z"
 
     @pytest.mark.asyncio
     async def test_get_underlying_quote(self) -> None:
@@ -283,3 +290,86 @@ class TestAlpacaBrokerClientSubmit:
 
         result = await client.get_underlying_quote("SPY")
         assert result is None
+
+
+def _mock_bar(**overrides: Any) -> MagicMock:
+    bar = MagicMock()
+    bar.open = overrides.get("open", 700.0)
+    bar.high = overrides.get("high", 701.0)
+    bar.low = overrides.get("low", 699.0)
+    bar.close = overrides.get("close", 700.5)
+    bar.volume = overrides.get("volume", 500.0)
+    bar.vwap = overrides.get("vwap", 700.4)
+    bar.trade_count = overrides.get("trade_count", 3.0)
+    bar.timestamp = overrides.get("timestamp", datetime(2026, 9, 11, 13, 28, tzinfo=UTC))
+    return bar
+
+
+class TestGetMinuteBars:
+    @pytest.mark.asyncio
+    async def test_returns_bar_dicts_oldest_first(self) -> None:
+        client = AlpacaBrokerClient("key", "secret", paper=True)
+        mock_historical = MagicMock()
+        mock_bars = MagicMock()
+        mock_bars.data = {"QQQ": [_mock_bar(close=700.0), _mock_bar(close=701.0)]}
+        mock_historical.get_stock_bars.return_value = mock_bars
+        client._historical_data = mock_historical
+
+        rows = await client.get_minute_bars(
+            "QQQ",
+            datetime(2026, 9, 11, 8, 0, tzinfo=UTC),
+            datetime(2026, 9, 11, 13, 28, tzinfo=UTC),
+        )
+        assert len(rows) == 2
+        assert rows[0]["close"] == 700.0
+        assert rows[1]["close"] == 701.0
+        assert rows[0]["volume"] == 500.0
+
+    @pytest.mark.asyncio
+    async def test_uses_iex_feed_by_default(self) -> None:
+        from alpaca.data.enums import DataFeed
+
+        client = AlpacaBrokerClient("key", "secret", paper=True)
+        mock_historical = MagicMock()
+        mock_bars = MagicMock()
+        mock_bars.data = {"QQQ": []}
+        mock_historical.get_stock_bars.return_value = mock_bars
+        client._historical_data = mock_historical
+
+        await client.get_minute_bars(
+            "QQQ",
+            datetime(2026, 9, 11, 8, 0, tzinfo=UTC),
+            datetime(2026, 9, 11, 13, 28, tzinfo=UTC),
+        )
+        request = mock_historical.get_stock_bars.call_args[0][0]
+        assert request.feed == DataFeed.IEX
+
+    @pytest.mark.asyncio
+    async def test_missing_symbol_in_response_returns_empty(self) -> None:
+        client = AlpacaBrokerClient("key", "secret", paper=True)
+        mock_historical = MagicMock()
+        mock_bars = MagicMock()
+        mock_bars.data = {}
+        mock_historical.get_stock_bars.return_value = mock_bars
+        client._historical_data = mock_historical
+
+        rows = await client.get_minute_bars(
+            "QQQ",
+            datetime(2026, 9, 11, 8, 0, tzinfo=UTC),
+            datetime(2026, 9, 11, 13, 28, tzinfo=UTC),
+        )
+        assert rows == []
+
+    @pytest.mark.asyncio
+    async def test_sdk_exception_returns_empty_list(self) -> None:
+        client = AlpacaBrokerClient("key", "secret", paper=True)
+        mock_historical = MagicMock()
+        mock_historical.get_stock_bars.side_effect = RuntimeError("network error")
+        client._historical_data = mock_historical
+
+        rows = await client.get_minute_bars(
+            "QQQ",
+            datetime(2026, 9, 11, 8, 0, tzinfo=UTC),
+            datetime(2026, 9, 11, 13, 28, tzinfo=UTC),
+        )
+        assert rows == []

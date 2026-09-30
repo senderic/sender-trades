@@ -3,14 +3,14 @@ import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from src.config import Settings
 from src.logging_setup import setup_logging
-from src.models.market import DataSource, MarketSnapshot, Quote
+from src.models.market import DataSource, MarketSnapshot, PremarketQuote, Quote
 from src.models.recommendation import (
     DecisionOutput,
     Direction,
@@ -66,6 +66,10 @@ def pipeline(tmp_path) -> Pipeline:
     config = Settings()
     config.logging.json_dir = str(tmp_path / "logs")
     config.atlas_briefing.directory = str(tmp_path / "briefings")
+    # Hermetic by construction regardless of environment API keys — see
+    # TestEnrichPremarket below for dedicated, explicitly-mocked coverage
+    # of the pre-market enrichment phase.
+    config.premarket.enabled = False
     cid = uuid.uuid4().hex[:12]
     logger = setup_logging(config, cid)
     return Pipeline(config, cid, logger)
@@ -444,19 +448,41 @@ async def test_compute_forecast_does_not_cap_llm_only_single_strategy(tmp_path) 
 
 class TestPreMarketGapGuardIntegration:
     def _market_with_gap(self, asset: str, current: float, prev_close: float) -> dict:
+        """Build a market where today's live pre-market gap (``current`` vs
+        ``prev_close``) is real, live premarket data -- NOT the stale
+        prior-session Quote fields. ``quote.current_price`` here plays the
+        role of ``prior_session_close`` (see ``Quote.prior_session_close``).
+        """
+        gap_pct = (current - prev_close) / prev_close * 100 if prev_close > 0 else 0.0
         return {
             "quotes": {
                 asset: Quote(
                     symbol=asset,
-                    current_price=current,
-                    open_price=current,
-                    high_price=current,
-                    low_price=current,
+                    current_price=prev_close,
+                    open_price=prev_close,
+                    high_price=prev_close,
+                    low_price=prev_close,
                     previous_close=prev_close,
-                    change_pct=(current - prev_close) / prev_close * 100 if prev_close > 0 else 0.0,
+                    change_pct=0.0,
                     volume=0,
                     source=DataSource.FINNHUB,
                     timestamp=_TS,
+                ),
+            },
+            "premarket": {
+                asset: PremarketQuote(
+                    symbol=asset,
+                    available=True,
+                    price=current,
+                    vwap=current,
+                    first_price=prev_close,
+                    cumulative_volume=2000.0,
+                    gap_pct=gap_pct,
+                    median_volume=2000.0,
+                    volume_ratio=1.0,
+                    reliable=True,
+                    lookback_days_used=10,
+                    source="live",
                 ),
             },
             "news": [],
@@ -549,3 +575,118 @@ class TestPreMarketGapGuardIntegration:
         assert decision.recommendation is not None
         assert decision.recommendation.asset == "QQQ"
         assert decision.recommendation.direction == Direction.PUT
+
+
+class TestEnrichPremarket:
+    """``Pipeline._enrich_premarket`` — the phase that attaches live
+    pre-market price/volume/reliability per asset. Mocks
+    ``src.pipeline.fetch_premarket_quote`` directly rather than hitting
+    Alpaca, per AGENTS.md's "mocking Alpaca" convention.
+    """
+
+    def _pipeline(self, tmp_path, monkeypatch, *, enabled: bool = True, with_keys: bool = True):
+        config = Settings()
+        config.logging.json_dir = str(tmp_path / "logs")
+        config.premarket.enabled = enabled
+        cid = uuid.uuid4().hex[:12]
+        logger = setup_logging(config, cid)
+        if with_keys:
+            monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+            monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+        else:
+            monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+            monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+        return Pipeline(config, cid, logger)
+
+    @pytest.mark.asyncio
+    async def test_disabled_leaves_premarket_empty(self, tmp_path, monkeypatch) -> None:
+        pipeline = self._pipeline(tmp_path, monkeypatch, enabled=False)
+        market = MarketSnapshot()
+        await pipeline._enrich_premarket(market)
+        assert market.premarket == {}
+
+    @pytest.mark.asyncio
+    async def test_no_api_keys_marks_unavailable(self, tmp_path, monkeypatch) -> None:
+        pipeline = self._pipeline(tmp_path, monkeypatch, with_keys=False)
+        market = MarketSnapshot()
+        await pipeline._enrich_premarket(market)
+        assert set(market.premarket.keys()) == {"SPY", "QQQ"}
+        assert all(not pm.available for pm in market.premarket.values())
+
+    @pytest.mark.asyncio
+    async def test_populates_premarket_per_asset(self, tmp_path, monkeypatch) -> None:
+        pipeline = self._pipeline(tmp_path, monkeypatch)
+        market = MarketSnapshot(
+            quotes={
+                "SPY": Quote(
+                    symbol="SPY",
+                    current_price=762.0,
+                    open_price=762.0,
+                    high_price=762.0,
+                    low_price=762.0,
+                    previous_close=760.0,
+                    change_pct=0.0,
+                    volume=0,
+                    source=DataSource.FINNHUB,
+                    timestamp=datetime.now(),
+                ),
+                "QQQ": Quote(
+                    symbol="QQQ",
+                    current_price=708.69,
+                    open_price=708.69,
+                    high_price=708.69,
+                    low_price=708.69,
+                    previous_close=716.31,
+                    change_pct=0.0,
+                    volume=0,
+                    source=DataSource.FINNHUB,
+                    timestamp=datetime.now(),
+                ),
+            }
+        )
+
+        async def fake_fetch(client, symbol, session_date, prior_session_close, config):
+            return PremarketQuote(
+                symbol=symbol,
+                available=True,
+                price=prior_session_close + 5.0,
+                gap_pct=1.0,
+                reliable=True,
+                source="live",
+            )
+
+        with patch("src.pipeline.fetch_premarket_quote", new=AsyncMock(side_effect=fake_fetch)):
+            await pipeline._enrich_premarket(market)
+
+        assert market.premarket["SPY"].available is True
+        assert market.premarket["SPY"].price == 767.0
+        assert market.premarket["QQQ"].price == 713.69
+
+    @pytest.mark.asyncio
+    async def test_fetch_exception_degrades_to_unavailable(self, tmp_path, monkeypatch) -> None:
+        pipeline = self._pipeline(tmp_path, monkeypatch)
+        pipeline.config.general.target_assets = ["SPY"]
+        market = MarketSnapshot(
+            quotes={
+                "SPY": Quote(
+                    symbol="SPY",
+                    current_price=762.0,
+                    open_price=762.0,
+                    high_price=762.0,
+                    low_price=762.0,
+                    previous_close=760.0,
+                    change_pct=0.0,
+                    volume=0,
+                    source=DataSource.FINNHUB,
+                    timestamp=datetime.now(),
+                ),
+            }
+        )
+
+        async def raise_error(*args, **kwargs):
+            raise RuntimeError("Alpaca down")
+
+        with patch("src.pipeline.fetch_premarket_quote", new=AsyncMock(side_effect=raise_error)):
+            await pipeline._enrich_premarket(market)
+
+        assert market.premarket["SPY"].available is False

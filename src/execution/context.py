@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,18 @@ class TradeContext:
     def record_entry(self, event_type: str, **fields: Any) -> None:
         """Record a structured event entry in the audit trail.
 
+        Rewrites the whole audit file atomically (temp file + ``os.replace``)
+        on every call rather than appending a raw JSON line, so
+        ``trade-<id>.json`` is always one complete, parseable JSON document
+        -- including while the trade is still open, mid-lifecycle, not just
+        after :meth:`finalize`. A prior append-only writer left the file as
+        several concatenated JSON objects whenever a trade never reached
+        :meth:`finalize` (crash, kill, etc.), which broke plain
+        ``json.load``/``json.loads`` readers (:mod:`src.lessons_analyzer`,
+        :mod:`src.trade_tracker`) and meant
+        :func:`src.execution.intraday_monitor.load_audit_file` could only
+        ever recover the *first* appended event for such a trade.
+
         Args:
             event_type: Short label for the event (e.g. 'order_submitted').
             **fields: Arbitrary key-value data to record.
@@ -68,8 +81,15 @@ class TradeContext:
             **fields,
         }
         self.entries.append(entry)
-        with open(self.audit_path, "a") as f:
-            f.write(json.dumps(entry, default=str) + "\n")
+        snapshot = self._build_summary(
+            exit_reason="pending",
+            exit_price=None,
+            final_pnl=None,
+            final_pnl_pct=None,
+            end_time=None,
+            lifecycle_events=None,
+        )
+        self._write_json_atomic(self.audit_path, snapshot)
         logger.debug(
             "trade_audit_recorded",
             trade_id=self.trade_id,
@@ -136,9 +156,48 @@ class TradeContext:
             The complete trade summary dict.
         """
         end_time = datetime.now(UTC)
-        duration = (end_time - self._start_time).total_seconds()
+        summary = self._build_summary(
+            exit_reason=exit_reason,
+            exit_price=exit_price,
+            final_pnl=final_pnl,
+            final_pnl_pct=final_pnl_pct,
+            end_time=end_time,
+            lifecycle_events=lifecycle_events,
+        )
 
-        summary: dict[str, Any] = {
+        path = self.audit_path.with_name(f"trade-{self.trade_id}.json")
+        if path.exists():
+            path.rename(path.with_suffix(".json.bak"))
+        self._write_json_atomic(path, summary)
+        logger.info(
+            "trade_audit_finalized",
+            trade_id=self.trade_id,
+            exit_reason=summary["exit_reason"],
+            final_pnl=summary["final_pnl"],
+        )
+        return summary
+
+    def _build_summary(
+        self,
+        *,
+        exit_reason: str | None,
+        exit_price: float | None,
+        final_pnl: float | None,
+        final_pnl_pct: float | None,
+        end_time: datetime | None,
+        lifecycle_events: list[dict[str, Any]] | None,
+    ) -> dict[str, Any]:
+        """Build the audit document shared by :meth:`record_entry` and :meth:`finalize`.
+
+        Both write the same shape to ``trade-<id>.json`` -- a pending
+        snapshot (``exit_reason="pending"``, no exit fields, ``end_time=None``)
+        while the trade is open, and the real summary once it closes -- so
+        the file is always a single valid JSON document with predictable
+        top-level keys, whether a reader opens it mid-trade or after the
+        fact. See :meth:`record_entry` for why this matters.
+        """
+        duration = (end_time - self._start_time).total_seconds() if end_time else None
+        return {
             "trade_id": self.trade_id,
             "correlation_id": self.correlation_id,
             "asset": self.recommendation.asset,
@@ -149,27 +208,24 @@ class TradeContext:
             "exit_price": exit_price,
             "final_pnl": final_pnl,
             "final_pnl_pct": final_pnl_pct,
-            "duration_seconds": round(duration, 2),
+            "duration_seconds": round(duration, 2) if duration is not None else None,
             "started_at": self._start_time.isoformat(),
-            "ended_at": end_time.isoformat(),
+            "ended_at": end_time.isoformat() if end_time else None,
             "events": lifecycle_events or [],
             "entries": list(self.entries),
             "recommendation": self.recommendation.model_dump(),
             "execution_config": self._execution_config,
         }
 
-        self._write_final_summary(summary)
-        return summary
+    @staticmethod
+    def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:
+        """Write ``data`` to ``path`` as JSON via a temp-file + ``os.replace``.
 
-    def _write_final_summary(self, summary: dict[str, Any]) -> None:
-        path = self.audit_path.with_name(f"trade-{self.trade_id}.json")
-        if path.exists():
-            path.rename(path.with_suffix(".json.bak"))
-        with open(path, "w") as f:
-            json.dump(summary, f, indent=2, default=str)
-        logger.info(
-            "trade_audit_finalized",
-            trade_id=self.trade_id,
-            exit_reason=summary["exit_reason"],
-            final_pnl=summary["final_pnl"],
-        )
+        ``os.replace`` is atomic on the same filesystem, so a reader (or a
+        concurrent writer such as ``src.execution.intraday_monitor``) never
+        observes a truncated or half-written file -- only the previous
+        complete version or the new complete version.
+        """
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, default=str))
+        os.replace(tmp, path)

@@ -35,12 +35,24 @@ class JSONFileLogger:
     def write_entry(self, entry: dict[str, Any]) -> None:
         """Append a JSON log entry and persist it to the daily run file.
 
+        Written as JSON Lines (one JSON object per line): a full pipeline
+        run appends dozens to hundreds of heterogeneous structlog events,
+        so rewriting the whole file on every entry (as
+        :meth:`write_summary` and ``TradeContext`` do for their
+        single-object files) would be wasteful, and nothing in this
+        codebase ever loads a run file as one JSON document -- only
+        ``summary-*.json`` and ``trade-*.json`` get parsed programmatically
+        (see ``src.lessons_analyzer``, ``src.trade_tracker``,
+        ``src.prediction_tracker``). The ``.jsonl`` extension makes that
+        explicit instead of shipping a JSON-Lines stream under a ``.json``
+        name that a plain ``json.load`` cannot parse.
+
         Args:
             entry: Dictionary of structured log data.
         """
         self.entries.append(entry)
         day_dir = self.ensure_directory()
-        log_file = day_dir / f"run-{self.correlation_id}.json"
+        log_file = day_dir / f"run-{self.correlation_id}.jsonl"
         with open(log_file, "a") as f:
             f.write(json.dumps(entry, default=str) + "\n")
 

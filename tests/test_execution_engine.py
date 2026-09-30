@@ -12,7 +12,7 @@ import pytest
 
 from src.execution.client import AlpacaBrokerClient
 from src.execution.engine import ExecutionEngine
-from src.execution.models import ExecutionConfig, OrderResult, TenacityConfig
+from src.execution.models import ExecutionConfig, ExitAdvisorConfig, OrderResult, TenacityConfig
 from src.models.recommendation import Direction, PositionIntent, TradeRecommendation
 
 
@@ -80,6 +80,22 @@ class TestExecutionEngineEntryRejected:
         assert result["exit_reason"] == "rejected"
         assert result["final_pnl"] == 0.0
 
+    @pytest.mark.asyncio
+    async def test_fresh_quote_unavailable_skips_without_submitting_order(
+        self, tmp_path: Path
+    ) -> None:
+        client = _make_client()
+        client.submit_order = AsyncMock(return_value=_make_result(status="rejected"))
+        engine = _make_engine(client, tmp_path)
+        engine._wait_for_option_open = True
+        engine._await_option_quote = AsyncMock(return_value=None)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        assert result["exit_reason"] == "option_quote_unavailable"
+        assert result["final_pnl"] == 0.0
+        assert client.submit_order.await_count == 0
+
 
 class TestExecutionEngineAwaitOptionQuote:
     @pytest.mark.asyncio
@@ -101,7 +117,12 @@ class TestExecutionEngineAwaitOptionQuote:
         client.get_option_quote = AsyncMock(
             side_effect=[
                 None,
-                {"symbol": "SPY250728C00600000", "bid": 0.48, "ask": 0.52},
+                {
+                    "symbol": "SPY250728C00600000",
+                    "bid": 0.48,
+                    "ask": 0.52,
+                    "timestamp": "2026-08-05T13:30:01Z",
+                },
             ]
         )
         engine = _make_engine(client, tmp_path)
@@ -128,9 +149,138 @@ class TestExecutionEngineAwaitOptionQuote:
         assert mock_sleep.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_retries_stale_quote_after_market_is_open(self, tmp_path: Path) -> None:
+        client = _make_client()
+        client.get_option_quote = AsyncMock(
+            side_effect=[
+                {
+                    "symbol": "SPY260929P00761000",
+                    "bid": 0.01,
+                    "ask": 0.67,
+                    "timestamp": "2026-09-29T13:29:59Z",
+                },
+                {
+                    "symbol": "SPY260929P00761000",
+                    "bid": 0.20,
+                    "ask": 0.22,
+                    "timestamp": "2026-09-29T13:30:10Z",
+                },
+            ]
+        )
+        engine = _make_engine(client, tmp_path)
+        engine._wait_for_option_open = True
+        engine._option_quote_retry_attempts = 2
+        engine._option_quote_retry_interval_sec = 0.0
+
+        from unittest.mock import patch
+
+        from src.timezone import ET_TZ
+
+        fixed_now = datetime(2026, 9, 29, 9, 30, 20, tzinfo=ET_TZ)
+        with (
+            patch("src.execution.engine.datetime") as mock_dt,
+            patch("src.execution.engine.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_dt.now.side_effect = lambda tz=None: fixed_now if tz else fixed_now.astimezone(UTC)
+            mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
+            quote = await engine._await_option_quote("SPY260929P00761000")
+
+        assert quote is not None
+        assert quote["ask"] == 0.22
+        assert client.get_option_quote.await_count == 2
+        assert mock_sleep.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_postopen_quote_with_no_tradable_bid(self, tmp_path: Path) -> None:
+        client = _make_client()
+        client.get_option_quote = AsyncMock(
+            side_effect=[
+                {
+                    "symbol": "SPY260929P00761000",
+                    "bid": 0.0,
+                    "ask": 0.67,
+                    "timestamp": "2026-09-29T13:30:10Z",
+                },
+                {
+                    "symbol": "SPY260929P00761000",
+                    "bid": 0.20,
+                    "ask": 0.22,
+                    "timestamp": "2026-09-29T13:30:11Z",
+                },
+            ]
+        )
+        engine = _make_engine(client, tmp_path)
+        engine._wait_for_option_open = True
+        engine._option_quote_retry_attempts = 2
+        engine._option_quote_retry_interval_sec = 0.0
+
+        from unittest.mock import patch
+
+        from src.timezone import ET_TZ
+
+        fixed_now = datetime(2026, 9, 29, 9, 30, 20, tzinfo=ET_TZ)
+        with (
+            patch("src.execution.engine.datetime") as mock_dt,
+            patch("src.execution.engine.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_dt.now.side_effect = lambda tz=None: fixed_now if tz else fixed_now.astimezone(UTC)
+            mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
+            quote = await engine._await_option_quote("SPY260929P00761000")
+
+        assert quote is not None
+        assert quote["ask"] == 0.22
+        assert client.get_option_quote.await_count == 2
+        assert mock_sleep.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_ignores_preopen_quote_and_returns_fresh_postopen_quote(
+        self, tmp_path: Path
+    ) -> None:
+        """A cached pre-open ask must not drive the premium gate."""
+        client = _make_client()
+        client.get_option_quote = AsyncMock(
+            side_effect=[
+                {
+                    "symbol": "SPY260929P00761000",
+                    "bid": 0.01,
+                    "ask": 0.67,
+                    "timestamp": "2026-09-29T13:29:19Z",
+                },
+                {
+                    "symbol": "SPY260929P00761000",
+                    "bid": 0.20,
+                    "ask": 0.22,
+                    "timestamp": "2026-09-29T13:30:05Z",
+                },
+            ]
+        )
+        engine = _make_engine(client, tmp_path)
+        engine._wait_for_option_open = True
+        engine._option_open_wait_cap_sec = 60.0
+        engine._option_open_buffer_sec = 5.0
+
+        from unittest.mock import patch
+
+        from src.timezone import ET_TZ
+
+        fixed_now = datetime(2026, 9, 29, 9, 29, 40, tzinfo=ET_TZ)
+        with (
+            patch("src.execution.engine.datetime") as mock_dt,
+            patch("src.execution.engine.asyncio.sleep", new=AsyncMock()) as mock_sleep,
+        ):
+            mock_dt.now.side_effect = lambda tz=None: fixed_now if tz else fixed_now.astimezone(UTC)
+            mock_dt.side_effect = lambda *a, **k: datetime(*a, **k)
+            quote = await engine._await_option_quote("SPY260929P00761000")
+
+        assert quote is not None
+        assert quote["ask"] == 0.22
+        assert client.get_option_quote.await_count == 2
+        assert mock_sleep.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_returns_none_when_still_missing_after_open(self, tmp_path: Path) -> None:
         client = _make_client()
-        client.get_option_quote = AsyncMock(side_effect=[None, None])
+        client.get_option_quote = AsyncMock(return_value=None)
         engine = _make_engine(client, tmp_path)
         engine._wait_for_option_open = True
         engine._option_open_wait_cap_sec = 60.0
@@ -150,8 +300,9 @@ class TestExecutionEngineAwaitOptionQuote:
             quote = await engine._await_option_quote("SPY250728C00600000")
 
         assert quote is None
-        assert client.get_option_quote.await_count == 2
-        assert mock_sleep.await_count == 1
+        # One pre-open fetch, then five bounded post-open attempts.
+        assert client.get_option_quote.await_count == 6
+        assert mock_sleep.await_count == 5
 
 
 class TestExecutionEngineEntryExpired:
@@ -207,6 +358,71 @@ class TestExecutionEngineAuditTrail:
         assert data["correlation_id"] == "test-corr"
         assert data["exit_reason"] == "rejected"
 
+    @pytest.mark.asyncio
+    async def test_records_option_quote_quality_before_entry_decision(self, tmp_path: Path) -> None:
+        client = _make_client()
+        client.get_option_quote = AsyncMock(
+            return_value={
+                "symbol": "SPY260728C00600000",
+                "bid": 0.20,
+                "ask": 0.22,
+                "bid_size": 50,
+                "ask_size": 75,
+                "timestamp": "2026-07-28T13:30:05Z",
+            }
+        )
+        client.get_underlying_quote = AsyncMock(
+            return_value={"symbol": "SPY", "last": 600.0, "bid": 599.9, "ask": 600.1}
+        )
+        client.submit_order = AsyncMock(return_value=_make_result(status="rejected"))
+        engine = _make_engine(client, tmp_path)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        quote_entry = next(e for e in data["entries"] if e["event_type"] == "entry_quote")
+        assert quote_entry["quote_timestamp"] == "2026-07-28T13:30:05Z"
+        assert quote_entry["bid"] == 0.20
+        assert quote_entry["ask"] == 0.22
+        assert quote_entry["midpoint"] == pytest.approx(0.21)
+        assert quote_entry["spread"] == pytest.approx(0.02)
+        assert quote_entry["spread_pct"] == pytest.approx(9.5238, rel=1e-4)
+
+    @pytest.mark.asyncio
+    async def test_records_premium_gate_inputs_and_result(self, tmp_path: Path) -> None:
+        client = _make_client()
+        client.get_option_quote = AsyncMock(
+            return_value={
+                "symbol": "SPY260728C00600000",
+                "bid": 0.20,
+                "ask": 0.22,
+                "bid_size": 50,
+                "ask_size": 75,
+                "timestamp": "2026-07-28T13:30:05Z",
+            }
+        )
+        client.get_underlying_quote = AsyncMock(
+            return_value={"symbol": "SPY", "last": 600.0, "bid": 599.9, "ask": 600.1}
+        )
+        client.submit_order = AsyncMock(return_value=_make_result(status="rejected"))
+        engine = _make_engine(client, tmp_path)
+
+        result = await engine.execute(_rec(predicted_move_pct=0.01), "test-corr")
+
+        assert result["exit_reason"] == "premium_gate_blocked"
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        gate_entry = next(e for e in data["entries"] if e["event_type"] == "premium_gate_evaluated")
+        assert gate_entry["blocked"] is True
+        assert gate_entry["ask"] == 0.22
+        assert gate_entry["underlying"] == 600.0
+        assert gate_entry["strike"] == 600.0
+        assert gate_entry["predicted_move_pct"] == 0.01
+        assert "breakeven" in gate_entry["reason"]
+
 
 class TestExecutionEngineExceptionHandling:
     @pytest.mark.asyncio
@@ -238,3 +454,107 @@ class TestExecutionEngineExceptionHandling:
         result = await engine.execute(_rec(), "test-corr")
         assert result is not None
         assert result["trade_id"] is not None
+
+
+def _make_engine_with_exec_config(
+    client: AlpacaBrokerClient, tmp_path: Path, exec_config: ExecutionConfig
+) -> ExecutionEngine:
+    engine = ExecutionEngine(client, exec_config, log_dir=str(tmp_path))
+    engine._monitor_interval = 0.01
+    engine._wait_for_option_open = False
+    return engine
+
+
+def _make_filled_client() -> AlpacaBrokerClient:
+    config = ExecutionConfig(tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05))
+    config.entry.entry_window_minutes = 1
+    client = AlpacaBrokerClient("key", "secret", paper=True, config=config)
+    client.submit_order = AsyncMock(return_value=_make_result(status="new"))
+    client.cancel_order = AsyncMock()
+    client.get_option_quote = AsyncMock(return_value=None)
+    client.get_underlying_quote = AsyncMock(
+        return_value={"symbol": "SPY", "last": 600.0, "bid": 599.0, "ask": 600.1}
+    )
+    return client
+
+
+class TestExecutionEngineAdvisorTpPlacement:
+    """TP placement at entry, with the profit-exit advisor enabled vs disabled.
+
+    See src/execution/exit_advisor.py: when the advisor is enabled, the
+    fixed +100% TP that cuts off winning days is replaced by a far
+    safety cap (or no resting order at all).
+    """
+
+    @pytest.mark.asyncio
+    async def test_advisor_disabled_places_configured_tp(self, tmp_path: Path) -> None:
+        client = _make_filled_client()
+        exec_config = ExecutionConfig(
+            tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05),
+            exit_advisor=ExitAdvisorConfig(enabled=False),
+        )
+        exec_config.entry.entry_window_minutes = 1
+        exec_config.exit_strategy.time_deadline_est = "23:59"
+        engine = _make_engine_with_exec_config(client, tmp_path, exec_config)
+        fill_result = _make_result(status="filled", filled_qty="1", filled_avg_price="0.50")
+        engine._wait_for_fill = AsyncMock(return_value=fill_result)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        assert client.submit_order.await_count == 2  # entry + TP
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        exits_placed = next(e for e in data["entries"] if e["event_type"] == "exits_placed")
+        assert exits_placed["tp_order_id"] == ORD_ID
+        assert exits_placed["tp_level"] == pytest.approx(1.00)  # 0.50 * (1 + 100/100)
+        assert "TP placed at Alpaca" in exits_placed["note"]
+
+    @pytest.mark.asyncio
+    async def test_advisor_enabled_places_safety_cap_tp(self, tmp_path: Path) -> None:
+        client = _make_filled_client()
+        exec_config = ExecutionConfig(
+            tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05),
+            exit_advisor=ExitAdvisorConfig(enabled=True, safety_cap_pct=400.0),
+        )
+        exec_config.entry.entry_window_minutes = 1
+        exec_config.exit_strategy.time_deadline_est = "23:59"
+        engine = _make_engine_with_exec_config(client, tmp_path, exec_config)
+        fill_result = _make_result(status="filled", filled_qty="1", filled_avg_price="0.50")
+        engine._wait_for_fill = AsyncMock(return_value=fill_result)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        assert client.submit_order.await_count == 2  # entry + safety-cap TP
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        exits_placed = next(e for e in data["entries"] if e["event_type"] == "exits_placed")
+        assert exits_placed["tp_order_id"] == ORD_ID
+        assert exits_placed["tp_level"] == pytest.approx(2.50)  # 0.50 * (1 + 400/100)
+        assert "advisor" in exits_placed["note"].lower()
+
+    @pytest.mark.asyncio
+    async def test_advisor_enabled_with_no_safety_cap_places_no_tp(self, tmp_path: Path) -> None:
+        client = _make_filled_client()
+        exec_config = ExecutionConfig(
+            tenacity=TenacityConfig(min_wait_sec=0.01, max_wait_sec=0.05),
+            exit_advisor=ExitAdvisorConfig(enabled=True, safety_cap_pct=None),
+        )
+        exec_config.entry.entry_window_minutes = 1
+        exec_config.exit_strategy.time_deadline_est = "23:59"
+        engine = _make_engine_with_exec_config(client, tmp_path, exec_config)
+        fill_result = _make_result(status="filled", filled_qty="1", filled_avg_price="0.50")
+        engine._wait_for_fill = AsyncMock(return_value=fill_result)
+
+        result = await engine.execute(_rec(), "test-corr")
+
+        assert client.submit_order.await_count == 1  # entry only, no TP order
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+        audit_path = tmp_path / date_str / f"trade-{result['trade_id']}.json"
+        data = json.loads(audit_path.read_text())
+        exits_placed = next(e for e in data["entries"] if e["event_type"] == "exits_placed")
+        assert exits_placed["tp_order_id"] is None
+        assert exits_placed["tp_level"] is None
+        # SL is unaffected regardless of the advisor -- always set.
+        assert exits_placed["sl_level"] == pytest.approx(0.25)  # 0.50 * (1 - 50/100)

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as datetime_lib
 import json
 import uuid
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -19,6 +20,17 @@ from src.execution.models import ExecutionConfig, OrderResult, TradeState
 from src.mcp.schemas import occ_option_symbol
 from src.models.recommendation import TradeRecommendation
 from src.timezone import ET_TZ
+
+# src.config and src.engine.decision are imported lazily (inside __init__ /
+# execute()) rather than at module level: src.config imports
+# src.execution.models for ExecutionConfig, which triggers this package's
+# __init__.py, which imports this very module -- a top-level `from
+# src.config import ...` here would try to read attributes off src.config
+# while it is still mid-import and raise ImportError. TYPE_CHECKING keeps
+# the type hints working for static analysis without re-introducing the
+# cycle at runtime.
+if TYPE_CHECKING:
+    from src.config import RiskConfig
 
 logger = structlog.get_logger()
 
@@ -53,6 +65,7 @@ class ExecutionEngine:
         client: AlpacaBrokerClient,
         exec_config: ExecutionConfig,
         log_dir: str | None = None,
+        risk_config: RiskConfig | None = None,
     ):
         """Initialize the execution engine.
 
@@ -60,46 +73,121 @@ class ExecutionEngine:
             client: Configured AlpacaBrokerClient.
             exec_config: Execution configuration (entry, exit, retry params).
             log_dir: Root directory for audit logs (defaults to ``logs/``).
+            risk_config: Risk guardrail config, used for the premium gate
+        (see :meth:`execute`). Defaults to ``RiskConfig()`` when
+                omitted so existing callers/tests keep working.
         """
         self.client = client
         self.exec_config = exec_config
         self.log_dir = log_dir or "logs"
+        if risk_config is None:
+            from src.config import RiskConfig as _RiskConfig  # deferred, see module import note
+
+            risk_config = _RiskConfig()
+        self.risk_config = risk_config
         self._monitor_interval: float = 30.0
         self._wait_for_option_open: bool = True
         self._option_open_wait_cap_sec: float = 240.0
         self._option_open_buffer_sec: float = 5.0
+        self._option_quote_retry_attempts: int = 5
+        self._option_quote_retry_interval_sec: float = 1.0
+
+    @staticmethod
+    def _extract_spot(underlying: dict[str, Any] | None) -> float | None:
+        """Coalesce an underlying quote dict into a single spot price.
+
+        Prefers the last trade price, then the bid/ask midpoint, then the
+        ask alone. Shared by the pre-open entry-pricing fallback (when no
+        option quote is available yet) and ``DecisionAggregator.premium_gate``
+        (which needs a live spot to compute the OTM-distance-aware
+        breakeven -- see ``execute()``).
+        """
+        if not underlying:
+            return None
+        last = underlying.get("last")
+        bid = underlying.get("bid")
+        ask = underlying.get("ask")
+        if last and last > 0:
+            return float(last)
+        if bid and ask and bid > 0 and ask > 0:
+            return (bid + ask) / 2.0
+        if ask and ask > 0:
+            return float(ask)
+        return None
 
     async def _await_option_quote(self, occ_symbol: str) -> dict[str, Any] | None:
         """Fetch a live option quote, waiting for the market open if needed.
 
-        Options only trade during RTH (9:30 AM ET), so a quote requested at
-        the 9:28 AM ET submission window is unavailable. This retries once
-        the market opens so the entry limit is priced off the live option
-        ask rather than the underlying-spot fallback when possible.
+        Options only trade during RTH (9:30 AM ET), but Alpaca's snapshot
+        endpoint can still return the prior quote before the open. Always
+        refetch after the opening buffer, require a current-session timestamp
+        and a tradable bid/ask, then retry briefly for the opening market to
+        form. A stale or one-sided quote must never drive the premium gate.
 
         Args:
             occ_symbol: OCC option symbol to quote.
 
         Returns:
-            The option quote dict (bid/ask), or None if still unavailable.
+            A current-session option quote dict, or ``None`` if unavailable.
         """
+        now = datetime.now(ET_TZ)
+        open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
         quote = await self.client.get_option_quote(occ_symbol)
-        if quote and quote.get("ask"):
-            return quote
-
         if not self._wait_for_option_open:
             return quote
 
-        now = datetime.now(ET_TZ)
-        open_time = now.replace(hour=9, minute=30, second=0, microsecond=0)
-        seconds_to_open = (open_time - now).total_seconds()
-        if 0 < seconds_to_open <= self._option_open_wait_cap_sec:
-            await asyncio.sleep(seconds_to_open + self._option_open_buffer_sec)
+        quote_ready_time = open_time + timedelta(seconds=self._option_open_buffer_sec)
+        seconds_to_ready = (quote_ready_time - now).total_seconds()
+        if seconds_to_ready > self._option_open_wait_cap_sec:
+            return None
+        if seconds_to_ready > 0:
+            await asyncio.sleep(seconds_to_ready)
             quote = await self.client.get_option_quote(occ_symbol)
-            if quote and quote.get("ask"):
-                return quote
 
-        return quote
+        for attempt in range(self._option_quote_retry_attempts):
+            if self._is_fresh_option_quote(quote, open_time):
+                return quote
+            if attempt + 1 < self._option_quote_retry_attempts:
+                await asyncio.sleep(self._option_quote_retry_interval_sec)
+                quote = await self.client.get_option_quote(occ_symbol)
+
+        logger.warning(
+            "fresh_option_quote_unavailable",
+            symbol=occ_symbol,
+            quote_timestamp=quote.get("timestamp") if quote else None,
+            bid=quote.get("bid") if quote else None,
+            ask=quote.get("ask") if quote else None,
+        )
+        return None
+
+    @staticmethod
+    def _is_fresh_option_quote(quote: dict[str, Any] | None, open_time: datetime) -> bool:
+        """Return whether a quote is usable and was generated after today's open."""
+        if not quote:
+            return False
+        try:
+            bid = float(quote.get("bid") or 0)
+            ask = float(quote.get("ask") or 0)
+        except (TypeError, ValueError):
+            return False
+        if bid <= 0 or ask <= 0 or ask < bid:
+            return False
+
+        raw_timestamp = quote.get("timestamp")
+        if isinstance(raw_timestamp, datetime_lib.datetime):
+            quote_time = raw_timestamp
+        elif isinstance(raw_timestamp, str):
+            try:
+                quote_time = datetime_lib.datetime.fromisoformat(
+                    raw_timestamp.replace("Z", "+00:00")
+                )
+            except ValueError:
+                return False
+        else:
+            return False
+        if quote_time.tzinfo is None:
+            return False
+        return quote_time.astimezone(ET_TZ) >= open_time
 
     async def execute(self, rec: TradeRecommendation, correlation_id: str) -> dict[str, Any]:
         """Execute a trade recommendation through the full lifecycle.
@@ -131,19 +219,99 @@ class ExecutionEngine:
             expiry = rec.expires_at
             occ_sym = occ_option_symbol(rec.asset, expiry, rec.target_strike, option_type)
             quote = await self._await_option_quote(occ_sym)
+            if self._wait_for_option_open and not quote:
+                logger.warning(
+                    "entry_skipped_no_fresh_option_quote",
+                    trade_id=trade_id,
+                    symbol=occ_sym,
+                )
+                ctx.record_entry("option_quote_unavailable", occ_symbol=occ_sym)
+                lifecycle.transition(TradeState.REJECTED, {"reason": "option_quote_unavailable"})
+                return ctx.finalize(
+                    exit_reason="option_quote_unavailable",
+                    exit_price=0.0,
+                    final_pnl=0.0,
+                    final_pnl_pct=0.0,
+                    lifecycle_events=lifecycle.event_summary(),
+                )
+
+            if quote:
+                bid = float(quote["bid"]) if quote.get("bid") is not None else None
+                ask = float(quote["ask"]) if quote.get("ask") is not None else None
+                midpoint = (bid + ask) / 2 if bid is not None and ask is not None else None
+                spread = ask - bid if bid is not None and ask is not None else None
+                spread_pct = spread / midpoint * 100 if spread is not None and midpoint else None
+                ctx.record_entry(
+                    "entry_quote",
+                    occ_symbol=occ_sym,
+                    quote_timestamp=quote.get("timestamp"),
+                    bid=bid,
+                    ask=ask,
+                    bid_size=quote.get("bid_size"),
+                    ask_size=quote.get("ask_size"),
+                    midpoint=midpoint,
+                    spread=spread,
+                    spread_pct=spread_pct,
+                )
+
             spot = None
             if not quote or not quote.get("ask"):
                 underlying = await self.client.get_underlying_quote(rec.asset)
-                if underlying:
-                    last = underlying.get("last")
-                    bid = underlying.get("bid")
-                    ask = underlying.get("ask")
-                    if last and last > 0:
-                        spot = last
-                    elif bid and ask and bid > 0 and ask > 0:
-                        spot = (bid + ask) / 2.0
-                    elif ask and ask > 0:
-                        spot = ask
+                spot = self._extract_spot(underlying)
+
+            if quote and quote.get("ask"):
+                # Premium is only trustworthy after a current-session option
+                # market forms, so the breakeven gate runs here rather than
+                # at decision time. Fetch a live underlying quote specifically for the
+                # gate -- it's not the same `spot` fetched above, which
+                # only happens when there's NO option ask (mutually
+                # exclusive with this branch). See
+                # DecisionAggregator.premium_gate for the OTM-distance-aware
+                # breakeven calculation; when the underlying quote is
+                # unavailable, premium_gate falls back to a less strict
+                # ask/strike approximation and logs that it did.
+                gate_underlying = await self.client.get_underlying_quote(rec.asset)
+                gate_spot = self._extract_spot(gate_underlying)
+
+                from src.engine.decision import DecisionAggregator  # deferred, see import note
+
+                premium_reason = DecisionAggregator.premium_gate(
+                    rec, quote.get("ask"), gate_spot, self.risk_config
+                )
+                ctx.record_entry(
+                    "premium_gate_evaluated",
+                    blocked=bool(premium_reason),
+                    reason=premium_reason,
+                    ask=quote.get("ask"),
+                    underlying=gate_spot,
+                    strike=rec.target_strike,
+                    predicted_move_pct=rec.predicted_move_pct,
+                    predicted_move_shrink=self.risk_config.predicted_move_shrink,
+                    breakeven_margin_pct=self.risk_config.breakeven_margin_pct,
+                )
+                if premium_reason:
+                    logger.warning(
+                        "premium_gate_blocked",
+                        trade_id=trade_id,
+                        asset=rec.asset,
+                        direction=rec.direction.value,
+                        reason=premium_reason,
+                    )
+                    ctx.record_entry(
+                        "premium_gate_blocked",
+                        reason=premium_reason,
+                        ask=quote.get("ask"),
+                        underlying=gate_spot,
+                    )
+                    lifecycle.transition(TradeState.REJECTED, {"reason": "premium_gate"})
+                    return ctx.finalize(
+                        exit_reason="premium_gate_blocked",
+                        exit_price=0.0,
+                        final_pnl=0.0,
+                        final_pnl_pct=0.0,
+                        lifecycle_events=lifecycle.event_summary(),
+                    )
+
             order_data = self.client.build_entry_order(
                 rec, occ_symbol=occ_sym, quote=quote, spot=spot
             )
@@ -223,18 +391,48 @@ class ExecutionEngine:
             exit_mgr = ExitManager(self.exec_config.exit_strategy)
             exit_mgr.on_entry_filled(entry_price)
 
-            tp_spec = exit_mgr.build_tp_order(occ_sym, filled_qty)
-            tp_result = await self.client.submit_order(tp_spec)
+            # With the profit-exit advisor enabled, the fixed +100% TP
+            # limit order is exactly what was cutting off the big winning
+            # days (see src/execution/exit_advisor.py docstring) -- skip
+            # it and place only a far safety cap (or nothing at all, if
+            # `safety_cap_pct` is null), leaving profit-taking to the
+            # advisor via the intraday monitor cron. Disabled (the
+            # default), behaviour is unchanged: the configured TP is
+            # placed exactly as before.
+            advisor_cfg = self.exec_config.exit_advisor
+            tp_order_id: str | None = None
+            tp_level: float | None = exit_mgr.tp_level
+            if not advisor_cfg.enabled:
+                tp_spec = exit_mgr.build_tp_order(occ_sym, filled_qty)
+                tp_result = await self.client.submit_order(tp_spec)
+                tp_order_id = tp_result.order_id
+            elif advisor_cfg.safety_cap_pct is not None:
+                safety_exit_config = self.exec_config.exit_strategy.model_copy(
+                    update={"take_profit_pct": advisor_cfg.safety_cap_pct}
+                )
+                safety_mgr = ExitManager(safety_exit_config)
+                safety_mgr.on_entry_filled(entry_price)
+                tp_spec = safety_mgr.build_tp_order(occ_sym, filled_qty)
+                tp_result = await self.client.submit_order(tp_spec)
+                tp_order_id = tp_result.order_id
+                tp_level = safety_mgr.tp_level
+            else:
+                tp_level = None
+
             lifecycle.transition(
                 TradeState.EXITS_PLACED,
-                {"tp_order_id": tp_result.order_id, "exit_via_cron": True},
+                {"tp_order_id": tp_order_id, "exit_via_cron": True},
             )
             ctx.record_entry(
                 "exits_placed",
-                tp_order_id=tp_result.order_id,
-                tp_level=exit_mgr.tp_level,
+                tp_order_id=tp_order_id,
+                tp_level=tp_level,
                 sl_level=exit_mgr.sl_level,
-                note="TP placed at Alpaca. SL and time-deadline force-close handled by separate safety-close cron at 3:20 PM ET.",
+                note=(
+                    "Profit exit managed by the exit-advisor cron; TP is a far safety cap only."
+                    if advisor_cfg.enabled
+                    else "TP placed at Alpaca. SL enforced by intraday monitor cron (~3 min, 9:30-15:25 ET); safety-close sweep (12:20 PM PT) is the final backstop."
+                ),
             )
 
             lifecycle.transition(TradeState.CLOSED)

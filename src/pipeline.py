@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import datetime
 from typing import Literal
 
@@ -22,14 +23,15 @@ from src.execution.models import ExecutionConfig
 from src.ingestion.candle_providers import build_candle_chain
 from src.ingestion.fetcher import fetch_market_data
 from src.ingestion.parser import find_todays_briefing, read_briefing
+from src.ingestion.premarket import fetch_premarket_quote
 from src.ingestion.snapshot_loader import SnapshotLoader
 from src.ingestion.status import read_briefing_status
-from src.llm.client import OpencodeLLMClient
+from src.llm.client import OpencodeLLMClient, validate_llm_config
 from src.llm.resynthesizer import resynthesize_briefing
 from src.llm.trade_signal import LLMTradeStrategy
 from src.logging_setup import JSONFileLogger
 from src.models.briefing import BriefingData, BriefingQuality
-from src.models.market import MarketSnapshot
+from src.models.market import MarketSnapshot, PremarketQuote
 from src.models.recommendation import (
     AssetForecast,
     DecisionOutput,
@@ -125,15 +127,32 @@ class Pipeline:
         """
         logger.info("pipeline_start", correlation_id=self.correlation_id)
 
+        # Fail fast on model ids that don't exist at all (e.g. the
+        # 2026-09-05 Nemotron incident, where every call to a nonexistent
+        # id failed in ~3s with an empty error and silently fell back
+        # every run). Cheap: `opencode models` is cached to disk (see
+        # `get_known_model_ids`), so this costs a live subprocess call at
+        # most once per cache window, not once per pipeline run. Unknown
+        # ids are dropped and logged loudly; never raises, never empties
+        # the chain. Gated on `llm.preflight.enabled` -- the same flag
+        # that opts into the availability probe this pairs with -- so an
+        # operator (or a test using bare defaults) that doesn't want the
+        # extra subprocess call at startup can opt out of both together.
+        llm_config = (
+            validate_llm_config(self.config.llm)
+            if self.config.llm.preflight.enabled
+            else self.config.llm
+        )
+
         # The graph path (``invoke_agent``) is capped below the raw call
         # budget so a graph failure caused by exhausting the budget does
         # not also starve the monolithic fallback it triggers.
         llm_client = (
             OpencodeLLMClient(
-                self.config.llm,
+                llm_config,
                 reserved_calls_for_fallback=self.config.graph.reserved_calls_for_fallback,
             )
-            if self.config.llm.enabled
+            if llm_config.enabled
             else None
         )
 
@@ -279,17 +298,32 @@ class Pipeline:
                             "market_data_from_snapshots",
                             quotes=list(market.quotes.keys()),
                             news_count=len(market.news),
+                            note="quotes are PRIOR SESSION data, see Quote.prior_session_close",
                         )
                         self.result.market = market
+                        await self._enrich_premarket(market)
                         self.file_logger.write_entry(
                             {
                                 "phase": "ingest_market",
                                 "source": "snapshot",
                                 "status": "success",
                                 "quotes": {s: q.current_price for s, q in market.quotes.items()},
+                                "quotes_are_prior_session": True,
                                 "news_count": len(market.news),
                                 "rss_count": len(market.rss_items),
                                 "avg_news_polarity": market.avg_sentiment_polarity(),
+                                "premarket": {
+                                    s: {
+                                        "available": p.available,
+                                        "price": p.price,
+                                        "price_source": p.price_source,
+                                        "bar_age_min": p.bar_age_min,
+                                        "gap_pct": p.gap_pct,
+                                        "volume_ratio": p.volume_ratio,
+                                        "reliable": p.reliable,
+                                    }
+                                    for s, p in market.premarket.items()
+                                },
                             }
                         )
                         return market
@@ -316,15 +350,29 @@ class Pipeline:
                 timeout=self.config.finnhub.request_timeout_sec,
             )
             self.result.market = market
+            await self._enrich_premarket(market)
             self.file_logger.write_entry(
                 {
                     "phase": "ingest_market",
                     "source": "live_api",
                     "status": "success",
                     "quotes": {s: q.current_price for s, q in market.quotes.items()},
+                    "quotes_are_prior_session": True,
                     "news_count": len(market.news),
                     "rss_count": len(market.rss_items),
                     "avg_news_polarity": market.avg_sentiment_polarity(),
+                    "premarket": {
+                        s: {
+                            "available": p.available,
+                            "price": p.price,
+                            "price_source": p.price_source,
+                            "bar_age_min": p.bar_age_min,
+                            "gap_pct": p.gap_pct,
+                            "volume_ratio": p.volume_ratio,
+                            "reliable": p.reliable,
+                        }
+                        for s, p in market.premarket.items()
+                    },
                 }
             )
             return market
@@ -333,6 +381,71 @@ class Pipeline:
             logger.error("market_ingest_error", error=str(e))
             self.result.errors.append(msg)
             return MarketSnapshot()
+
+    async def _enrich_premarket(self, market: MarketSnapshot) -> None:
+        """Attach live pre-market price/volume/reliability per target asset.
+
+        Runs regardless of whether ``market`` came from the snapshot or
+        the live-API fallback -- both are equally stale pre-market (see
+        ``Quote.prior_session_close``) and need this to know what is
+        actually happening TODAY. No-ops (leaving ``market.premarket``
+        empty) when disabled or when Alpaca API keys are not configured
+        -- downstream consumers already treat a missing/unavailable
+        entry as "pre-market data unavailable" and must say so
+        explicitly rather than silently trusting the stale quote.
+        """
+        if not self.config.premarket.enabled:
+            return
+
+        api_key = os.environ.get("APCA_API_KEY_ID", "")
+        api_secret = os.environ.get("APCA_API_SECRET_KEY", "")
+        if not api_key or not api_secret:
+            logger.warning("premarket_enrich_skipped", reason="no_api_keys")
+            for asset in self.config.general.target_assets:
+                market.premarket[asset] = PremarketQuote(symbol=asset, available=False)
+            return
+
+        paper = self.config.general.env_mode == "PAPER_ALPACA"
+        client = AlpacaBrokerClient(api_key, api_secret, paper=paper, config=self.config.execution)
+        today = today_local()
+        start = time.monotonic()
+
+        async def _fetch_one(asset: str) -> PremarketQuote:
+            quote = market.quotes.get(asset)
+            prior_close = quote.prior_session_close if quote is not None else 0.0
+            try:
+                return await fetch_premarket_quote(
+                    client, asset, today, prior_close, self.config.premarket
+                )
+            except Exception as e:
+                logger.warning("premarket_enrich_error", asset=asset, error=str(e))
+                return PremarketQuote(symbol=asset, available=False)
+
+        # Per-asset fetches are independent (separate symbols) -- run
+        # concurrently so total latency is ~max(asset) rather than
+        # sum(asset), on top of the single-ranged-request lookback fetch
+        # (see fetch_premarket_range) that already cut per-asset calls
+        # from 11 to ~3 (today's bars + one live quote + one ranged
+        # lookback request).
+        assets = self.config.general.target_assets
+        results = await asyncio.gather(*(_fetch_one(asset) for asset in assets))
+
+        for asset, pm in zip(assets, results, strict=True):
+            market.premarket[asset] = pm
+            if not pm.available:
+                logger.warning("premarket_unavailable", asset=asset, price_source=pm.price_source)
+            elif not pm.reliable:
+                logger.info(
+                    "premarket_thin_or_stale",
+                    asset=asset,
+                    volume_ratio=pm.volume_ratio,
+                    bar_fresh=pm.bar_fresh,
+                    bar_age_min=pm.bar_age_min,
+                    cumulative_volume=pm.cumulative_volume,
+                )
+
+        elapsed_sec = round(time.monotonic() - start, 2)
+        logger.info("premarket_enrichment_complete", elapsed_sec=elapsed_sec, assets=assets)
 
     async def _phase_analyze(
         self,
@@ -545,14 +658,13 @@ class Pipeline:
             for asset in assets:
                 pred = llm_result.predictions.get(asset)
                 if pred is not None:
-                    open_price = (
-                        self.result.market.quotes.get(asset).open_price
-                        if self.result.market and asset in self.result.market.quotes
-                        else None
-                    )
+                    # MECHANICS: the forecast target strike anchors to the
+                    # live pre-market price, never the stale prior-session
+                    # open (see MarketSnapshot.mechanics_price).
+                    spot = self.result.market.mechanics_price(asset) if self.result.market else None
                     target_strike: float | None = None
-                    if open_price and open_price > 0 and abs(pred.predicted_move_pct) >= 0.1:
-                        target_strike = round(open_price * (1 + pred.predicted_move_pct / 100), 2)
+                    if spot and spot > 0 and abs(pred.predicted_move_pct) >= 0.1:
+                        target_strike = round(spot * (1 + pred.predicted_move_pct / 100), 2)
                     llm_sources = [f"llm:{s}" for s in pred.sources]
                     forecasts.append(
                         AssetForecast(
@@ -594,11 +706,7 @@ class Pipeline:
                     down_sum += r.confidence
                     down_sources.extend(src_labels)
 
-                current = (
-                    self.result.market.quotes.get(asset).current_price
-                    if self.result.market and asset in self.result.market.quotes
-                    else None
-                )
+                current = self.result.market.mechanics_price(asset) if self.result.market else None
                 if current and current > 0:
                     expected_move = (rec.target_strike - current) / current
                     weighted_magnitude += expected_move * r.confidence
@@ -644,13 +752,11 @@ class Pipeline:
             pct = round((weighted_magnitude / mag_count) * 100 if mag_count > 0 else 0.0, 2)
             target_strike: float | None = None
             if direction and abs(pct) >= 0.1:
-                open_price = (
-                    self.result.market.quotes.get(asset).open_price
-                    if self.result.market and asset in self.result.market.quotes
-                    else None
-                )
-                if open_price and open_price > 0:
-                    target_strike = round(open_price * (1 + pct / 100), 2)
+                # MECHANICS: live pre-market price, never the stale
+                # prior-session open (see MarketSnapshot.mechanics_price).
+                spot = self.result.market.mechanics_price(asset) if self.result.market else None
+                if spot and spot > 0:
+                    target_strike = round(spot * (1 + pct / 100), 2)
             forecasts.append(
                 AssetForecast(
                     asset=asset,
@@ -696,7 +802,12 @@ class Pipeline:
         )
 
         client = AlpacaBrokerClient(api_key, api_secret, paper=paper, config=exec_config)
-        engine = ExecutionEngine(client, exec_config, log_dir=self.config.logging.json_dir)
+        engine = ExecutionEngine(
+            client,
+            exec_config,
+            log_dir=self.config.logging.json_dir,
+            risk_config=self.config.risk,
+        )
 
         try:
             result = await engine.execute(rec, self.correlation_id)

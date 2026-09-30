@@ -128,11 +128,14 @@ class EventDrivenStrategy(TradingStrategy):
                 trace[f"{asset}_previous_close"] = quote.previous_close
                 continue
 
-            prior_close = quote.previous_close
-            current = quote.current_price
-            premarket_move_pct = (
-                (current - prior_close) / prior_close * 100 if prior_close > 0 else 0.0
-            )
+            # MECHANICS: today's pre-market move vs the prior session's
+            # close (see MarketSnapshot.mechanics_gap_pct), not
+            # quote.current_price vs quote.previous_close — pre-market
+            # both are prior-session-stale fields (Quote.prior_session_close).
+            premarket_move_pct = market.mechanics_gap_pct(asset)
+            if premarket_move_pct is None:
+                trace[f"{asset}_skip_reason"] = "no_mechanics_gap"
+                continue
             trace[f"{asset}_premarket_move_pct"] = premarket_move_pct
 
             sentiment = market.avg_sentiment_polarity()
@@ -161,8 +164,12 @@ class EventDrivenStrategy(TradingStrategy):
                 trace[f"{asset}_confidence"] = confidence
                 continue
 
-            strike = compute_otm_strike(quote.current_price, direction)
-            delta = estimate_delta(quote.current_price, strike, 0, iv=0.20, direction=direction)
+            spot = market.mechanics_price(asset)
+            if spot is None:
+                trace[f"{asset}_skip_reason"] = "no_mechanics_price"
+                continue
+            strike = compute_otm_strike(spot, direction)
+            delta = estimate_delta(spot, strike, 0, iv=0.20, direction=direction)
             today_str = today_local().isoformat()
 
             recommendation = TradeRecommendation(

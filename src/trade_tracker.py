@@ -20,6 +20,8 @@ from typing import Any
 
 import structlog
 
+from src.json_utils import load_json_tolerant
+
 logger = structlog.get_logger()
 
 # Dispositions that produced no actual fill → no PnL to learn from.
@@ -113,9 +115,15 @@ def load_trade_outcomes(log_dir: str | Path) -> list[TradeOutcome]:
             if trade_file.name.endswith(".bak"):
                 continue
             try:
-                data = json.loads(trade_file.read_text())
+                # Tolerates both a normal single-JSON-object file and a
+                # legacy file left as several concatenated JSON objects
+                # by a trade that never reached finalize() -- see
+                # src.json_utils and src.execution.context.TradeContext.
+                data = load_json_tolerant(trade_file.read_text())
             except (json.JSONDecodeError, OSError) as e:
                 logger.debug("trade_tracker_read_error", path=str(trade_file), error=str(e))
+                continue
+            if not data:
                 continue
 
             exit_reason = data.get("exit_reason")

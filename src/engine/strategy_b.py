@@ -62,13 +62,15 @@ class MeanReversionStrategy(TradingStrategy):
                 combined_sentiment = (news_sentiment + briefing_sentiment) / 2
             trace[f"{asset}_combined_sentiment"] = combined_sentiment
 
-            prior_close = quote.previous_close
-            current = quote.current_price
-            if prior_close <= 0 or current <= 0:
-                trace[f"{asset}_skip_reason"] = "no_prior_close"
+            # MECHANICS: today's pre-market move vs the prior session's
+            # close (see MarketSnapshot.mechanics_gap_pct) — NOT
+            # quote.current_price vs quote.previous_close, which
+            # pre-market are both prior-session-stale fields describing
+            # an entirely different day (see Quote.prior_session_close).
+            move_from_close_pct = market.mechanics_gap_pct(asset)
+            if move_from_close_pct is None:
+                trace[f"{asset}_skip_reason"] = "no_mechanics_gap"
                 continue
-
-            move_from_close_pct = (current - prior_close) / prior_close * 100
             trace[f"{asset}_move_from_close_pct"] = move_from_close_pct
 
             direction = None
@@ -95,8 +97,12 @@ class MeanReversionStrategy(TradingStrategy):
                 trace[f"{asset}_confidence"] = confidence
                 continue
 
-            strike = compute_otm_strike(quote.current_price, direction)
-            delta = estimate_delta(quote.current_price, strike, 0, iv=0.20, direction=direction)
+            spot = market.mechanics_price(asset)
+            if spot is None:
+                trace[f"{asset}_skip_reason"] = "no_mechanics_price"
+                continue
+            strike = compute_otm_strike(spot, direction)
+            delta = estimate_delta(spot, strike, 0, iv=0.20, direction=direction)
             today_str = today_local().isoformat()
 
             recommendation = TradeRecommendation(
@@ -116,7 +122,7 @@ class MeanReversionStrategy(TradingStrategy):
                     "oversold_threshold": oversold,
                     "overbought_threshold": overbought,
                     "delta": round(delta, 4),
-                    "entry_price": quote.current_price,
+                    "entry_price": spot,
                     "strategy": "Mean reversion: RSI extreme + sentiment check",
                 },
                 expires_at=today_str,

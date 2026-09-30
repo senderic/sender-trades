@@ -5,7 +5,7 @@ import pytest
 
 from src.config import Settings
 from src.engine.risk import RiskEngine
-from src.models.market import DataSource, MarketSnapshot, Quote
+from src.models.market import DataSource, MarketSnapshot, PremarketQuote, Quote
 from src.models.recommendation import Direction, PositionIntent, TradeRecommendation
 from src.timezone import today_local
 
@@ -80,21 +80,49 @@ class TestRiskEngineConsensus:
 
 
 def _market_with_quote(symbol: str, current: float, prev_close: float) -> MarketSnapshot:
+    """Build a market where ``current`` is today's LIVE pre-market price
+    and ``prev_close`` is the prior session's close -- the correct gap
+    anchor (see ``Quote.prior_session_close``). ``quote.current_price``
+    plays the role of ``prior_session_close`` here, since that field (not
+    ``previous_close``) is what a pre-market-stale Quote actually holds.
+    """
+    gap_pct = (current - prev_close) / prev_close * 100 if prev_close > 0 else None
+    premarket = (
+        {
+            symbol: PremarketQuote(
+                symbol=symbol,
+                available=True,
+                price=current,
+                vwap=current,
+                first_price=prev_close,
+                cumulative_volume=2000.0,
+                gap_pct=gap_pct,
+                median_volume=2000.0,
+                volume_ratio=1.0,
+                reliable=True,
+                lookback_days_used=10,
+                source="live",
+            ),
+        }
+        if prev_close > 0
+        else {}
+    )
     return MarketSnapshot(
         quotes={
             symbol: Quote(
                 symbol=symbol,
-                current_price=current,
-                open_price=current,
-                high_price=current,
-                low_price=current,
+                current_price=prev_close,
+                open_price=prev_close,
+                high_price=prev_close,
+                low_price=prev_close,
                 previous_close=prev_close,
-                change_pct=(current - prev_close) / prev_close * 100 if prev_close > 0 else 0.0,
+                change_pct=0.0,
                 volume=0,
                 source=DataSource.FINNHUB,
                 timestamp=_TS,
             ),
         },
+        premarket=premarket,
     )
 
 
@@ -153,6 +181,38 @@ class TestRiskEnginePreMarketGap:
         market = _market_with_quote("SPY", current=746.0, prev_close=0.0)
         result = risk_engine.validate(valid_rec, market, _now=_9_30_AM_ET)
         assert result is valid_rec
+
+    def test_premarket_unavailable_skips_gracefully(
+        self, risk_engine: RiskEngine, valid_rec: TradeRecommendation
+    ) -> None:
+        """No live pre-market quote at all (only the stale prior-session
+        Quote) must never fabricate a gap from stale fields -- the check
+        no-ops rather than rejecting or fading confidence on a number
+        that describes a different day. See MarketSnapshot.mechanics_gap_pct.
+        """
+        valid_rec.asset = "SPY"
+        valid_rec.direction = Direction.PUT
+        valid_rec.target_strike = 100.0
+        valid_rec.contracts = 1
+        market = MarketSnapshot(
+            quotes={
+                "SPY": Quote(
+                    symbol="SPY",
+                    current_price=735.0,
+                    open_price=735.0,
+                    high_price=735.0,
+                    low_price=735.0,
+                    previous_close=735.0,
+                    change_pct=0.0,
+                    volume=0,
+                    source=DataSource.FINNHUB,
+                    timestamp=_TS,
+                ),
+            },
+        )
+        result = risk_engine.validate(valid_rec, market, _now=_9_30_AM_ET)
+        assert result is valid_rec
+        assert result.confidence == valid_rec.confidence
 
 
 class TestRiskEngineGapFadeRisk:

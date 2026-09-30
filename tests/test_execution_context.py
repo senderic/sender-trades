@@ -41,6 +41,29 @@ class TestTradeContextEntryRecording:
 
         assert ctx.audit_path.exists()
 
+    def test_pending_file_is_single_valid_json_document(self, tmp_path: Path) -> None:
+        """The audit file must be a single parseable JSON object after every
+        `record_entry` call, not just after `finalize()` -- a prior
+        append-only writer left several concatenated JSON objects in the
+        file whenever a trade never reached `finalize()` (crash, kill,
+        etc.), which plain `json.load` cannot parse."""
+        rec = _make_rec()
+        ctx = TradeContext("trade-pending", "corr-pending", rec, log_dir=str(tmp_path))
+        ctx.record_entry("entry_submitted", occ_symbol="SPY250728C00600000")
+        ctx.record_entry("entry_filled", fill_price=0.50)
+
+        with open(ctx.audit_path) as f:
+            data = json.load(f)  # raises if more than one object is concatenated
+
+        assert data["exit_reason"] == "pending"
+        assert data["trade_id"] == "trade-pending"
+        assert [e["event_type"] for e in data["entries"]] == [
+            "entry_submitted",
+            "entry_filled",
+        ]
+        # No leftover temp file from the atomic-write dance.
+        assert not ctx.audit_path.with_suffix(".tmp").exists()
+
     def test_multiple_entries(self, tmp_path: Path) -> None:
         rec = _make_rec()
         ctx = TradeContext("trade-xyz", "corr-xyz", rec, log_dir=str(tmp_path))
@@ -134,6 +157,23 @@ class TestTradeContextFinalize:
             data = json.load(f)
         assert data["exit_reason"] == "force_close"
         assert data["trade_id"] == "trade-disk"
+
+    def test_finalize_after_pending_entries_leaves_one_valid_document(self, tmp_path: Path) -> None:
+        rec = _make_rec()
+        ctx = TradeContext("trade-seq", "corr-seq", rec, log_dir=str(tmp_path))
+        ctx.record_entry("entry_submitted", occ_symbol="SPY250728C00600000")
+        ctx.record_entry("entry_filled", fill_price=0.50)
+        ctx.finalize(
+            exit_reason="take_profit",
+            exit_price=1.00,
+            final_pnl=100.0,
+            final_pnl_pct=100.0,
+        )
+
+        raw = ctx.audit_path.read_text()
+        data = json.loads(raw)  # raises on concatenated/extra data
+        assert data["exit_reason"] == "take_profit"
+        assert not ctx.audit_path.with_suffix(".tmp").exists()
 
 
 class TestTradeContextLinks:

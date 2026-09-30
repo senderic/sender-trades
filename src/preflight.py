@@ -50,8 +50,9 @@ from typing import Any
 
 import structlog
 
-from src.config import LLMConfig, Settings
-from src.llm.client import _parse_ndjson_response
+from src.config import CodexConfig, LLMConfig, Settings
+from src.llm.client import _parse_ndjson_response, drop_unknown_models, get_known_model_ids
+from src.llm.codex import is_codex_model, run_codex
 
 logger = structlog.get_logger()
 
@@ -62,7 +63,34 @@ _PROBE_PROMPT = (
 )
 
 
-def probe_model(model: str, *, opencode_path: str, timeout_sec: int) -> dict[str, Any]:
+def _probe_codex(model: str, *, codex: CodexConfig, timeout_sec: int) -> dict[str, Any]:
+    """Probe a ``codex/<model>`` id through the same call path the pipeline uses."""
+    t0 = time.monotonic()
+    try:
+        text, _usage, error = run_codex(codex, model, _PROBE_PROMPT, timeout_sec)
+    except subprocess.TimeoutExpired:
+        elapsed_ms = round((time.monotonic() - t0) * 1000)
+        return {
+            "available": False,
+            "latency_ms": elapsed_ms,
+            "error": f"timeout after {timeout_sec}s",
+        }
+    except Exception as e:
+        elapsed_ms = round((time.monotonic() - t0) * 1000)
+        return {
+            "available": False,
+            "latency_ms": elapsed_ms,
+            "error": f"{type(e).__name__}: {e}"[:300],
+        }
+    elapsed_ms = round((time.monotonic() - t0) * 1000)
+    if text is None:
+        return {"available": False, "latency_ms": elapsed_ms, "error": error[:300]}
+    return {"available": True, "latency_ms": elapsed_ms, "error": None}
+
+
+def probe_model(
+    model: str, *, opencode_path: str, timeout_sec: int, codex: CodexConfig | None = None
+) -> dict[str, Any]:
     """Probe one model through the ``opencode`` CLI.
 
     Reuses the exact invocation shape and NDJSON parsing that
@@ -81,6 +109,9 @@ def probe_model(model: str, *, opencode_path: str, timeout_sec: int) -> dict[str
         A record with ``available`` (bool), ``latency_ms`` (int), and
         ``error`` (str | None).
     """
+    if is_codex_model(model):
+        return _probe_codex(model, codex=codex or CodexConfig(), timeout_sec=timeout_sec)
+
     cmd = [
         opencode_path,
         "run",
@@ -149,21 +180,27 @@ def build_chain(llm_config: LLMConfig) -> list[str]:
     return chain
 
 
-def run_preflight(llm_config: LLMConfig) -> dict[str, Any]:
+def run_preflight(llm_config: LLMConfig, chain: list[str] | None = None) -> dict[str, Any]:
     """Probe every model in the configured chain concurrently.
 
     Args:
         llm_config: The application's :class:`~src.config.LLMConfig`.
+        chain: Optional pre-built/pre-validated chain to probe. Defaults
+            to :func:`build_chain` (the raw configured chain,
+            unvalidated) when omitted, which preserves this function's
+            previous behaviour for existing callers/tests. :func:`main`
+            passes a chain already filtered by :func:`~src.llm.client.drop_unknown_models`.
 
     Returns:
         A dict with a top-level ``timestamp`` (UTC ISO 8601) and a
         ``models`` mapping of model id -> probe record (see
-        :func:`probe_model`). Every model returned by :func:`build_chain`
-        is guaranteed a record, even if its future raised — a crashed
-        probe becomes an ``available: False`` record, not a silent gap
-        that would misrepresent "what actually happened".
+        :func:`probe_model`). Every model in ``chain`` is guaranteed a
+        record, even if its future raised — a crashed probe becomes an
+        ``available: False`` record, not a silent gap that would
+        misrepresent "what actually happened".
     """
-    chain = build_chain(llm_config)
+    if chain is None:
+        chain = build_chain(llm_config)
     models: dict[str, Any] = {}
 
     with ThreadPoolExecutor(max_workers=max(1, len(chain))) as executor:
@@ -173,6 +210,7 @@ def run_preflight(llm_config: LLMConfig) -> dict[str, Any]:
                 model,
                 opencode_path=llm_config.opencode_path,
                 timeout_sec=llm_config.preflight.probe_timeout_sec,
+                codex=llm_config.codex,
             ): model
             for model in chain
         }
@@ -239,16 +277,32 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     chain = build_chain(llm_config)
+
+    # Fail fast on model ids that don't exist at all, rather than
+    # discovering it 3s into every probe (and every trading run) with an
+    # empty error -- see the 2026-09-05 Nemotron incident this guards
+    # against. Unknown ids are reported loudly and dropped; if the
+    # roster can't be fetched, validation is skipped and every configured
+    # model is probed as before.
+    known_models = get_known_model_ids(llm_config.opencode_path)
+    probe_chain = drop_unknown_models(chain, known_models)
+    if len(probe_chain) < len(chain):
+        logger.error(
+            "preflight_unknown_model_ids",
+            unknown=[m for m in chain if m not in probe_chain],
+            probing=probe_chain,
+        )
+
     logger.info(
         "preflight_start",
-        models=chain,
+        models=probe_chain,
         probe_timeout_sec=llm_config.preflight.probe_timeout_sec,
     )
 
-    results = run_preflight(llm_config)
+    results = run_preflight(llm_config, chain=probe_chain)
     write_results(results, llm_config.preflight.file_path)
 
-    for model in chain:
+    for model in probe_chain:
         record = results["models"].get(model, {})
         logger.info(
             "preflight_probe_result",
@@ -258,8 +312,8 @@ def main(argv: list[str] | None = None) -> int:
             error=record.get("error"),
         )
 
-    available = [m for m in chain if results["models"].get(m, {}).get("available")]
-    unavailable = [m for m in chain if m not in available]
+    available = [m for m in probe_chain if results["models"].get(m, {}).get("available")]
+    unavailable = [m for m in probe_chain if m not in available]
     if available:
         logger.info(
             "preflight_complete",
@@ -272,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
         # see the module docstring's "report what actually happened" rule.
         logger.warning(
             "preflight_all_models_failed",
-            models=chain,
+            models=probe_chain,
             file_path=llm_config.preflight.file_path,
         )
 

@@ -7,7 +7,7 @@ from src.engine.strategy_a import MomentumStrategy
 from src.engine.strategy_b import MeanReversionStrategy
 from src.engine.strategy_c import EventDrivenStrategy
 from src.models.briefing import BriefingData
-from src.models.market import MarketSnapshot
+from src.models.market import MarketSnapshot, PremarketQuote
 from src.models.recommendation import Direction
 
 
@@ -32,6 +32,47 @@ class TestMomentumStrategy:
         strategy = MomentumStrategy(config)
         result = await strategy.evaluate(sample_briefing_data, sample_market_snapshot)
         assert result.recommendation is None
+
+    @pytest.mark.asyncio
+    async def test_gap_sourced_from_live_premarket_not_stale_quote(
+        self, sample_briefing_data, sample_market_snapshot
+    ) -> None:
+        """The gap driving momentum's direction/strike must come from
+        ``market.premarket`` (today's live price), never from the
+        pre-market-stale ``Quote.open_price``/``previous_close`` fields
+        — see MarketSnapshot.mechanics_gap_pct."""
+        config = Settings()
+        config.strategies.momentum.gap_threshold_pct = 0.1
+        config.strategies.momentum.min_confidence = 0.1
+        # Stale quote fields would compute a *negative* gap; the live
+        # pre-market quote says the opposite (a large positive gap), and
+        # that must be what drives the recommendation.
+        quote = sample_market_snapshot.quotes["SPY"]
+        sample_market_snapshot.premarket["SPY"] = PremarketQuote(
+            symbol="SPY",
+            available=True,
+            price=quote.prior_session_close * 1.02,
+            gap_pct=2.0,
+            reliable=True,
+        )
+        strategy = MomentumStrategy(config)
+        result = await strategy.evaluate(sample_briefing_data, sample_market_snapshot)
+        assert result.recommendation is not None
+        assert result.debug_trace["SPY_gap_pct"] == pytest.approx(2.0, abs=0.01)
+        assert result.recommendation.direction == Direction.CALL
+        # Strike computed off the live pre-market price, not the stale quote.
+        assert result.recommendation.target_strike != quote.open_price
+
+    @pytest.mark.asyncio
+    async def test_no_premarket_data_falls_back_to_zero_gap(
+        self, sample_briefing_data, sample_market_snapshot
+    ) -> None:
+        """No live pre-market quote -> gap defaults to 0% (conservative
+        "no gap known"), not a number derived from stale fields."""
+        config = Settings()
+        strategy = MomentumStrategy(config)
+        result = await strategy.evaluate(sample_briefing_data, sample_market_snapshot)
+        assert result.debug_trace["SPY_gap_pct"] == 0.0
 
 
 class TestMeanReversionStrategy:

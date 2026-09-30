@@ -165,6 +165,9 @@ def _render_execution_section(execution_result: dict | None) -> str:
     submitted = next((e for e in entries if e.get("event_type") == "entry_submitted"), None)
     filled = next((e for e in entries if e.get("event_type") == "entry_filled"), None)
     exits = next((e for e in entries if e.get("event_type") == "exits_placed"), None)
+    premium_blocked = next(
+        (e for e in entries if e.get("event_type") == "premium_gate_blocked"), None
+    )
 
     rec = execution_result.get("recommendation", {})
     asset = execution_result.get("asset", rec.get("asset", "?"))
@@ -219,6 +222,7 @@ def _render_execution_section(execution_result: dict | None) -> str:
         "stop_loss": "Stop-loss triggered",
         "force_close": "Force-closed at deadline",
         "safety_close": "Safety-close at deadline",
+        "premium_gate_blocked": "Skipped — expected move too small for option cost",
     }
     exit_label = exit_label_map.get(exit_reason, exit_reason)
     status_class = {
@@ -230,7 +234,13 @@ def _render_execution_section(execution_result: dict | None) -> str:
         "stop_loss": "outcome-fail",
         "force_close": "outcome-fail",
         "safety_close": "outcome-unknown",
+        "premium_gate_blocked": "outcome-unknown",
     }.get(exit_reason, "outcome-unknown")
+
+    if premium_blocked:
+        rows.append(
+            f'<tr><td style="font-weight:600">Skip Reason</td><td>{premium_blocked.get("reason", "")}</td></tr>'
+        )
 
     pnl_str = ""
     pnl = execution_result.get("final_pnl", 0) or 0
@@ -342,6 +352,7 @@ def render_forecast_html(
     end_time: datetime | None = None,
     execution_result: dict | None = None,
     decision: DecisionOutput | None = None,
+    scorecard_html: str = "",
 ) -> str:
     rows = ""
     for f in forecast.forecasts:
@@ -407,6 +418,7 @@ def render_forecast_html(
 {execution_html}
 {decision_html}
 {yesterday_html}
+{scorecard_html}
 {model_html}
 {runtime_html}
 <div class="footer">
@@ -439,8 +451,14 @@ def _render_yesterday_section(
         details_html = o.details.replace(" | ", "<br>")
         pred_move = f"{o.confidence:.0%} confidence"
         strike_str = f" · Target: ${o.target_strike:.2f}" if o.target_strike else ""
+        if o.open_close_correct is not None:
+            oc_label = "closed right" if o.open_close_correct else "closed wrong"
+            oc_class = "outcome-success" if o.open_close_correct else "outcome-fail"
+            close_str = f' · <span class="{oc_class}">open→close: {oc_label}</span>'
+        else:
+            close_str = ""
         cards += f"""<div class="outcome-card {card_class}">
-  <p><span class="outcome-asset">{o.asset}</span> — Predicted <strong>{o.predicted_direction}</strong> ({pred_move}){strike_str} {badge}</p>
+  <p><span class="outcome-asset">{o.asset}</span> — Predicted <strong>{o.predicted_direction}</strong> ({pred_move}){strike_str} {badge}{close_str}</p>
   <p>{details_html}</p>
 </div>"""
 
@@ -462,6 +480,8 @@ def send_email(
     end_time: datetime | None = None,
     execution_result: dict | None = None,
     decision: DecisionOutput | None = None,
+    scorecard_html: str = "",
+    scorecard_text: str = "",
 ) -> dict[str, bool]:
     user = os.environ.get("GMAIL_USER", "")
     password = os.environ.get("GMAIL_APP_PASSWORD", "")
@@ -490,6 +510,7 @@ def send_email(
         end_time=end_time,
         execution_result=execution_result,
         decision=decision,
+        scorecard_html=scorecard_html,
     )
 
     plain_parts = [f"sender-trades Directional Forecast\n\n{forecast.table()}"]
@@ -502,10 +523,17 @@ def send_email(
             result_label = {"success": "Prediction hit", "fail": "FAIL", "unknown": "UNKNOWN"}.get(
                 o.result, "?"
             )
+            oc_suffix = ""
+            if o.open_close_correct is not None:
+                oc_suffix = (
+                    " (open→close: right)" if o.open_close_correct else " (open→close: wrong)"
+                )
             plain_parts.append(
-                f"  {o.asset}: {o.predicted_direction} ({o.confidence:.0%}) — {result_label}"
+                f"  {o.asset}: {o.predicted_direction} ({o.confidence:.0%}) — {result_label}{oc_suffix}"
             )
             plain_parts.append(f"  {o.details}")
+    if scorecard_text:
+        plain_parts.append(scorecard_text)
     if model_usage_text:
         plain_parts.append(model_usage_text)
     plain_parts.append("\n---\nsender-trades")

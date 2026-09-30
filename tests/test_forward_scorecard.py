@@ -45,6 +45,7 @@ def _setup(asset: str = "QQQ") -> DaySetup:
         close_1520=101.5,
         options={
             f"{asset}260922C00101000": _path(1.0, 2.0),
+            f"{asset}260922C00100000": _path(1.5, 2.25),
             f"{asset}260922P00099000": _path(1.0, 0.8),
         },
     )
@@ -87,6 +88,51 @@ class TestScoring:
         assert row["baselines"]["repeat_yesterday"]["direction"] == "PUT"
         assert row["baselines"]["gap_fade"]["ret"] < 0
 
+    def test_scores_blocked_trade_at_exact_recommended_strike(self) -> None:
+        row = fs.score_asset_day(
+            _setup(),
+            "CALL",
+            blocked_trade={
+                "trade_id": "blocked-1",
+                "direction": "CALL",
+                "strike": 100.0,
+                "contracts": 2,
+            },
+        )
+
+        assert row["blocked_trade"]["trade_id"] == "blocked-1"
+        assert row["blocked_trade"]["strike"] == 100
+        assert row["blocked_trade"]["contracts"] == 2
+        assert row["blocked_trade"]["pnl"] == 68.25
+        assert row["blocked_trade"]["total_pnl"] == 136.5
+
+
+class TestBlockedTrades:
+    def test_loads_gate_blocked_recommendation_from_trade_audit(self, tmp_path: Path) -> None:
+        day_dir = tmp_path / "2026-09-22"
+        day_dir.mkdir()
+        (day_dir / "trade-blocked-1.json").write_text(
+            json.dumps(
+                {
+                    "trade_id": "blocked-1",
+                    "asset": "QQQ",
+                    "direction": "CALL",
+                    "contracts": 2,
+                    "entry_strike": 100.0,
+                    "exit_reason": "premium_gate_blocked",
+                }
+            )
+        )
+
+        assert fs.blocked_trades(tmp_path) == {
+            ("2026-09-22", "QQQ"): {
+                "trade_id": "blocked-1",
+                "direction": "CALL",
+                "strike": 100.0,
+                "contracts": 2,
+            }
+        }
+
 
 class TestUpdate:
     def test_backfills_settled_days_and_never_rescores(self, tmp_path: Path) -> None:
@@ -103,6 +149,43 @@ class TestUpdate:
         assert build.call_count == 1
         rows = json.loads(card.read_text())
         assert [(r["date"], r["asset"]) for r in rows] == [("2026-09-22", "QQQ")]
+
+    def test_attaches_exact_blocked_trade_replay(self, tmp_path: Path) -> None:
+        hist = _history(
+            tmp_path, [{"date": "2026-09-22", "asset": "QQQ", "predicted_direction": "UP"}]
+        )
+        day_dir = tmp_path / "2026-09-22"
+        day_dir.mkdir()
+        (day_dir / "trade-blocked-1.json").write_text(
+            json.dumps(
+                {
+                    "trade_id": "blocked-1",
+                    "asset": "QQQ",
+                    "direction": "CALL",
+                    "contracts": 2,
+                    "entry_strike": 100.0,
+                    "exit_reason": "premium_gate_blocked",
+                }
+            )
+        )
+        card = tmp_path / "scorecard.json"
+
+        with (
+            patch.object(fs, "daily_bars", return_value={}),
+            patch.object(fs, "build_day", return_value=_setup()),
+        ):
+            fs.update(
+                api=object(),
+                history_path=hist,
+                scorecard_path=card,
+                log_dir=tmp_path,
+                now=AFTER_CLOSE,
+            )
+
+        [row] = json.loads(card.read_text())
+        assert row["blocked_trade"]["trade_id"] == "blocked-1"
+        assert row["blocked_trade"]["strike"] == 100
+        assert row["blocked_trade"]["total_pnl"] == 136.5
 
     def test_skips_unsettled_session(self, tmp_path: Path) -> None:
         # Scoring mid-session would cache partial option bars forever.

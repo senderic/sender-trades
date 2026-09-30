@@ -237,7 +237,13 @@ class TestAlpacaBrokerClientSubmit:
         mock_resp.json.return_value = {
             "snapshots": {
                 "SPY250728C00600000": {
-                    "latestQuote": {"bp": "0.48", "ap": "0.52", "bs": 100, "as": 100},
+                    "latestQuote": {
+                        "bp": "0.48",
+                        "ap": "0.52",
+                        "bs": 100,
+                        "as": 100,
+                        "t": "2026-07-28T13:30:05.123456Z",
+                    },
                     "latestTrade": {},
                 }
             }
@@ -250,6 +256,7 @@ class TestAlpacaBrokerClientSubmit:
         assert result is not None
         assert result["bid"] == 0.48
         assert result["ask"] == 0.52
+        assert result["timestamp"] == "2026-07-28T13:30:05.123456Z"
 
     @pytest.mark.asyncio
     async def test_get_underlying_quote(self) -> None:

@@ -19,7 +19,10 @@ Run after the close (``lessons_log.sh``, 14:00 PT)::
 Results persist in ``logs/forward-scorecard.json`` (one entry per scored
 asset-day, never re-scored). The morning email reads that file via
 :func:`render_email_html` / :func:`render_email_text`, which never raise and
-never make network calls.
+never make network calls. When an execution audit shows that the premium gate
+blocked a candidate, the row also contains ``blocked_trade``: a replay of the
+exact recommended strike and contract count, separate from the standardized
+forecast trade used for fair baseline comparisons.
 """
 
 from __future__ import annotations
@@ -86,11 +89,43 @@ def system_forecasts(history: list[dict[str, Any]]) -> dict[tuple[str, str], str
     return out
 
 
-def _simulate(setup: DaySetup, direction: str | None) -> dict[str, Any] | None:
+def blocked_trades(log_dir: Path = LOG_DIR) -> dict[tuple[str, str], dict[str, Any]]:
+    """Load exact recommendations rejected by the premium gate from trade audits."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in sorted(log_dir.glob("????-??-??/trade-*.json")):
+        try:
+            audit = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(audit, dict) or audit.get("exit_reason") != "premium_gate_blocked":
+            continue
+        asset = str(audit.get("asset") or "")
+        direction = str(audit.get("direction") or "").upper()
+        try:
+            strike = float(audit.get("entry_strike") or 0)
+            contracts = int(audit.get("contracts") or 1)
+        except (TypeError, ValueError):
+            continue
+        if not asset or direction not in {"CALL", "PUT"} or strike <= 0:
+            continue
+        out[(path.parent.name, asset)] = {
+            "trade_id": audit.get("trade_id"),
+            "direction": direction,
+            "strike": strike,
+            "contracts": contracts,
+        }
+    return out
+
+
+def _simulate(
+    setup: DaySetup, direction: str | None, strike: float | None = None
+) -> dict[str, Any] | None:
     """Replay one production-style trade in ``direction`` on ``setup``'s real bars."""
     if direction is None:
         return None
-    strike = strike_for(setup.s0, direction, PROD_MONEYNESS)
+    strike = (
+        round(strike) if strike is not None else strike_for(setup.s0, direction, PROD_MONEYNESS)
+    )
     bars = setup.options.get(occ(setup.asset, setup.day, direction[0], strike)) or []
     entry = entry_price(bars, ENTRY_MODEL)
     if not entry or entry < 0.02:
@@ -107,15 +142,34 @@ def _simulate(setup: DaySetup, direction: str | None) -> dict[str, Any] | None:
     }
 
 
-def score_asset_day(setup: DaySetup, system_direction: str) -> dict[str, Any]:
+def score_asset_day(
+    setup: DaySetup,
+    system_direction: str,
+    blocked_trade: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Score the system's forecast and every baseline on one asset-day."""
-    return {
+    row = {
         "date": setup.day.isoformat(),
         "asset": setup.asset,
         "system": _simulate(setup, system_direction),
         "baselines": {name: _simulate(setup, BASELINE_SIGNALS[name](setup)) for name in COMPARE},
         "gap_pct": round(setup.gap_pct, 3),
     }
+    if blocked_trade:
+        blocked_result = _simulate(
+            setup,
+            blocked_trade.get("direction"),
+            blocked_trade.get("strike"),
+        )
+        if blocked_result:
+            contracts = int(blocked_trade.get("contracts") or 1)
+            blocked_result.update(
+                trade_id=blocked_trade.get("trade_id"),
+                contracts=contracts,
+                total_pnl=round(blocked_result["pnl"] * contracts, 2),
+            )
+            row["blocked_trade"] = blocked_result
+    return row
 
 
 def _settled(day: date, now: datetime) -> bool:
@@ -136,6 +190,7 @@ def update(
     api: Alpaca | None = None,
     history_path: Path = HISTORY_PATH,
     scorecard_path: Path = SCORECARD_PATH,
+    log_dir: Path = LOG_DIR,
     now: datetime | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Score every settled, not-yet-scored forecast and persist the scorecard."""
@@ -147,6 +202,7 @@ def update(
         logger.warning("forward_scorecard_no_history", path=str(history_path))
         return scored
     forecasts = system_forecasts(history if isinstance(history, list) else [])
+    blocked = blocked_trades(log_dir)
     pending = {
         key: d
         for key, d in forecasts.items()
@@ -168,7 +224,11 @@ def update(
         if setup is None:
             logger.info("forward_scorecard_no_data", date=day_s, asset=asset)
             continue
-        scored[f"{day_s}|{asset}"] = score_asset_day(setup, direction)
+        scored[f"{day_s}|{asset}"] = score_asset_day(
+            setup,
+            direction,
+            blocked_trade=blocked.get((day_s, asset)),
+        )
 
     rows = sorted(scored.values(), key=lambda r: (r["date"], r["asset"]))
     scorecard_path.write_text(json.dumps(rows, indent=1))

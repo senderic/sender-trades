@@ -200,6 +200,7 @@ class AlpacaBrokerClient:
                         "ask": float(q["ap"]) if q.get("ap") else None,
                         "bid_size": q.get("bs"),
                         "ask_size": q.get("as"),
+                        "timestamp": q.get("t"),
                     }
             except Exception:
                 logger.debug("option_quote_unavailable", symbol=occ_symbol)
